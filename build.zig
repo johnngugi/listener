@@ -30,4 +30,26 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    const protocol_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/protocol.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_protocol_tests = b.addRunArtifact(protocol_tests);
+
+    const request_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/request.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_request_tests = b.addRunArtifact(request_tests);
+
+    const test_step = b.step("test", "Run tests");
+    test_step.dependOn(&run_protocol_tests.step);
+    test_step.dependOn(&run_request_tests.step);
 }

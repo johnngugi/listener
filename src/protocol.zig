@@ -7,6 +7,7 @@ pub const max_body_len: u32 = 1024 * 1024;
 
 pub const ProtocolError = error{
     InvalidMagic,
+    InvalidFlags,
     UnsupportedVersion,
     InvalidHeaderLength,
     InvalidBodyLength,
@@ -79,6 +80,10 @@ pub const Header = struct {
 
         const version = std.mem.readInt(u16, bytes[4..6], .big);
         if (version != protocol_version) return error.UnsupportedVersion;
+
+        if (std.mem.readInt(u16, bytes[8..10], .big) != 0) {
+            return error.InvalidFlags;
+        }
 
         const encoded_header_len = std.mem.readInt(u16, bytes[10..12], .big);
         if (encoded_header_len != header_wire_len) {
@@ -288,7 +293,6 @@ test "header encodes the expected wire representation" {
 test "header round trip" {
     const expected = Header{
         .message_type = .buffer_status,
-        .flags = 3,
         .body_len = BufferStatus.wire_len,
         .stream_id = 42,
         .generation_id = 7,
@@ -324,6 +328,13 @@ test "header rejects malformed input" {
     try std.testing.expectError(
         error.InvalidMagic,
         Header.decode(&invalid_magic),
+    );
+
+    var invalid_flags = valid;
+    std.mem.writeInt(u16, invalid_flags[8..10], 1, .big);
+    try std.testing.expectError(
+        error.InvalidFlags,
+        Header.decode(&invalid_flags),
     );
 
     var oversized_body = valid;

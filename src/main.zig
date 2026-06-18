@@ -1,42 +1,83 @@
 const std = @import("std");
-const decoder = @import("decoder.zig");
+const net = std.Io.net;
 
 const c = @cImport({
     @cInclude("libavcodec/avcodec.h");
     @cInclude("libavformat/avformat.h");
 });
 
-pub fn main() !void {
-    var gpa = std.heap.DebugAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+const decoder = @import("decoder.zig");
+const server = @import("server.zig");
+const protocol = @import("protocol.zig");
+const request = @import("request.zig");
 
-    const path = "/Users/johnngugi/Music/Library/Dominik Hauser - Chevaliers de Sangreal (From _The Da Vinci Code_) [feat. Hans Zimmer].flac";
-    var audio_decoder = try decoder.AudioDecoder.open(
-        allocator,
-        path,
-        .{
-            .sample_format = .s32,
-            .layout = .interleaved,
-        },
-    );
-    defer audio_decoder.deinit();
+pub fn main(init: std.process.Init) !void {
+    // var gpa = std.heap.DebugAllocator(.{}){};
+    // const allocator = gpa.allocator();
+    // defer _ = gpa.deinit();
 
-    var buf: [16 * 1024]u8 = undefined;
+    const host = "127.0.0.1";
+    const port = 5778;
+
+    var s = try server.Server.init(init.io, host, port);
+    var net_server = try s.listen();
+    defer net_server.deinit(init.io);
+
+    std.debug.print("Listening on {s}:{d} ...\n", .{ host, port });
 
     while (true) {
-        const result = try audio_decoder.read(&buf);
+        const stream = try net_server.accept(init.io);
 
-        if (result.bytes > 0) {
-            const pcm = buf[0..result.bytes];
+        const thread = std.Thread.spawn(.{}, handleClient, .{ init.io, stream }) catch |err| {
+            std.debug.print("Failed to spawn thread: {}\n", .{err});
+            stream.close(init.io);
+            continue;
+        };
 
-            // Later
-            // - write pcm to audio endpoint
-            _ = pcm;
-        }
+        thread.detach();
+    }
+}
 
-        if (result.end_of_stream) {
-            break;
+fn handleClient(io: std.Io, stream: net.Stream) !void {
+    defer stream.close(io);
+
+    var stream_buffer: [1024]u8 = undefined;
+    var stream_reader = stream.reader(io, &stream_buffer);
+    const reader = &stream_reader.interface;
+
+    var stream_writer = stream.writer(io, &.{});
+    const writer = &stream_writer.interface;
+
+    var body_buffer: [protocol.BufferStatus.wire_len]u8 = undefined;
+    var hello_received = false;
+
+    while (true) {
+        const frame = request.read(reader, &body_buffer) catch |err| switch (err) {
+            error.EndOfStream => return,
+            else => return err,
+        };
+        const request_obj = try request.decodeRequest(frame);
+
+        switch (request_obj.message) {
+            .hello => {
+                if (hello_received) return error.UnexpectedHello;
+                try handleHello(writer);
+                hello_received = true;
+            },
+            else => {
+                if (!hello_received) return error.ExpectedHello;
+                std.debug.print("todo: {}\n", .{request_obj.message});
+            },
         }
     }
+}
+
+fn handleHello(writer: *std.Io.Writer) !void {
+    const response_header = protocol.Header{
+        .message_type = protocol.MessageType.hello_ack,
+        .body_len = 0,
+    };
+
+    const response_bytes = try response_header.encode();
+    try writer.writeAll(&response_bytes);
 }
