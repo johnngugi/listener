@@ -16,7 +16,7 @@ pub const Frame = struct {
 
 pub const ClientMessage = union(enum) {
     hello: void,
-    // start_stream: protocol.StartStream,
+    start_stream: protocol.StartStream,
     buffer_status: protocol.BufferStatus,
     cancel_generation: void,
     ping: void,
@@ -74,6 +74,9 @@ pub fn decodeRequest(frame: Frame) !Request {
         },
         .buffer_status => .{
             .buffer_status = try protocol.BufferStatus.decode(frame.body),
+        },
+        .start_stream => .{
+            .start_stream = try protocol.StartStream.decode(frame.body),
         },
         else => return error.UnexpectedClientMessage,
     };

@@ -12,6 +12,7 @@ pub const ProtocolError = error{
     InvalidHeaderLength,
     InvalidBodyLength,
     InvalidMessageType,
+    InvalidMediaPath,
     UnsupportedSampleFormat,
     BodyTooLarge,
 };
@@ -116,6 +117,14 @@ pub const SampleFormat = enum(u16) {
     pcm_f32le = 5,
 };
 
+// Wire layout:
+//   format                     u16
+//   sample_rate                u32
+//   channels                   u16
+//   channel_layout             u32
+//   total_frames               u64
+//   actual_start_frame         u64
+//   recommended_buffer_frames  u32
 pub const StreamInfo = struct {
     pub const wire_len: u32 = 32;
 
@@ -164,6 +173,66 @@ pub const StreamInfo = struct {
                 .big,
             ),
         };
+    }
+};
+
+// Wire layout:
+//   requested_start_frame  u64
+//   path_len               u16
+//   media_path             u8[path_len]
+pub const StartStream = struct {
+    pub const fixed_wire_len: u32 = 10;
+    pub const max_path_len: u16 = 4096;
+    pub const max_wire_len = fixed_wire_len + max_path_len;
+
+    requested_start_frame: u64,
+    media_path: []const u8,
+
+    pub fn encode(self: StartStream, out: []u8) ![]u8 {
+        const encoded_len = fixed_wire_len + self.media_path.len;
+        if (encoded_len > out.len) return error.BufferTooSmall;
+
+        try validatePath(self.media_path);
+
+        std.mem.writeInt(u64, out[0..8], self.requested_start_frame, .big);
+        std.mem.writeInt(u16, out[8..10], @intCast(self.media_path.len), .big);
+        @memcpy(out[10..encoded_len], self.media_path);
+
+        return out[0..encoded_len];
+    }
+
+    pub fn decode(bytes: []const u8) ProtocolError!StartStream {
+        if (bytes.len < fixed_wire_len or bytes.len > max_wire_len) {
+            return error.InvalidBodyLength;
+        }
+
+        const path_len = std.mem.readInt(u16, bytes[8..10], .big);
+
+        if (bytes.len != fixed_wire_len + path_len) {
+            return error.InvalidBodyLength;
+        }
+
+        const media_path = bytes[fixed_wire_len..];
+        try validatePath(media_path);
+
+        return .{
+            .requested_start_frame = std.mem.readInt(u64, bytes[0..8], .big),
+            .media_path = media_path,
+        };
+    }
+
+    fn validatePath(path: []const u8) ProtocolError!void {
+        if (path.len == 0 or path.len > max_path_len) {
+            return error.InvalidMediaPath;
+        }
+
+        if (!std.unicode.utf8ValidateSlice(path)) {
+            return error.InvalidMediaPath;
+        }
+
+        if (std.mem.indexOfScalar(u8, path, 0) != null) {
+            return error.InvalidMediaPath;
+        }
     }
 };
 
@@ -354,6 +423,58 @@ test "header rejects malformed input" {
     try std.testing.expectError(
         error.InvalidMessageType,
         Header.decode(&unknown_message_type),
+    );
+}
+
+test "start stream encodes expected wire representation" {
+    const start = StartStream{
+        .requested_start_frame = 48_000,
+        .media_path = "/music/song.flac",
+    };
+
+    var storage: [StartStream.max_wire_len]u8 = undefined;
+    const encoded = try start.encode(&storage);
+
+    try std.testing.expectEqual(
+        StartStream.fixed_wire_len + start.media_path.len,
+        encoded.len,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 48_000),
+        std.mem.readInt(u64, encoded[0..8], .big),
+    );
+    try std.testing.expectEqual(
+        start.media_path.len,
+        std.mem.readInt(u16, encoded[8..10], .big),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        start.media_path,
+        encoded[10..],
+    );
+}
+
+test "start stream decode rejects invalid media paths" {
+    var empty_path: [StartStream.fixed_wire_len]u8 = @splat(0);
+    try std.testing.expectError(
+        error.InvalidMediaPath,
+        StartStream.decode(&empty_path),
+    );
+
+    var nul_path: [StartStream.fixed_wire_len + 3]u8 = @splat(0);
+    std.mem.writeInt(u16, nul_path[8..10], 3, .big);
+    @memcpy(nul_path[10..], "a\x00b");
+    try std.testing.expectError(
+        error.InvalidMediaPath,
+        StartStream.decode(&nul_path),
+    );
+
+    var invalid_utf8: [StartStream.fixed_wire_len + 1]u8 = @splat(0);
+    std.mem.writeInt(u16, invalid_utf8[8..10], 1, .big);
+    invalid_utf8[10] = 0xff;
+    try std.testing.expectError(
+        error.InvalidMediaPath,
+        StartStream.decode(&invalid_utf8),
     );
 }
 

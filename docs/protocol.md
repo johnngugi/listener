@@ -6,9 +6,9 @@ This document describes version 1 of the Listener media protocol as currently
 implemented in `src/protocol.zig`.
 
 The protocol is still under development. The common header and the
-`STREAM_INFO`, `AUDIO_FRAME`, and `BUFFER_STATUS` fixed bodies are defined.
-The remaining message bodies and attachment of encoded audio bytes to an
-`AUDIO_FRAME` are not yet implemented.
+`START_STREAM`, `STREAM_INFO`, `AUDIO_FRAME`, and `BUFFER_STATUS` bodies are
+defined. The remaining message bodies and attachment of encoded audio bytes
+to an `AUDIO_FRAME` are not yet implemented.
 
 ## Overview
 
@@ -110,7 +110,7 @@ body length of 1 MiB.
 |---:|---|---|---|
 | 1 | `HELLO` | Client → server | Body not yet defined |
 | 2 | `HELLO_ACK` | Server → client | Body not yet defined |
-| 3 | `START_STREAM` | Client → server | Body not yet defined |
+| 3 | `START_STREAM` | Client → server | Defined |
 | 4 | `STREAM_INFO` | Server → client | Defined |
 | 5 | `AUDIO_FRAME` | Server → client | Fixed metadata defined |
 | 6 | `BUFFER_STATUS` | Client → server | Defined |
@@ -143,6 +143,27 @@ left, right, left, right, ...
 
 A **PCM frame** contains one sample for every channel. At 48 kHz,
 `48,000` frames represent one second regardless of the number of channels.
+
+## `START_STREAM`
+
+`START_STREAM` asks the server to open a media file and begin a playback
+generation. Its body consists of a 10-byte fixed portion followed by a
+variable-length UTF-8 file path.
+
+| Offset | Size | Type | Field | Description |
+|---:|---:|---|---|---|
+| 0 | 8 | `u64` | `requested_start_frame` | Source PCM frame at which playback should begin; use `0` to start at the beginning |
+| 8 | 2 | `u16` | `path_len` | Number of bytes in `media_path` |
+| 10 | `path_len` | bytes | `media_path` | UTF-8 path of the media file accessible to the server |
+
+The body length is:
+
+```text
+body_len = 10 + path_len
+```
+
+`media_path` is not NUL-terminated. The encoded path bytes immediately follow
+the `path_len` field.
 
 ## `STREAM_INFO`
 
@@ -293,7 +314,6 @@ protocol. Every field must be encoded and decoded explicitly.
 
 - Define `HELLO` and version/capability negotiation.
 - Define `HELLO_ACK`.
-- Define `START_STREAM` and its media handle.
 - Attach and validate audio bytes in `AUDIO_FRAME`.
 - Define `channel_layout` values.
 - Define `CANCEL_GENERATION`.
