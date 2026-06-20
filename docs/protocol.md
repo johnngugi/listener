@@ -7,8 +7,8 @@ implemented in `src/protocol.zig`.
 
 The protocol is still under development. The common header and the
 `START_STREAM`, `STREAM_INFO`, `AUDIO_FRAME`, and `BUFFER_STATUS` bodies are
-defined. The remaining message bodies and attachment of encoded audio bytes
-to an `AUDIO_FRAME` are not yet implemented.
+defined. `AUDIO_FRAME` messages carry decoded PCM payload bytes. The remaining
+message bodies are not yet implemented.
 
 ## Overview
 
@@ -112,7 +112,7 @@ body length of 1 MiB.
 | 2 | `HELLO_ACK` | Server → client | Body not yet defined |
 | 3 | `START_STREAM` | Client → server | Defined |
 | 4 | `STREAM_INFO` | Server → client | Defined |
-| 5 | `AUDIO_FRAME` | Server → client | Fixed metadata defined |
+| 5 | `AUDIO_FRAME` | Server → client | Defined |
 | 6 | `BUFFER_STATUS` | Client → server | Defined |
 | 7 | `CANCEL_GENERATION` | Client → server | Body not yet defined |
 | 8 | `STREAM_END` | Server → client | Body not yet defined |
@@ -185,41 +185,46 @@ must align decoding to a supported boundary.
 
 ## `AUDIO_FRAME`
 
-The currently implemented fixed metadata body is 12 bytes:
+The body contains 12 bytes of fixed metadata followed by decoded PCM data:
 
 | Offset | Size | Type | Field | Description |
 |---:|---:|---|---|---|
-| 0 | 8 | `u64` | `sample_offset` | Source-frame offset of the first represented frame |
+| 0 | 8 | `u64` | `frame_offset` | Source PCM-frame position of the first payload frame |
 | 8 | 4 | `u32` | `frame_count` | Number of decoded PCM frames represented |
-
-The audio bytes are intended to follow this metadata:
+| 12 | Variable | bytes | `audio_data` | Interleaved PCM payload |
 
 ```text
 +----------------------+---------------------+
-| 12-byte frame info   | encoded audio data  |
+| 12-byte frame info   | PCM audio data      |
 +----------------------+---------------------+
 ```
 
-When audio payload support is implemented:
-
 ```text
-body_len = 12 + encoded_audio_length
+body_len = 12 + audio_data.len
 ```
 
 For uncompressed PCM:
 
 ```text
-encoded_audio_length =
+audio_data.len =
     frame_count * channels * bytes_per_sample
 ```
+
+The current implementation limits `audio_data` to 1,024 bytes per message.
+Payloads contain only complete PCM frames; a frame is never split across
+messages.
 
 The audio format is inherited from the preceding `STREAM_INFO` for the same
 stream and generation. Mid-generation format changes are not currently
 supported.
 
-The current Zig `AudioFrame.decode` function accepts only the 12-byte metadata
-body. Reading and validating the following audio bytes remains to be
-implemented.
+`frame_offset` is measured in source PCM frames, not bytes or individual
+channel samples. Successive messages advance it by the preceding message's
+`frame_count`.
+
+The current server sends one `AUDIO_FRAME` immediately after `STREAM_INFO`.
+Continuous frame production, flow control using `BUFFER_STATUS`, and
+`STREAM_END` signaling remain to be implemented.
 
 ## `BUFFER_STATUS`
 
@@ -314,7 +319,10 @@ protocol. Every field must be encoded and decoded explicitly.
 
 - Define `HELLO` and version/capability negotiation.
 - Define `HELLO_ACK`.
-- Attach and validate audio bytes in `AUDIO_FRAME`.
+- Continuously produce `AUDIO_FRAME` messages under `BUFFER_STATUS` flow
+  control.
+- Validate that `AUDIO_FRAME` payload length matches its frame count and the
+  active stream format.
 - Define `channel_layout` values.
 - Define `CANCEL_GENERATION`.
 - Define `STREAM_END` reasons.

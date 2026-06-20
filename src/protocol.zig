@@ -236,6 +236,47 @@ pub const StartStream = struct {
     }
 };
 
+// Wire layout:
+//   frame_offset  u64
+//   frame_count   u32
+//   audio_data    u8[body_len - fixed_wire_len]
+pub const AudioFrame = struct {
+    pub const fixed_wire_len: u32 = 12;
+    pub const max_data_len: u16 = 1024;
+    pub const max_wire_len = fixed_wire_len + max_data_len;
+
+    frame_offset: u64,
+    frame_count: u32,
+    audio_data: []const u8,
+
+    pub fn encode(self: AudioFrame, out: []u8) ![]u8 {
+        if (self.audio_data.len > max_data_len) {
+            return error.AudioDataTooLarge;
+        }
+
+        const encoded_len = fixed_wire_len + self.audio_data.len;
+        if (encoded_len > out.len) return error.BufferTooSmall;
+
+        std.mem.writeInt(u64, out[0..8], self.frame_offset, .big);
+        std.mem.writeInt(u32, out[8..12], self.frame_count, .big);
+        @memcpy(out[12..encoded_len], self.audio_data);
+
+        return out[0..encoded_len];
+    }
+
+    pub fn decode(bytes: []const u8) ProtocolError!AudioFrame {
+        if (bytes.len < fixed_wire_len or bytes.len > max_wire_len) {
+            return error.InvalidBodyLength;
+        }
+
+        return .{
+            .frame_offset = std.mem.readInt(u64, bytes[0..8], .big),
+            .frame_count = std.mem.readInt(u32, bytes[8..12], .big),
+            .audio_data = bytes[fixed_wire_len..],
+        };
+    }
+};
+
 fn decodeMessageType(value: u16) ProtocolError!MessageType {
     return switch (value) {
         1 => .hello,
@@ -263,31 +304,6 @@ fn decodeSampleFormat(value: u16) ProtocolError!SampleFormat {
         else => error.UnsupportedSampleFormat,
     };
 }
-
-pub const AudioFrame = struct {
-    pub const wire_len: u32 = 12;
-
-    sample_offset: u64,
-    frame_count: u32,
-
-    pub fn encode(self: AudioFrame) [wire_len]u8 {
-        var out: [wire_len]u8 = undefined;
-
-        std.mem.writeInt(u64, out[0..8], self.sample_offset, .big);
-        std.mem.writeInt(u32, out[8..12], self.frame_count, .big);
-
-        return out;
-    }
-
-    pub fn decode(bytes: []const u8) ProtocolError!AudioFrame {
-        if (bytes.len != wire_len) return error.InvalidBodyLength;
-
-        return .{
-            .sample_offset = std.mem.readInt(u64, bytes[0..8], .big),
-            .frame_count = std.mem.readInt(u32, bytes[8..12], .big),
-        };
-    }
-};
 
 pub const BufferStatus = struct {
     pub const wire_len: u32 = 28;
@@ -492,13 +508,28 @@ test "message bodies round trip" {
     const decoded_stream_info = try StreamInfo.decode(&stream_info_bytes);
     try std.testing.expectEqualDeep(stream_info, decoded_stream_info);
 
+    const audio_data = [_]u8{ 0x01, 0x02, 0x03, 0x04 };
     const audio_frame = AudioFrame{
-        .sample_offset = 48_000,
-        .frame_count = 960,
+        .frame_offset = 48_000,
+        .frame_count = 1,
+        .audio_data = &audio_data,
     };
-    const audio_frame_bytes = audio_frame.encode();
-    const decoded_audio_frame = try AudioFrame.decode(&audio_frame_bytes);
-    try std.testing.expectEqualDeep(audio_frame, decoded_audio_frame);
+    var audio_frame_storage: [AudioFrame.max_wire_len]u8 = undefined;
+    const audio_frame_bytes = try audio_frame.encode(&audio_frame_storage);
+    const decoded_audio_frame = try AudioFrame.decode(audio_frame_bytes);
+    try std.testing.expectEqual(
+        audio_frame.frame_offset,
+        decoded_audio_frame.frame_offset,
+    );
+    try std.testing.expectEqual(
+        audio_frame.frame_count,
+        decoded_audio_frame.frame_count,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        audio_frame.audio_data,
+        decoded_audio_frame.audio_data,
+    );
 
     const buffer_status = BufferStatus{
         .buffered_frames = 24_000,

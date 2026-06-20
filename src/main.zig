@@ -55,6 +55,8 @@ fn handleClient(
     var body_buffer: [protocol.StartStream.max_wire_len]u8 = undefined;
     var hello_received = false;
     var next_server_sequence: u64 = 1;
+    var next_frame_offset: u64 = 0;
+
     var active_decoder: ?decoder.AudioDecoder = null;
     defer if (active_decoder) |*current| current.deinit();
 
@@ -74,7 +76,9 @@ fn handleClient(
             .start_stream => {
                 if (!hello_received) return error.ExpectedHello;
 
-                const audio_decoder = try handleStartStream(
+                // Create the replacement first. If this fails, the existing
+                // active decoder remains valid and is cleaned up by defer.
+                const new_decoder = try handleStartStream(
                     allocator,
                     writer,
                     request_obj.message.start_stream,
@@ -84,11 +88,28 @@ fn handleClient(
                 );
                 next_server_sequence += 1;
 
-                if (active_decoder) |*current| {
-                    current.deinit();
+                // The new stream was successfully opened, so the previous
+                // decoder can now be released.
+                if (active_decoder) |*oldDecoder| {
+                    oldDecoder.deinit();
                 }
 
-                active_decoder = audio_decoder;
+                active_decoder = new_decoder;
+                next_frame_offset = 0;
+
+                const current = &active_decoder.?;
+                const sent = try handleAudioFrame(
+                    current,
+                    writer,
+                    request_obj.stream_id,
+                    request_obj.generation_id,
+                    next_server_sequence,
+                    &next_frame_offset,
+                );
+
+                if (sent) {
+                    next_server_sequence += 1;
+                }
             },
             else => {
                 if (!hello_received) return error.ExpectedHello;
@@ -158,4 +179,52 @@ fn handleStartStream(
     try writer.writeAll(&body);
 
     return audio_decoder;
+}
+
+fn handleAudioFrame(
+    audio_decoder: *decoder.AudioDecoder,
+    writer: *std.Io.Writer,
+    stream_id: u64,
+    generation_id: u64,
+    sequence: u64,
+    next_frame_offset: *u64,
+) !bool {
+    var audio_buffer: [protocol.AudioFrame.max_data_len]u8 = undefined;
+
+    // Never split a PCM frame between messages.
+    const bytes_per_frame = audio_decoder.trackInfo().bytesPerFrame();
+    const usable_len = audio_buffer.len - (audio_buffer.len % bytes_per_frame);
+
+    const read_result = try audio_decoder.read(audio_buffer[0..usable_len]);
+
+    if (read_result.bytes == 0) {
+        return false;
+    }
+
+    const frame_count = std.math.cast(u32, read_result.frames) orelse
+        return error.TooManyFrames;
+
+    const audio_frame = protocol.AudioFrame{
+        .frame_offset = next_frame_offset.*,
+        .frame_count = frame_count,
+        .audio_data = audio_buffer[0..read_result.bytes],
+    };
+
+    var body_storage: [protocol.AudioFrame.max_wire_len]u8 = undefined;
+    const body = try audio_frame.encode(&body_storage);
+
+    const header = protocol.Header{
+        .message_type = protocol.MessageType.audio_frame,
+        .body_len = @intCast(body.len),
+        .stream_id = stream_id,
+        .generation_id = generation_id,
+        .sequence = sequence,
+    };
+    const header_bytes = try header.encode();
+
+    try writer.writeAll(&header_bytes);
+    try writer.writeAll(body);
+
+    next_frame_offset.* += frame_count;
+    return true;
 }
