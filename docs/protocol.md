@@ -8,8 +8,9 @@ implemented in `src/protocol.zig`.
 The protocol is still under development. The common header and the
 `START_STREAM`, `STREAM_INFO`, `AUDIO_FRAME`, and `BUFFER_STATUS` bodies are
 defined. `HELLO`, `HELLO_ACK`, `CANCEL_GENERATION`, and `PING` currently have
-empty bodies. `AUDIO_FRAME` messages carry decoded PCM payload bytes. The
-remaining message bodies are not yet implemented.
+empty bodies. `STREAM_END` is an empty server message. `AUDIO_FRAME` messages
+carry decoded PCM payload bytes. `PROTOCOL_ERROR` has a structured diagnostic
+body. The remaining message bodies are not yet implemented.
 
 ## Overview
 
@@ -116,8 +117,8 @@ body length of 1 MiB.
 | 5 | `AUDIO_FRAME` | Server → client | Defined |
 | 6 | `BUFFER_STATUS` | Client → server | Defined |
 | 7 | `CANCEL_GENERATION` | Client → server | Empty body |
-| 8 | `STREAM_END` | Server → client | Body not yet defined |
-| 9 | `PROTOCOL_ERROR` | Either direction | Body not yet defined |
+| 8 | `STREAM_END` | Server → client | Empty body |
+| 9 | `PROTOCOL_ERROR` | Server → client | Defined |
 | 10 | `PING` | Client → server | Empty body |
 | 11 | `PONG` | Either direction | Body not yet defined |
 
@@ -229,8 +230,64 @@ channel samples. Successive messages advance it by the preceding message's
 
 The server sends audio in response to `BUFFER_STATUS`, up to the credit
 reported by the client. It stops producing frames when credit is exhausted or
-the decoder reaches end of input. `STREAM_END` signaling is not yet
-implemented.
+the decoder reaches end of input.
+
+## `STREAM_END`
+
+`STREAM_END` tells the client that the server has produced all audio for the
+identified stream and generation. Its body is empty, so `body_len` must be
+`0`.
+
+The server sends it immediately after the final `AUDIO_FRAME` when the decoder
+reports end of input with that frame. If the final audio frame exactly fills a
+message, end of input may only be discovered on the next credited read; the
+server sends `STREAM_END` then. It is sent at most once for a generation.
+
+Receiving `STREAM_END` does not mean playback has completed. The client should
+continue rendering audio already buffered for that generation and consider
+playback complete only after the buffer has drained.
+
+## `PROTOCOL_ERROR`
+
+`PROTOCOL_ERROR` reports a recoverable problem with a client message. Its body
+contains 14 bytes of fixed metadata followed by an optional UTF-8 diagnostic:
+
+| Offset | Size | Type | Field | Description |
+|---:|---:|---|---|---|
+| 0 | 2 | `u16` | `error_code` | Stable value from the protocol-error code table |
+| 2 | 2 | `u16` | `offending_message_type` | Message type of the rejected client message |
+| 4 | 8 | `u64` | `offending_sequence` | Sequence number of the rejected client message |
+| 12 | 2 | `u16` | `detail_len` | Number of bytes in `detail` |
+| 14 | Variable | bytes | `detail` | Optional human-readable UTF-8 diagnostic |
+
+```text
+body_len = 14 + detail_len
+```
+
+The detail is limited to 4,096 bytes, must be valid UTF-8, and must not contain
+NUL bytes. It is intended for diagnostics only. Clients must branch on
+`error_code`, not on the detail text.
+
+| Value | Name | Meaning |
+|---:|---|---|
+| 1 | `MALFORMED_MESSAGE` | The message framing or representation is malformed |
+| 2 | `INVALID_BODY` | The body is structurally or semantically invalid |
+| 3 | `UNEXPECTED_MESSAGE` | The message direction or type is not accepted |
+| 4 | `INVALID_STATE` | The message is not valid in the current connection state |
+| 5 | `UNSUPPORTED_OPERATION` | The requested operation is valid but unsupported |
+| 6 | `STREAM_UNAVAILABLE` | The requested media stream could not be opened |
+| 7 | `INTERNAL_ERROR` | The server could not complete an otherwise valid request |
+
+The response header copies the offending message's `stream_id` and
+`generation_id`. The response receives its own server sequence number;
+`offending_sequence` identifies the rejected client message.
+
+The current server sends `PROTOCOL_ERROR` only after it has decoded and fully
+consumed a trustworthy message frame. Invalid magic, versions, flags, header
+lengths, message-type values, oversized bodies, truncated frames, and
+transport failures close the connection without a response. This avoids
+responding when framing is untrustworthy or the next message boundary is
+unknown.
 
 ## `BUFFER_STATUS`
 

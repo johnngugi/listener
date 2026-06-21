@@ -13,6 +13,8 @@ pub const ProtocolError = error{
     InvalidBodyLength,
     InvalidMessageType,
     InvalidMediaPath,
+    InvalidProtocolErrorCode,
+    InvalidProtocolErrorDetail,
     UnsupportedSampleFormat,
     BodyTooLarge,
 };
@@ -327,6 +329,90 @@ pub const BufferStatus = struct {
     }
 };
 
+pub const ProtocolErrorCode = enum(u16) {
+    malformed_message = 1,
+    invalid_body = 2,
+    unexpected_message = 3,
+    invalid_state = 4,
+    unsupported_operation = 5,
+    stream_unavailable = 6,
+    internal_error = 7,
+};
+
+// Wire layout:
+//   error_code              u16
+//   offending_message_type  u16
+//   offending_sequence      u64
+//   detail_len              u16
+//   detail                  u8[detail_len]
+pub const ProtocolErrorBody = struct {
+    pub const fixed_wire_len: u32 = 14;
+    pub const max_detail_len: u16 = 4096;
+    pub const max_wire_len = fixed_wire_len + max_detail_len;
+
+    error_code: ProtocolErrorCode,
+    offending_message_type: u16,
+    offending_sequence: u64,
+    detail: []const u8,
+
+    pub fn encode(self: ProtocolErrorBody, out: []u8) ![]u8 {
+        const encoded_len = fixed_wire_len + self.detail.len;
+        if (encoded_len > out.len) return error.BufferTooSmall;
+
+        try validateProtocolErrorDetail(self.detail);
+
+        std.mem.writeInt(
+            u16,
+            out[0..2],
+            @intFromEnum(self.error_code),
+            .big,
+        );
+        std.mem.writeInt(
+            u16,
+            out[2..4],
+            self.offending_message_type,
+            .big,
+        );
+        std.mem.writeInt(
+            u64,
+            out[4..12],
+            self.offending_sequence,
+            .big,
+        );
+        std.mem.writeInt(u16, out[12..14], @intCast(self.detail.len), .big);
+        @memcpy(out[14..encoded_len], self.detail);
+
+        return out[0..encoded_len];
+    }
+
+    pub fn decode(bytes: []const u8) ProtocolError!ProtocolErrorBody {
+        if (bytes.len < fixed_wire_len or bytes.len > max_wire_len) {
+            return error.InvalidBodyLength;
+        }
+
+        const detail_len = std.mem.readInt(u16, bytes[12..14], .big);
+        if (bytes.len != fixed_wire_len + detail_len) {
+            return error.InvalidBodyLength;
+        }
+
+        const detail = bytes[fixed_wire_len..];
+        try validateProtocolErrorDetail(detail);
+
+        return .{
+            .error_code = try decodeProtocolErrorCode(
+                std.mem.readInt(u16, bytes[0..2], .big),
+            ),
+            .offending_message_type = std.mem.readInt(
+                u16,
+                bytes[2..4],
+                .big,
+            ),
+            .offending_sequence = std.mem.readInt(u64, bytes[4..12], .big),
+            .detail = detail,
+        };
+    }
+};
+
 fn decodeMessageType(value: u16) ProtocolError!MessageType {
     return switch (value) {
         1 => .hello,
@@ -342,6 +428,33 @@ fn decodeMessageType(value: u16) ProtocolError!MessageType {
         11 => .pong,
         else => error.InvalidMessageType,
     };
+}
+
+fn decodeProtocolErrorCode(value: u16) ProtocolError!ProtocolErrorCode {
+    return switch (value) {
+        1 => .malformed_message,
+        2 => .invalid_body,
+        3 => .unexpected_message,
+        4 => .invalid_state,
+        5 => .unsupported_operation,
+        6 => .stream_unavailable,
+        7 => .internal_error,
+        else => error.InvalidProtocolErrorCode,
+    };
+}
+
+fn validateProtocolErrorDetail(detail: []const u8) ProtocolError!void {
+    if (detail.len > ProtocolErrorBody.max_detail_len) {
+        return error.InvalidProtocolErrorDetail;
+    }
+
+    if (!std.unicode.utf8ValidateSlice(detail)) {
+        return error.InvalidProtocolErrorDetail;
+    }
+
+    if (std.mem.indexOfScalar(u8, detail, 0) != null) {
+        return error.InvalidProtocolErrorDetail;
+    }
 }
 
 fn decodeSampleFormat(value: u16) ProtocolError!SampleFormat {
@@ -547,4 +660,69 @@ test "message bodies round trip" {
     const buffer_status_bytes = buffer_status.encode();
     const decoded_buffer_status = try BufferStatus.decode(&buffer_status_bytes);
     try std.testing.expectEqualDeep(buffer_status, decoded_buffer_status);
+
+    const protocol_error = ProtocolErrorBody{
+        .error_code = .unsupported_operation,
+        .offending_message_type = @intFromEnum(MessageType.start_stream),
+        .offending_sequence = 51,
+        .detail = "seeking is not implemented",
+    };
+    var protocol_error_storage: [ProtocolErrorBody.max_wire_len]u8 = undefined;
+    const protocol_error_bytes = try protocol_error.encode(
+        &protocol_error_storage,
+    );
+    const decoded_protocol_error = try ProtocolErrorBody.decode(
+        protocol_error_bytes,
+    );
+    try std.testing.expectEqual(
+        protocol_error.error_code,
+        decoded_protocol_error.error_code,
+    );
+    try std.testing.expectEqual(
+        protocol_error.offending_message_type,
+        decoded_protocol_error.offending_message_type,
+    );
+    try std.testing.expectEqual(
+        protocol_error.offending_sequence,
+        decoded_protocol_error.offending_sequence,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        protocol_error.detail,
+        decoded_protocol_error.detail,
+    );
+}
+
+test "protocol error body rejects malformed input" {
+    const valid = ProtocolErrorBody{
+        .error_code = .invalid_body,
+        .offending_message_type = @intFromEnum(MessageType.buffer_status),
+        .offending_sequence = 12,
+        .detail = "invalid body length",
+    };
+    var storage: [ProtocolErrorBody.max_wire_len]u8 = undefined;
+    const encoded = try valid.encode(&storage);
+
+    var invalid_code: [ProtocolErrorBody.fixed_wire_len]u8 = @splat(0);
+    std.mem.writeInt(u16, invalid_code[0..2], 500, .big);
+    try std.testing.expectError(
+        error.InvalidProtocolErrorCode,
+        ProtocolErrorBody.decode(&invalid_code),
+    );
+
+    try std.testing.expectError(
+        error.InvalidBodyLength,
+        ProtocolErrorBody.decode(encoded[0 .. encoded.len - 1]),
+    );
+
+    const invalid_utf8 = ProtocolErrorBody{
+        .error_code = .invalid_body,
+        .offending_message_type = @intFromEnum(MessageType.buffer_status),
+        .offending_sequence = 12,
+        .detail = &.{0xff},
+    };
+    try std.testing.expectError(
+        error.InvalidProtocolErrorDetail,
+        invalid_utf8.encode(&storage),
+    );
 }

@@ -70,35 +70,50 @@ const Session = struct {
                 error.EndOfStream => return,
                 else => return err,
             };
-            const request_obj = try request.decodeRequest(frame);
+            const request_obj = request.decodeRequest(frame) catch |err| {
+                const failure = protocolFailure(err) orelse return err;
+                try self.sendProtocolError(writer, frame.header, failure);
+                continue;
+            };
 
-            switch (request_obj.message) {
-                .hello => {
-                    if (self.hello_received) return error.UnexpectedHello;
+            self.handleRequest(writer, request_obj) catch |err| {
+                const failure = protocolFailure(err) orelse return err;
+                try self.sendProtocolError(writer, frame.header, failure);
+            };
+        }
+    }
 
-                    try self.handleHello(writer);
-                    self.hello_received = true;
-                },
-                .start_stream => {
-                    try self.requireHello();
-                    try self.handleStartStream(writer, request_obj);
-                },
-                .buffer_status => {
-                    try self.requireHello();
-                    try self.handleBufferStatus(
-                        writer,
-                        request_obj,
-                    );
-                },
-                .cancel_generation => {
-                    try self.requireHello();
-                    try self.handleCancelGeneration(request_obj);
-                },
-                else => {
-                    try self.requireHello();
-                    std.debug.print("todo: {}\n", .{request_obj.message});
-                },
-            }
+    fn handleRequest(
+        self: *Session,
+        writer: *std.Io.Writer,
+        request_obj: request.Request,
+    ) !void {
+        switch (request_obj.message) {
+            .hello => {
+                if (self.hello_received) return error.UnexpectedHello;
+
+                try self.handleHello(writer);
+                self.hello_received = true;
+            },
+            .start_stream => {
+                try self.requireHello();
+                try self.handleStartStream(writer, request_obj);
+            },
+            .buffer_status => {
+                try self.requireHello();
+                try self.handleBufferStatus(
+                    writer,
+                    request_obj,
+                );
+            },
+            .cancel_generation => {
+                try self.requireHello();
+                try self.handleCancelGeneration(request_obj);
+            },
+            else => {
+                try self.requireHello();
+                std.debug.print("todo: {}\n", .{request_obj.message});
+            },
         }
     }
 
@@ -110,15 +125,15 @@ const Session = struct {
         self: *Session,
         writer: *std.Io.Writer,
     ) !void {
-        _ = self;
-
         const response_header = protocol.Header{
             .message_type = .hello_ack,
             .body_len = 0,
+            .sequence = self.next_server_sequence,
         };
 
         const response_bytes = try response_header.encode();
         try writer.writeAll(&response_bytes);
+        self.next_server_sequence += 1;
     }
 
     fn handleStartStream(
@@ -253,6 +268,38 @@ const Session = struct {
         self.active_stream = null;
     }
 
+    fn sendProtocolError(
+        self: *Session,
+        writer: *std.Io.Writer,
+        offending_header: protocol.Header,
+        failure: ProtocolFailure,
+    ) !void {
+        const error_body = protocol.ProtocolErrorBody{
+            .error_code = failure.code,
+            .offending_message_type = @intFromEnum(
+                offending_header.message_type,
+            ),
+            .offending_sequence = offending_header.sequence,
+            .detail = failure.detail,
+        };
+
+        var body_storage: [protocol.ProtocolErrorBody.max_wire_len]u8 = undefined;
+        const body = try error_body.encode(&body_storage);
+
+        const header = protocol.Header{
+            .message_type = .protocol_error,
+            .body_len = @intCast(body.len),
+            .stream_id = offending_header.stream_id,
+            .generation_id = offending_header.generation_id,
+            .sequence = self.next_server_sequence,
+        };
+        const header_bytes = try header.encode();
+
+        try writer.writeAll(&header_bytes);
+        try writer.writeAll(body);
+        self.next_server_sequence += 1;
+    }
+
     fn sendNextAudioFrame(
         self: *Session,
         writer: *std.Io.Writer,
@@ -280,6 +327,12 @@ const Session = struct {
         const usable_len = frames_to_read * bytes_per_frame;
         const read_result = try active.decoder.read(audio_buffer[0..usable_len]);
         if (read_result.bytes == 0) {
+            try sendStreamEnd(
+                writer,
+                active,
+                self.next_server_sequence,
+            );
+            self.next_server_sequence += 1;
             active.eof_reached = true;
             return null;
         }
@@ -318,12 +371,89 @@ const Session = struct {
         });
 
         active.next_frame_offset += frame_count;
-        active.eof_reached = read_result.end_of_stream;
         self.next_server_sequence += 1;
+
+        if (read_result.end_of_stream) {
+            try sendStreamEnd(
+                writer,
+                active,
+                self.next_server_sequence,
+            );
+            self.next_server_sequence += 1;
+            active.eof_reached = true;
+        }
 
         return frame_count;
     }
 };
+
+fn sendStreamEnd(
+    writer: *std.Io.Writer,
+    active: *const Session.ActiveStream,
+    sequence: u64,
+) !void {
+    const header = protocol.Header{
+        .message_type = .stream_end,
+        .body_len = 0,
+        .stream_id = active.stream_id,
+        .generation_id = active.generation_id,
+        .sequence = sequence,
+    };
+    const header_bytes = try header.encode();
+
+    try writer.writeAll(&header_bytes);
+}
+
+const ProtocolFailure = struct {
+    code: protocol.ProtocolErrorCode,
+    detail: []const u8,
+};
+
+fn protocolFailure(err: anyerror) ?ProtocolFailure {
+    return switch (err) {
+        error.InvalidBodyLength => .{
+            .code = .invalid_body,
+            .detail = "invalid message body",
+        },
+        error.UnexpectedClientMessage => .{
+            .code = .unexpected_message,
+            .detail = "message type is not valid from a client",
+        },
+        error.ExpectedHello => .{
+            .code = .invalid_state,
+            .detail = "HELLO must be sent first",
+        },
+        error.UnexpectedHello => .{
+            .code = .invalid_state,
+            .detail = "HELLO has already been received",
+        },
+        error.NoActiveStream => .{
+            .code = .invalid_state,
+            .detail = "no active stream",
+        },
+        error.InvalidAcknowledgment => .{
+            .code = .invalid_body,
+            .detail = "acknowledgment exceeds the latest server sequence",
+        },
+        error.SeekNotImplemented => .{
+            .code = .unsupported_operation,
+            .detail = "seeking is not implemented",
+        },
+        error.CouldNotOpenInput,
+        error.CouldNotFindStreamInfo,
+        error.DecoderNotFound,
+        error.NoAudioStream,
+        error.CouldNotOpenDecoder,
+        error.UnsupportedSampleFormat,
+        error.UnsupportedSampleFormatConversion,
+        error.TooManyChannels,
+        => .{
+            .code = .stream_unavailable,
+            .detail = "media stream could not be opened",
+        },
+        else => null,
+    };
+}
 
 fn acknowledgeAudio(active: *Session.ActiveStream, last_received_sequence: u64) void {
     var acknowledged_count: usize = 0;
