@@ -7,8 +7,9 @@ implemented in `src/protocol.zig`.
 
 The protocol is still under development. The common header and the
 `START_STREAM`, `STREAM_INFO`, `AUDIO_FRAME`, and `BUFFER_STATUS` bodies are
-defined. `AUDIO_FRAME` messages carry decoded PCM payload bytes. The remaining
-message bodies are not yet implemented.
+defined. `HELLO`, `HELLO_ACK`, `CANCEL_GENERATION`, and `PING` currently have
+empty bodies. `AUDIO_FRAME` messages carry decoded PCM payload bytes. The
+remaining message bodies are not yet implemented.
 
 ## Overview
 
@@ -108,16 +109,16 @@ body length of 1 MiB.
 
 | Value | Name | Direction | Status |
 |---:|---|---|---|
-| 1 | `HELLO` | Client → server | Body not yet defined |
-| 2 | `HELLO_ACK` | Server → client | Body not yet defined |
+| 1 | `HELLO` | Client → server | Empty body |
+| 2 | `HELLO_ACK` | Server → client | Empty body |
 | 3 | `START_STREAM` | Client → server | Defined |
 | 4 | `STREAM_INFO` | Server → client | Defined |
 | 5 | `AUDIO_FRAME` | Server → client | Defined |
 | 6 | `BUFFER_STATUS` | Client → server | Defined |
-| 7 | `CANCEL_GENERATION` | Client → server | Body not yet defined |
+| 7 | `CANCEL_GENERATION` | Client → server | Empty body |
 | 8 | `STREAM_END` | Server → client | Body not yet defined |
 | 9 | `PROTOCOL_ERROR` | Either direction | Body not yet defined |
-| 10 | `PING` | Either direction | Body not yet defined |
+| 10 | `PING` | Client → server | Empty body |
 | 11 | `PONG` | Either direction | Body not yet defined |
 
 Unknown message-type values are rejected.
@@ -163,7 +164,11 @@ body_len = 10 + path_len
 ```
 
 `media_path` is not NUL-terminated. The encoded path bytes immediately follow
-the `path_len` field.
+the `path_len` field. It must be valid UTF-8, contain no NUL bytes, and contain
+between 1 and 4,096 bytes.
+
+The current server supports only `requested_start_frame = 0`. Other values are
+rejected because seeking is not yet implemented.
 
 ## `STREAM_INFO`
 
@@ -222,9 +227,10 @@ supported.
 channel samples. Successive messages advance it by the preceding message's
 `frame_count`.
 
-The current server sends one `AUDIO_FRAME` immediately after `STREAM_INFO`.
-Continuous frame production, flow control using `BUFFER_STATUS`, and
-`STREAM_END` signaling remain to be implemented.
+The server sends audio in response to `BUFFER_STATUS`, up to the credit
+reported by the client. It stops producing frames when credit is exhausted or
+the decoder reaches end of input. `STREAM_END` signaling is not yet
+implemented.
 
 ## `BUFFER_STATUS`
 
@@ -234,7 +240,7 @@ server flow. Its body is exactly 28 bytes.
 | Offset | Size | Type | Field | Description |
 |---:|---:|---|---|---|
 | 0 | 4 | `u32` | `buffered_frames` | Frames accepted but not yet rendered |
-| 4 | 4 | `u32` | `credit_frames` | Absolute allowance for additional in-flight frames |
+| 4 | 4 | `u32` | `credit_frames` | Absolute allowance for unacknowledged frames |
 | 8 | 8 | `u64` | `next_render_frame` | Source offset of the next frame the device will render |
 | 16 | 8 | `u64` | `last_received_sequence` | Most recent accepted message sequence |
 | 24 | 4 | `u32` | `underrun_count` | Number of distinct playback starvation periods |
@@ -247,6 +253,10 @@ server flow. Its body is exactly 28 bytes.
 The server must limit its outstanding audio accordingly. This prevents large
 amounts of obsolete audio from accumulating in TCP buffers and delaying a seek
 or track change.
+
+`last_received_sequence` acknowledges every audio message through that server
+sequence number. The server removes the acknowledged frames from its
+outstanding-frame accounting before applying the new credit.
 
 ### Playback position
 
@@ -261,14 +271,32 @@ received over the network or merely submitted to an application buffer.
 `underrun_count` increases once for each continuous starvation period. It
 should not increase once per audio callback while the same underrun continues.
 
+## `CANCEL_GENERATION`
+
+`CANCEL_GENERATION` asks the server to stop producing audio for one playback
+generation. Its body is empty, so `body_len` must be `0`. The target is
+identified by the common header's `stream_id` and `generation_id`.
+
+The server cancels the active decoder only when both identifiers match the
+active stream. A cancellation for an obsolete generation, an unrelated
+stream, or a connection with no active stream is ignored. This makes
+cancellation idempotent and prevents a delayed cancellation from terminating
+a newer generation.
+
+Cancellation does not retract bytes already written to the TCP connection.
+The client must discard buffered audio for the cancelled generation and ignore
+any late messages carrying its identifiers. The server does not currently send
+an acknowledgement or `STREAM_END` in response.
+
 ## Playback generations
 
 The generation ID protects playback state from late or obsolete data:
 
-1. The client discards buffered data when seeking or changing tracks.
-2. The client increments `generation_id`.
-3. The client requests the new frame offset or track.
-4. Messages carrying an older generation ID are ignored.
+1. The client sends `CANCEL_GENERATION` for the active stream and generation.
+2. The client discards buffered data for that generation.
+3. The client increments `generation_id`.
+4. The client sends `START_STREAM` for the new generation.
+5. Messages carrying an older generation ID are ignored.
 
 Pause is local and does not require a new generation. Stop clears the local
 buffer. A later restart may use a new generation depending on the chosen
@@ -319,12 +347,9 @@ protocol. Every field must be encoded and decoded explicitly.
 
 - Define `HELLO` and version/capability negotiation.
 - Define `HELLO_ACK`.
-- Continuously produce `AUDIO_FRAME` messages under `BUFFER_STATUS` flow
-  control.
 - Validate that `AUDIO_FRAME` payload length matches its frame count and the
   active stream format.
 - Define `channel_layout` values.
-- Define `CANCEL_GENERATION`.
 - Define `STREAM_END` reasons.
 - Define stable protocol error codes.
 - Define `PING` and `PONG` timestamps.

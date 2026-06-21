@@ -277,34 +277,12 @@ pub const AudioFrame = struct {
     }
 };
 
-fn decodeMessageType(value: u16) ProtocolError!MessageType {
-    return switch (value) {
-        1 => .hello,
-        2 => .hello_ack,
-        3 => .start_stream,
-        4 => .stream_info,
-        5 => .audio_frame,
-        6 => .buffer_status,
-        7 => .cancel_generation,
-        8 => .stream_end,
-        9 => .protocol_error,
-        10 => .ping,
-        11 => .pong,
-        else => error.InvalidMessageType,
-    };
-}
-
-fn decodeSampleFormat(value: u16) ProtocolError!SampleFormat {
-    return switch (value) {
-        1 => .pcm_s16le,
-        2 => .pcm_s24le_packed,
-        3 => .pcm_s24le_in_s32le,
-        4 => .pcm_s32le,
-        5 => .pcm_f32le,
-        else => error.UnsupportedSampleFormat,
-    };
-}
-
+// Wire layout:
+//   buffered_frames         u32
+//   credit_frames           u32
+//   next_render_frame       u64
+//   last_received_sequence  u64
+//   underrun_count          u32
 pub const BufferStatus = struct {
     pub const wire_len: u32 = 28;
 
@@ -348,6 +326,34 @@ pub const BufferStatus = struct {
         };
     }
 };
+
+fn decodeMessageType(value: u16) ProtocolError!MessageType {
+    return switch (value) {
+        1 => .hello,
+        2 => .hello_ack,
+        3 => .start_stream,
+        4 => .stream_info,
+        5 => .audio_frame,
+        6 => .buffer_status,
+        7 => .cancel_generation,
+        8 => .stream_end,
+        9 => .protocol_error,
+        10 => .ping,
+        11 => .pong,
+        else => error.InvalidMessageType,
+    };
+}
+
+fn decodeSampleFormat(value: u16) ProtocolError!SampleFormat {
+    return switch (value) {
+        1 => .pcm_s16le,
+        2 => .pcm_s24le_packed,
+        3 => .pcm_s24le_in_s32le,
+        4 => .pcm_s32le,
+        5 => .pcm_f32le,
+        else => error.UnsupportedSampleFormat,
+    };
+}
 
 test "header encodes the expected wire representation" {
     const header = Header{

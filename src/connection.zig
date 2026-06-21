@@ -90,6 +90,10 @@ const Session = struct {
                         request_obj,
                     );
                 },
+                .cancel_generation => {
+                    try self.requireHello();
+                    try self.handleCancelGeneration(request_obj);
+                },
                 else => {
                     try self.requireHello();
                     std.debug.print("todo: {}\n", .{request_obj.message});
@@ -230,6 +234,23 @@ const Session = struct {
 
             remaining_credit -= sent_frames;
         }
+    }
+
+    fn handleCancelGeneration(
+        self: *Session,
+        request_obj: request.Request,
+    ) !void {
+        const active = if (self.active_stream) |*active|
+            active
+        else
+            return;
+
+        if (request_obj.stream_id != active.stream_id or request_obj.generation_id != active.generation_id) {
+            return;
+        }
+
+        active.deinit(self.allocator);
+        self.active_stream = null;
     }
 
     fn sendNextAudioFrame(
