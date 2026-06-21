@@ -20,6 +20,7 @@ pub const ClientMessage = union(enum) {
     buffer_status: protocol.BufferStatus,
     cancel_generation: void,
     ping: void,
+    pong: void,
 };
 
 pub const Request = struct {
@@ -59,12 +60,16 @@ pub fn decodeRequest(frame: Frame) !Request {
 
             break :blk .{ .hello = {} };
         },
-        .ping => blk: {
+        .ping, .pong => |message_type| blk: {
             if (frame.header.body_len != 0) {
                 return error.InvalidBodyLength;
             }
 
-            break :blk .{ .ping = {} };
+            break :blk switch (message_type) {
+                .ping => .{ .ping = {} },
+                .pong => .{ .pong = {} },
+                else => unreachable,
+            };
         },
         .cancel_generation => blk: {
             if (frame.body.len != 0)
@@ -187,6 +192,25 @@ test "decode rejects a body for an empty-body message" {
         error.InvalidBodyLength,
         decodeRequest(frame),
     );
+}
+
+test "decodes empty ping and pong requests" {
+    inline for (.{ protocol.MessageType.ping, protocol.MessageType.pong }) |message_type| {
+        const actual = try decodeRequest(.{
+            .header = .{
+                .message_type = message_type,
+                .body_len = 0,
+                .sequence = 7,
+            },
+            .body = &.{},
+        });
+
+        try std.testing.expect(switch (message_type) {
+            .ping => actual.message == .ping,
+            .pong => actual.message == .pong,
+            else => unreachable,
+        });
+    }
 }
 
 test "decode rejects server messages from a client" {

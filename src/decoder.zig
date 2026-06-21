@@ -153,6 +153,14 @@ pub const AudioDecoder = struct {
             try self.decodeOneFrameIntoPending();
         }
 
+        // If the caller's buffer ended exactly at a decoded-frame boundary,
+        // decode one frame ahead. This distinguishes "more PCM is available"
+        // from "that was the final PCM" without requiring another read.
+        // Any discovered PCM remains pending for the next call.
+        if (written == out.len and self.pendingSlice().len == 0 and !self.decoder_eof) {
+            try self.decodeOneFrameIntoPending();
+        }
+
         return .{
             .bytes = written,
             .frames = written / self.info.bytesPerFrame(),

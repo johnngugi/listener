@@ -7,10 +7,10 @@ implemented in `src/protocol.zig`.
 
 The protocol is still under development. The common header and the
 `START_STREAM`, `STREAM_INFO`, `AUDIO_FRAME`, and `BUFFER_STATUS` bodies are
-defined. `HELLO`, `HELLO_ACK`, `CANCEL_GENERATION`, and `PING` currently have
-empty bodies. `STREAM_END` is an empty server message. `AUDIO_FRAME` messages
-carry decoded PCM payload bytes. `PROTOCOL_ERROR` has a structured diagnostic
-body. The remaining message bodies are not yet implemented.
+defined. `HELLO`, `HELLO_ACK`, `CANCEL_GENERATION`, `PING`, and `PONG`
+currently have empty bodies. `STREAM_END` is an empty server message.
+`AUDIO_FRAME` messages carry decoded PCM payload bytes. `PROTOCOL_ERROR` has a
+structured diagnostic body.
 
 ## Overview
 
@@ -119,8 +119,8 @@ body length of 1 MiB.
 | 7 | `CANCEL_GENERATION` | Client → server | Empty body |
 | 8 | `STREAM_END` | Server → client | Empty body |
 | 9 | `PROTOCOL_ERROR` | Server → client | Defined |
-| 10 | `PING` | Client → server | Empty body |
-| 11 | `PONG` | Either direction | Body not yet defined |
+| 10 | `PING` | Either direction | Empty body |
+| 11 | `PONG` | Either direction | Empty body |
 
 Unknown message-type values are rejected.
 
@@ -240,8 +240,8 @@ identified stream and generation. Its body is empty, so `body_len` must be
 
 The server sends it immediately after the final `AUDIO_FRAME` when the decoder
 reports end of input with that frame. If the final audio frame exactly fills a
-message, end of input may only be discovered on the next credited read; the
-server sends `STREAM_END` then. It is sent at most once for a generation.
+message, the decoder performs a one-frame lookahead so the server can still
+send `STREAM_END` immediately. It is sent at most once for a generation.
 
 Receiving `STREAM_END` does not mean playback has completed. The client should
 continue rendering audio already buffered for that generation and consider
@@ -345,6 +345,17 @@ The client must discard buffered audio for the cancelled generation and ignore
 any late messages carrying its identifiers. The server does not currently send
 an acknowledgement or `STREAM_END` in response.
 
+## `PING` and `PONG`
+
+Both messages have empty bodies. A receiver must answer `PING` with `PONG`.
+
+After `HELLO`, the server waits 30 seconds between heartbeat checks and allows
+10 seconds for the matching `PONG`. Only one server heartbeat is outstanding
+at a time. If the deadline expires, the server closes the connection and
+releases its active decoder. A connection that does not send `HELLO` within 30
+seconds is also closed. Client-initiated `PING` messages receive an immediate
+`PONG`.
+
 ## Playback generations
 
 The generation ID protects playback state from late or obsolete data:
@@ -409,6 +420,5 @@ protocol. Every field must be encoded and decoded explicitly.
 - Define `channel_layout` values.
 - Define `STREAM_END` reasons.
 - Define stable protocol error codes.
-- Define `PING` and `PONG` timestamps.
 - Decide authentication and encryption for remote connections.
 - Define compressed FLAC and Opus profiles if remote playback is added.

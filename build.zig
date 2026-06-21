@@ -49,7 +49,24 @@ pub fn build(b: *std.Build) void {
     });
     const run_request_tests = b.addRunArtifact(request_tests);
 
+    const connection_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/connection.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    connection_tests.root_module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/include" });
+    connection_tests.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/lib" });
+    connection_tests.root_module.linkSystemLibrary("avformat", .{});
+    connection_tests.root_module.linkSystemLibrary("avcodec", .{});
+    connection_tests.root_module.linkSystemLibrary("avutil", .{});
+    connection_tests.root_module.linkSystemLibrary("swresample", .{});
+    const run_connection_tests = b.addRunArtifact(connection_tests);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_protocol_tests.step);
     test_step.dependOn(&run_request_tests.step);
+    test_step.dependOn(&run_connection_tests.step);
 }

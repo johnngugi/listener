@@ -22,14 +22,37 @@ pub fn handle(
     defer session.deinit();
 
     try session.run(
+        io,
         &stream_reader.interface,
         &stream_writer.interface,
+        .{},
     );
+}
+
+const HeartbeatConfig = struct {
+    ping_interval: std.Io.Clock.Duration = durationSeconds(30),
+    pong_timeout: std.Io.Clock.Duration = durationSeconds(10),
+};
+
+fn durationSeconds(seconds: u64) std.Io.Clock.Duration {
+    return .{
+        .raw = .{ .nanoseconds = @as(i96, seconds) * std.time.ns_per_s },
+        .clock = .awake,
+    };
+}
+
+fn durationMilliseconds(milliseconds: u64) std.Io.Clock.Duration {
+    return .{
+        .raw = .{ .nanoseconds = @as(i96, milliseconds) * std.time.ns_per_ms },
+        .clock = .awake,
+    };
 }
 
 const Session = struct {
     allocator: std.mem.Allocator,
     hello_received: bool = false,
+    awaiting_pong: bool = false,
+    heartbeat_generation: u64 = 0,
     next_server_sequence: u64 = 1,
     active_stream: ?ActiveStream = null,
 
@@ -60,26 +83,100 @@ const Session = struct {
 
     fn run(
         self: *Session,
+        io: std.Io,
         reader: *std.Io.Reader,
         writer: *std.Io.Writer,
+        heartbeat: HeartbeatConfig,
     ) !void {
         var body_buffer: [protocol.StartStream.max_wire_len]u8 = undefined;
 
-        while (true) {
-            const frame = request.read(reader, &body_buffer) catch |err| switch (err) {
-                error.EndOfStream => return,
-                else => return err,
-            };
-            const request_obj = request.decodeRequest(frame) catch |err| {
-                const failure = protocolFailure(err) orelse return err;
-                try self.sendProtocolError(writer, frame.header, failure);
-                continue;
-            };
+        const Event = union(enum) {
+            frame: anyerror!request.Frame,
+            heartbeat: HeartbeatTimer,
+        };
+        var event_buffer: [3]Event = undefined;
+        var select: std.Io.Select(Event) = .init(io, &event_buffer);
+        defer select.cancelDiscard();
 
-            self.handleRequest(writer, request_obj) catch |err| {
-                const failure = protocolFailure(err) orelse return err;
-                try self.sendProtocolError(writer, frame.header, failure);
-            };
+        select.async(.frame, request.read, .{ reader, &body_buffer });
+        select.async(
+            .heartbeat,
+            waitHeartbeat,
+            .{ io, heartbeat.ping_interval, HeartbeatTimer.Kind.interval, self.heartbeat_generation },
+        );
+
+        while (true) {
+            const event = try select.await();
+            switch (event) {
+                .frame => |frame_result| {
+                    const frame = frame_result catch |err| switch (err) {
+                        error.EndOfStream => return,
+                        else => return err,
+                    };
+                    const request_obj = request.decodeRequest(frame) catch |err| {
+                        const failure = protocolFailure(err) orelse return err;
+                        try self.sendProtocolError(writer, frame.header, failure);
+                        select.async(.frame, request.read, .{ reader, &body_buffer });
+                        continue;
+                    };
+
+                    const hello_was_received = self.hello_received;
+                    const was_awaiting_pong = self.awaiting_pong;
+
+                    self.handleRequest(writer, request_obj) catch |err| {
+                        const failure = protocolFailure(err) orelse return err;
+                        try self.sendProtocolError(writer, frame.header, failure);
+                    };
+
+                    const hello_just_arrived =
+                        !hello_was_received and self.hello_received;
+
+                    const pong_just_arrived =
+                        was_awaiting_pong and !self.awaiting_pong;
+
+                    if (hello_just_arrived or pong_just_arrived) {
+                        self.heartbeat_generation += 1;
+                        select.async(
+                            .heartbeat,
+                            waitHeartbeat,
+                            .{
+                                io,
+                                heartbeat.ping_interval,
+                                HeartbeatTimer.Kind.interval,
+                                self.heartbeat_generation,
+                            },
+                        );
+                    }
+
+                    select.async(.frame, request.read, .{ reader, &body_buffer });
+                },
+                .heartbeat => |timer| {
+                    try timer.result;
+                    if (timer.generation != self.heartbeat_generation) continue;
+
+                    switch (timer.kind) {
+                        .interval => {
+                            if (!self.hello_received) return error.HandshakeTimeout;
+
+                            try self.sendPing(writer);
+                            self.awaiting_pong = true;
+                            select.async(
+                                .heartbeat,
+                                waitHeartbeat,
+                                .{
+                                    io,
+                                    heartbeat.pong_timeout,
+                                    HeartbeatTimer.Kind.pong_timeout,
+                                    self.heartbeat_generation,
+                                },
+                            );
+                        },
+                        .pong_timeout => {
+                            if (self.awaiting_pong) return error.HeartbeatTimeout;
+                        },
+                    }
+                },
+            }
         }
     }
 
@@ -110,9 +207,13 @@ const Session = struct {
                 try self.requireHello();
                 try self.handleCancelGeneration(request_obj);
             },
-            else => {
+            .ping => {
                 try self.requireHello();
-                std.debug.print("todo: {}\n", .{request_obj.message});
+                try self.sendPong(writer);
+            },
+            .pong => {
+                try self.requireHello();
+                self.awaiting_pong = false;
             },
         }
     }
@@ -125,14 +226,30 @@ const Session = struct {
         self: *Session,
         writer: *std.Io.Writer,
     ) !void {
-        const response_header = protocol.Header{
-            .message_type = .hello_ack,
+        try self.sendEmptyMessage(writer, .hello_ack);
+    }
+
+    fn sendPing(self: *Session, writer: *std.Io.Writer) !void {
+        try self.sendEmptyMessage(writer, .ping);
+    }
+
+    fn sendPong(self: *Session, writer: *std.Io.Writer) !void {
+        try self.sendEmptyMessage(writer, .pong);
+    }
+
+    fn sendEmptyMessage(
+        self: *Session,
+        writer: *std.Io.Writer,
+        message_type: protocol.MessageType,
+    ) !void {
+        const header = protocol.Header{
+            .message_type = message_type,
             .body_len = 0,
             .sequence = self.next_server_sequence,
         };
 
-        const response_bytes = try response_header.encode();
-        try writer.writeAll(&response_bytes);
+        const header_bytes = try header.encode();
+        try writer.writeAll(&header_bytes);
         self.next_server_sequence += 1;
     }
 
@@ -387,6 +504,30 @@ const Session = struct {
     }
 };
 
+const HeartbeatTimer = struct {
+    const Kind = enum {
+        interval,
+        pong_timeout,
+    };
+
+    kind: Kind,
+    generation: u64,
+    result: std.Io.Cancelable!void,
+};
+
+fn waitHeartbeat(
+    io: std.Io,
+    duration: std.Io.Clock.Duration,
+    kind: HeartbeatTimer.Kind,
+    generation: u64,
+) HeartbeatTimer {
+    return .{
+        .kind = kind,
+        .generation = generation,
+        .result = duration.sleep(io),
+    };
+}
+
 fn sendStreamEnd(
     writer: *std.Io.Writer,
     active: *const Session.ActiveStream,
@@ -477,4 +618,113 @@ fn acknowledgeAudio(active: *Session.ActiveStream, last_received_sequence: u64) 
     @memmove(active.sent_audio.items[0..remaining.len], remaining);
 
     active.sent_audio.items.len = remaining.len;
+}
+
+test "ping receives pong" {
+    var session = Session{
+        .allocator = std.testing.allocator,
+        .hello_received = true,
+    };
+    defer session.deinit();
+
+    var response_storage: [protocol.header_wire_len]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&response_storage);
+
+    try session.handleRequest(&writer, .{
+        .stream_id = 0,
+        .generation_id = 0,
+        .sequence = 1,
+        .message = .{ .ping = {} },
+    });
+
+    const header = try protocol.Header.decode(writer.buffered());
+    try std.testing.expectEqual(protocol.MessageType.pong, header.message_type);
+    try std.testing.expectEqual(@as(u32, 0), header.body_len);
+    try std.testing.expectEqual(@as(u64, 1), header.sequence);
+}
+
+test "pong completes an outstanding heartbeat" {
+    var session = Session{
+        .allocator = std.testing.allocator,
+        .hello_received = true,
+        .awaiting_pong = true,
+    };
+    defer session.deinit();
+
+    var response_storage: [protocol.header_wire_len]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&response_storage);
+
+    try session.handleRequest(&writer, .{
+        .stream_id = 0,
+        .generation_id = 0,
+        .sequence = 1,
+        .message = .{ .pong = {} },
+    });
+
+    try std.testing.expect(!session.awaiting_pong);
+    try std.testing.expectEqual(@as(usize, 0), writer.buffered().len);
+}
+
+test "missing pong closes the session after the heartbeat timeout" {
+    const io = std.testing.io;
+    var handles: [2]std.posix.socket_t = undefined;
+    if (std.posix.errno(std.posix.system.socketpair(
+        std.posix.AF.UNIX,
+        std.posix.SOCK.STREAM,
+        0,
+        &handles,
+    )) != .SUCCESS) {
+        return error.SocketPairFailed;
+    }
+    const sockets = [2]std.Io.net.Socket{
+        .{ .handle = handles[0], .address = .{ .ip4 = .loopback(0) } },
+        .{ .handle = handles[1], .address = .{ .ip4 = .loopback(0) } },
+    };
+    defer sockets[0].close(io);
+    defer sockets[1].close(io);
+
+    const server_stream = std.Io.net.Stream{ .socket = sockets[0] };
+    const client_stream = std.Io.net.Stream{ .socket = sockets[1] };
+
+    var server_read_buffer: [1024]u8 = undefined;
+    var server_reader = server_stream.reader(io, &server_read_buffer);
+    var server_writer = server_stream.writer(io, &.{});
+
+    var session = Session{ .allocator = std.testing.allocator };
+    defer session.deinit();
+
+    var server_future = try std.Io.concurrent(
+        io,
+        Session.run,
+        .{
+            &session,
+            io,
+            &server_reader.interface,
+            &server_writer.interface,
+            HeartbeatConfig{
+                .ping_interval = durationMilliseconds(10),
+                .pong_timeout = durationMilliseconds(10),
+            },
+        },
+    );
+
+    var client_writer = client_stream.writer(io, &.{});
+    const hello = try (protocol.Header{
+        .message_type = .hello,
+        .body_len = 0,
+        .sequence = 1,
+    }).encode();
+    try client_writer.interface.writeAll(&hello);
+
+    var client_read_buffer: [1024]u8 = undefined;
+    var client_reader = client_stream.reader(io, &client_read_buffer);
+    var body_storage: [protocol.StartStream.max_wire_len]u8 = undefined;
+
+    const hello_ack = try request.read(&client_reader.interface, &body_storage);
+    try std.testing.expectEqual(protocol.MessageType.hello_ack, hello_ack.header.message_type);
+
+    const ping = try request.read(&client_reader.interface, &body_storage);
+    try std.testing.expectEqual(protocol.MessageType.ping, ping.header.message_type);
+
+    try std.testing.expectError(error.HeartbeatTimeout, server_future.await(io));
 }
