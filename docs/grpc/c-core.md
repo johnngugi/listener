@@ -19,6 +19,11 @@ The LSTN TCP protocol remains the media/data plane. It still carries audio
 frames, buffer status, stream generations, heartbeats, and protocol errors on
 its own connections. gRPC does not serialize or deserialize LSTN frames.
 
+The gRPC control plane is the authoritative source for user-visible playback
+state such as `starting`, `playing`, `paused`, `stopped`, `ended`, and
+`error`. LSTN stream state is transport state for a specific media generation;
+clients should not treat it as a substitute for `Status` or `Watch`.
+
 The gRPC API should stay behind `src/grpc/c_core.zig` and control-plane logic
 should use `src/control.zig` types. The rest of the app should not see
 `grpc_call`, `grpc_op`, completion-queue tags, or serialized protobuf buffers.
@@ -36,13 +41,24 @@ should use `src/control.zig` types. The rest of the app should not see
 `src/control.zig` types. It intentionally does not implement a general Zig
 protobuf or gRPC binding.
 
+`src/control.zig` defines the transport-neutral command, response, status, and
+event types. `src/playback.zig` owns playback IDs and state transitions behind
+that boundary. The gRPC serving loop should call the playback controller with
+decoded `control.Command` values and encode the returned `control.Response`
+values back to protobuf.
+
 The next step is a Listener-specific control loop that:
 
 1. accepts only `listener.control.v1.ListenerControl` methods;
 2. receives request messages from C-core and passes their payloads to the
    control-only codec;
-3. updates playback/session state that the TCP media plane consumes; and
+3. executes decoded commands through `src/playback.zig`; and
 4. maps control failures to gRPC status codes.
+
+The TCP media session should report transport-derived progress and terminal
+events back through the playback boundary. For example, `BUFFER_STATUS` can
+advance `current_frame`, a new stream generation can update `generation_id`,
+and end-of-stream can become an `ended` playback state.
 
 ## Building With C-core
 
@@ -74,3 +90,7 @@ The gRPC schema models player control, not the LSTN media protocol:
 
 Transport-level and control-command failures should become gRPC statuses. LSTN
 protocol errors remain on the TCP media/data connection.
+
+An eventual client should open its playback-state subscription through
+`Watch(playback_id)` or query `Status(playback_id)` first, then use LSTN for
+the corresponding media stream bytes and buffer accounting.

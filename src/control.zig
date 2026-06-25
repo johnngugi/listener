@@ -44,6 +44,12 @@ pub const Command = union(enum) {
     status: Target,
 };
 
+pub const ControlError = error{
+    PlaybackNotFound,
+    InvalidState,
+    UnsupportedOperation,
+};
+
 pub const Start = struct {
     media_path: []const u8,
     start_frame: u64 = 0,
@@ -56,6 +62,38 @@ pub const Target = struct {
 pub const Seek = struct {
     playback_id: []const u8,
     frame: u64,
+};
+
+pub const StartResult = struct {
+    playback_id: []const u8,
+    state: PlaybackState,
+};
+
+pub const CommandResult = struct {
+    playback_id: []const u8,
+    state: PlaybackState,
+};
+
+pub const Status = struct {
+    playback_id: []const u8,
+    state: PlaybackState,
+    media_path: []const u8,
+    current_frame: u64,
+    generation_id: u64,
+};
+
+pub const PlaybackEvent = struct {
+    playback_id: []const u8,
+    state: PlaybackState,
+    current_frame: u64,
+    generation_id: u64,
+    detail: []const u8 = "",
+};
+
+pub const Response = union(enum) {
+    start: StartResult,
+    command: CommandResult,
+    status: Status,
 };
 
 test "control method names are independent of the media protocol" {

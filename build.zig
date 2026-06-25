@@ -63,6 +63,15 @@ pub fn build(b: *std.Build) void {
     });
     const run_control_tests = b.addRunArtifact(control_tests);
 
+    const playback_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/playback.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_playback_tests = b.addRunArtifact(playback_tests);
+
     const grpc_codec_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/grpc_codec_test.zig"),
@@ -92,6 +101,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_protocol_tests.step);
     test_step.dependOn(&run_request_tests.step);
     test_step.dependOn(&run_control_tests.step);
+    test_step.dependOn(&run_playback_tests.step);
     test_step.dependOn(&run_grpc_codec_tests.step);
     test_step.dependOn(&run_connection_tests.step);
 
