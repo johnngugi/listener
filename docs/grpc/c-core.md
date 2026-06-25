@@ -32,15 +32,17 @@ should use `src/control.zig` types. The rest of the app should not see
 - insecure HTTP/2 server port binding for local development
 - `grpc_server_request_call` for accepting calls
 
-It intentionally does not implement a general Zig gRPC binding. The next step
-is a Listener-specific control loop that:
+`src/grpc/codec.zig` decodes Listener-specific protobuf request payloads into
+`src/control.zig` types. It intentionally does not implement a general Zig
+protobuf or gRPC binding.
+
+The next step is a Listener-specific control loop that:
 
 1. accepts only `listener.control.v1.ListenerControl` methods;
-2. decodes control requests using generated protobuf support or a
+2. receives request messages from C-core and passes their payloads to the
    control-only codec;
-3. turns requests into `control.Command` values;
-4. updates playback/session state that the TCP media plane consumes; and
-5. maps control failures to gRPC status codes.
+3. updates playback/session state that the TCP media plane consumes; and
+4. maps control failures to gRPC status codes.
 
 ## Building With C-core
 
