@@ -3,6 +3,11 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const enable_grpc = b.option(
+        bool,
+        "grpc",
+        "Compile optional gRPC C-core integration checks",
+    ) orelse false;
 
     const exe = b.addExecutable(.{
         .name = "listener",
@@ -49,6 +54,15 @@ pub fn build(b: *std.Build) void {
     });
     const run_request_tests = b.addRunArtifact(request_tests);
 
+    const control_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/control.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_control_tests = b.addRunArtifact(control_tests);
+
     const connection_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/connection.zig"),
@@ -68,5 +82,21 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_protocol_tests.step);
     test_step.dependOn(&run_request_tests.step);
+    test_step.dependOn(&run_control_tests.step);
     test_step.dependOn(&run_connection_tests.step);
+
+    if (enable_grpc) {
+        const grpc_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/grpc_c_core_test.zig"),
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            }),
+        });
+        grpc_tests.root_module.linkSystemLibrary("grpc", .{});
+
+        const run_grpc_tests = b.addRunArtifact(grpc_tests);
+        test_step.dependOn(&run_grpc_tests.step);
+    }
 }

@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package listener.control.v1;
+
+service ListenerControl {
+  rpc Start(StartRequest) returns (StartResponse);
+  rpc Stop(StopRequest) returns (CommandResponse);
+  rpc Pause(PauseRequest) returns (CommandResponse);
+  rpc Resume(ResumeRequest) returns (CommandResponse);
+  rpc Seek(SeekRequest) returns (CommandResponse);
+  rpc Status(StatusRequest) returns (StatusResponse);
+  rpc Watch(WatchRequest) returns (stream PlaybackEvent);
+}
+
+message StartRequest {
+  string media_path = 1;
+  uint64 start_frame = 2;
+}
+
+message StartResponse {
+  string playback_id = 1;
+  PlaybackState state = 2;
+}
+
+message StopRequest {
+  string playback_id = 1;
+}
+
+message PauseRequest {
+  string playback_id = 1;
+}
+
+message ResumeRequest {
+  string playback_id = 1;
+}
+
+message SeekRequest {
+  string playback_id = 1;
+  uint64 frame = 2;
+}
+
+message StatusRequest {
+  string playback_id = 1;
+}
+
+message WatchRequest {
+  string playback_id = 1;
+}
+
+message CommandResponse {
+  string playback_id = 1;
+  PlaybackState state = 2;
+}
+
+message StatusResponse {
+  string playback_id = 1;
+  PlaybackState state = 2;
+  string media_path = 3;
+  uint64 current_frame = 4;
+  uint64 generation_id = 5;
+}
+
+message PlaybackEvent {
+  string playback_id = 1;
+  PlaybackState state = 2;
+  uint64 current_frame = 3;
+  uint64 generation_id = 4;
+  string detail = 5;
+}
+
+enum PlaybackState {
+  PLAYBACK_STATE_UNSPECIFIED = 0;
+  PLAYBACK_STATE_IDLE = 1;
+  PLAYBACK_STATE_STARTING = 2;
+  PLAYBACK_STATE_PLAYING = 3;
+  PLAYBACK_STATE_PAUSED = 4;
+  PLAYBACK_STATE_STOPPED = 5;
+  PLAYBACK_STATE_ENDED = 6;
+  PLAYBACK_STATE_ERROR = 7;
+}
