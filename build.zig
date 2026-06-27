@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
     const enable_grpc = b.option(
         bool,
         "grpc",
-        "Compile optional gRPC C-core integration checks",
+        "Compile optional gRPC server integration checks",
     ) orelse false;
 
     const exe = b.addExecutable(.{
@@ -108,7 +108,7 @@ pub fn build(b: *std.Build) void {
     if (enable_grpc) {
         const grpc_tests = b.addTest(.{
             .root_module = b.createModule(.{
-                .root_source_file = b.path("src/grpc_c_core_test.zig"),
+                .root_source_file = b.path("src/grpc_server_test.zig"),
                 .target = target,
                 .optimize = optimize,
                 .link_libc = true,

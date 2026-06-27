@@ -1,4 +1,4 @@
-# gRPC C-core Integration
+# gRPC Server Adapter
 
 Listener exposes a separate gRPC control-plane contract in
 `proto/listener/v1/listener.proto`:
@@ -24,13 +24,13 @@ state such as `starting`, `playing`, `paused`, `stopped`, `ended`, and
 `error`. LSTN stream state is transport state for a specific media generation;
 clients should not treat it as a substitute for `Status` or `Watch`.
 
-The gRPC API should stay behind `src/grpc/c_core.zig` and control-plane logic
+The gRPC API should stay behind `src/grpc/server.zig` and control-plane logic
 should use `src/control.zig` types. The rest of the app should not see
 `grpc_call`, `grpc_op`, completion-queue tags, or serialized protobuf buffers.
 
 ## Current Scaffold
 
-`src/grpc/c_core.zig` contains the C-core lifecycle and call-accept surface:
+`src/grpc/server.zig` contains the gRPC server lifecycle and call-accept surface:
 
 - `grpc_init` / `grpc_shutdown`
 - completion queue creation and draining
@@ -50,7 +50,7 @@ values back to protobuf.
 The next step is a Listener-specific control loop that:
 
 1. accepts only `listener.control.v1.ListenerControl` methods;
-2. receives request messages from C-core and passes their payloads to the
+2. receives request messages from the gRPC adapter and passes their payloads to the
    control-only codec;
 3. executes decoded commands through `src/playback.zig`; and
 4. maps control failures to gRPC status codes.
@@ -60,10 +60,10 @@ events back through the playback boundary. For example, `BUFFER_STATUS` can
 advance `current_frame`, a new stream generation can update `generation_id`,
 and end-of-stream can become an `ended` playback state.
 
-## Building With C-core
+## Building The gRPC Adapter
 
-The default build does not require gRPC C-core. To compile the optional C-core
-adapter, install the C library and run:
+The default build does not require the gRPC C library. To compile the optional
+gRPC adapter, install the C library and run:
 
 ```sh
 zig build test -Dgrpc=true

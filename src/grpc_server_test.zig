@@ -1,4 +1,4 @@
 test {
-    _ = @import("grpc/c_core.zig");
+    _ = @import("grpc/server.zig");
     _ = @import("grpc/codec.zig");
 }

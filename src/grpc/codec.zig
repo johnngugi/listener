@@ -20,6 +20,34 @@ pub const Request = union(enum) {
     watch: control.Target,
 };
 
+pub fn encodeResponse(
+    allocator: std.mem.Allocator,
+    response: control.Response,
+) std.mem.Allocator.Error![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    switch (response) {
+        .start => |start| {
+            try appendString(&out, allocator, 1, start.playback_id);
+            try appendEnum(&out, allocator, 2, start.state);
+        },
+        .command => |command| {
+            try appendString(&out, allocator, 1, command.playback_id);
+            try appendEnum(&out, allocator, 2, command.state);
+        },
+        .status => |status| {
+            try appendString(&out, allocator, 1, status.playback_id);
+            try appendEnum(&out, allocator, 2, status.state);
+            try appendString(&out, allocator, 3, status.media_path);
+            try appendUint64(&out, allocator, 4, status.current_frame);
+            try appendUint64(&out, allocator, 5, status.generation_id);
+        },
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
 pub fn decodeRequest(method: []const u8, message: []const u8) DecodeError!Request {
     if (std.mem.eql(u8, method, control.Method.start.fullName())) {
         return .{ .command = .{ .start = try decodeStart(message) } };
@@ -44,6 +72,74 @@ pub fn decodeRequest(method: []const u8, message: []const u8) DecodeError!Reques
     }
 
     return error.InvalidMethod;
+}
+
+fn appendString(
+    out: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    field_number: u32,
+    value: []const u8,
+) std.mem.Allocator.Error!void {
+    try appendKey(out, allocator, field_number, .length_delimited);
+    try appendVarint(out, allocator, value.len);
+    try out.appendSlice(allocator, value);
+}
+
+fn appendEnum(
+    out: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    field_number: u32,
+    state: control.PlaybackState,
+) std.mem.Allocator.Error!void {
+    try appendUint64(out, allocator, field_number, playbackStateValue(state));
+}
+
+fn appendUint64(
+    out: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    field_number: u32,
+    value: u64,
+) std.mem.Allocator.Error!void {
+    try appendKey(out, allocator, field_number, .varint);
+    try appendVarint(out, allocator, value);
+}
+
+fn appendKey(
+    out: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    field_number: u32,
+    wire_type: WireType,
+) std.mem.Allocator.Error!void {
+    try appendVarint(
+        out,
+        allocator,
+        (@as(u64, field_number) << 3) | @intFromEnum(wire_type),
+    );
+}
+
+fn appendVarint(
+    out: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    value: u64,
+) std.mem.Allocator.Error!void {
+    var remaining = value;
+    while (remaining >= 0x80) {
+        try out.append(allocator, @as(u8, @intCast(remaining & 0x7f)) | 0x80);
+        remaining >>= 7;
+    }
+    try out.append(allocator, @intCast(remaining));
+}
+
+fn playbackStateValue(state: control.PlaybackState) u64 {
+    return switch (state) {
+        .idle => 1,
+        .starting => 2,
+        .playing => 3,
+        .paused => 4,
+        .stopped => 5,
+        .ended => 6,
+        .error_state => 7,
+    };
 }
 
 fn decodeStart(message: []const u8) DecodeError!control.Start {
@@ -230,6 +326,60 @@ test "decodes start request" {
         request.command.start.media_path,
     );
     try std.testing.expectEqual(@as(u64, 150), request.command.start.start_frame);
+}
+
+test "encodes start response" {
+    const encoded = try encodeResponse(std.testing.allocator, .{
+        .start = .{
+            .playback_id = "playback-1",
+            .state = .starting,
+        },
+    });
+    defer std.testing.allocator.free(encoded);
+
+    try std.testing.expectEqualStrings(
+        "\x0a\x0aplayback-1" ++
+            "\x10\x02",
+        encoded,
+    );
+}
+
+test "encodes command response" {
+    const encoded = try encodeResponse(std.testing.allocator, .{
+        .command = .{
+            .playback_id = "playback-1",
+            .state = .paused,
+        },
+    });
+    defer std.testing.allocator.free(encoded);
+
+    try std.testing.expectEqualStrings(
+        "\x0a\x0aplayback-1" ++
+            "\x10\x04",
+        encoded,
+    );
+}
+
+test "encodes status response" {
+    const encoded = try encodeResponse(std.testing.allocator, .{
+        .status = .{
+            .playback_id = "playback-1",
+            .state = .playing,
+            .media_path = "/tmp/song.flac",
+            .current_frame = 4096,
+            .generation_id = 2,
+        },
+    });
+    defer std.testing.allocator.free(encoded);
+
+    try std.testing.expectEqualStrings(
+        "\x0a\x0aplayback-1" ++
+            "\x10\x03" ++
+            "\x1a\x0e/tmp/song.flac" ++
+            "\x20\x80\x20" ++
+            "\x28\x02",
+        encoded,
+    );
 }
 
 test "decodes target control requests" {
