@@ -1,6 +1,10 @@
 const std = @import("std");
 const connection = @import("connection.zig");
 
+pub const BufferStatusEvent = connection.BufferStatusEvent;
+pub const Hooks = connection.Hooks;
+pub const StartStreamEvent = connection.StartStreamEvent;
+
 const Socket = std.Io.net.Socket;
 const Protocol = std.Io.net.Protocol;
 
@@ -9,7 +13,12 @@ pub const Config = struct {
     port: u16,
 };
 
-pub fn run(io: std.Io, allocator: std.mem.Allocator, config: Config) !void {
+pub fn run(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    hooks: Hooks,
+    config: Config,
+) !void {
     const address = try std.Io.net.IpAddress.parse(config.host, config.port);
 
     var listener = try address.listen(io, .{
@@ -26,7 +35,7 @@ pub fn run(io: std.Io, allocator: std.mem.Allocator, config: Config) !void {
     while (true) {
         const stream = try listener.accept(io);
 
-        const thread = std.Thread.spawn(.{}, connection.handle, .{ io, stream, allocator }) catch |err| {
+        const thread = std.Thread.spawn(.{}, connection.handle, .{ io, stream, allocator, hooks }) catch |err| {
             std.debug.print("Failed to spawn connection: {}\n", .{err});
             stream.close(io);
             continue;

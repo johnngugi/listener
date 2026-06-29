@@ -1,13 +1,45 @@
 const std = @import("std");
 
-const decoder = @import("decoder.zig");
+const decoder = @import("../decoder.zig");
 const protocol = @import("protocol.zig");
 const request = @import("request.zig");
+
+pub const StartStreamEvent = struct {
+    playback_id: []const u8,
+    media_path: []const u8,
+    stream_id: u64,
+    generation_id: u64,
+    start_frame: u64,
+};
+
+pub const BufferStatusEvent = struct {
+    playback_id: []const u8,
+    stream_id: u64,
+    generation_id: u64,
+    next_render_frame: u64,
+};
+
+pub const HookError = error{
+    StartStreamRejected,
+};
+
+pub const Hooks = struct {
+    context: ?*anyopaque = null,
+    on_start_stream: ?*const fn (
+        context: ?*anyopaque,
+        event: StartStreamEvent,
+    ) anyerror!void = null,
+    on_buffer_status: ?*const fn (
+        context: ?*anyopaque,
+        event: BufferStatusEvent,
+    ) void = null,
+};
 
 pub fn handle(
     io: std.Io,
     stream: std.Io.net.Stream,
     allocator: std.mem.Allocator,
+    hooks: Hooks,
 ) !void {
     defer stream.close(io);
 
@@ -18,6 +50,7 @@ pub fn handle(
 
     var session = Session{
         .allocator = allocator,
+        .hooks = hooks,
     };
     defer session.deinit();
 
@@ -50,6 +83,7 @@ fn durationMilliseconds(milliseconds: u64) std.Io.Clock.Duration {
 
 const Session = struct {
     allocator: std.mem.Allocator,
+    hooks: Hooks = .{},
     hello_received: bool = false,
     awaiting_pong: bool = false,
     heartbeat_generation: u64 = 0,
@@ -58,6 +92,7 @@ const Session = struct {
 
     const ActiveStream = struct {
         decoder: decoder.AudioDecoder,
+        playback_id: []u8,
         stream_id: u64,
         generation_id: u64,
         next_frame_offset: u64,
@@ -66,6 +101,7 @@ const Session = struct {
 
         fn deinit(self: *ActiveStream, allocator: std.mem.Allocator) void {
             self.decoder.deinit();
+            allocator.free(self.playback_id);
             self.sent_audio.deinit(allocator);
         }
     };
@@ -263,6 +299,9 @@ const Session = struct {
             return error.SeekNotImplemented;
         }
 
+        const playback_id = try self.allocator.dupe(u8, start_stream.playback_id);
+        errdefer self.allocator.free(playback_id);
+
         const path = try self.allocator.dupeSentinel(
             u8,
             start_stream.media_path,
@@ -284,6 +323,16 @@ const Session = struct {
         };
         const channels = std.math.cast(u16, track.channels) orelse
             return error.TooManyChannels;
+
+        if (self.hooks.on_start_stream) |on_start_stream| {
+            try on_start_stream(self.hooks.context, .{
+                .playback_id = start_stream.playback_id,
+                .media_path = start_stream.media_path,
+                .stream_id = request_obj.stream_id,
+                .generation_id = request_obj.generation_id,
+                .start_frame = start_stream.requested_start_frame,
+            });
+        }
 
         const stream_info = protocol.StreamInfo{
             .format = format,
@@ -315,6 +364,7 @@ const Session = struct {
 
         self.active_stream = .{
             .decoder = audio_decoder,
+            .playback_id = playback_id,
             .stream_id = request_obj.stream_id,
             .generation_id = request_obj.generation_id,
             .next_frame_offset = 0,
@@ -345,6 +395,15 @@ const Session = struct {
         }
 
         acknowledgeAudio(active, status.last_received_sequence);
+
+        if (self.hooks.on_buffer_status) |on_buffer_status| {
+            on_buffer_status(self.hooks.context, .{
+                .playback_id = active.playback_id,
+                .stream_id = active.stream_id,
+                .generation_id = active.generation_id,
+                .next_render_frame = status.next_render_frame,
+            });
+        }
 
         var unacknowledged_frames: u64 = 0;
         for (active.sent_audio.items) |sent| {
@@ -556,6 +615,14 @@ fn protocolFailure(err: anyerror) ?ProtocolFailure {
             .code = .invalid_body,
             .detail = "invalid message body",
         },
+        error.InvalidMediaPath => .{
+            .code = .invalid_body,
+            .detail = "invalid media path",
+        },
+        error.InvalidPlaybackId => .{
+            .code = .invalid_body,
+            .detail = "invalid playback id",
+        },
         error.UnexpectedClientMessage => .{
             .code = .unexpected_message,
             .detail = "message type is not valid from a client",
@@ -579,6 +646,10 @@ fn protocolFailure(err: anyerror) ?ProtocolFailure {
         error.SeekNotImplemented => .{
             .code = .unsupported_operation,
             .detail = "seeking is not implemented",
+        },
+        error.StartStreamRejected => .{
+            .code = .invalid_state,
+            .detail = "start stream was rejected",
         },
         error.CouldNotOpenInput,
         error.CouldNotFindStreamInfo,

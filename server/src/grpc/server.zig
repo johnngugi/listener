@@ -7,6 +7,7 @@ const codec = @import("codec.zig");
 const c = @cImport({
     @cInclude("grpc/byte_buffer.h");
     @cInclude("grpc/byte_buffer_reader.h");
+    @cInclude("grpc/credentials.h");
     @cInclude("grpc/grpc.h");
     @cInclude("grpc/grpc_security.h");
     @cInclude("grpc/slice.h");
@@ -49,9 +50,14 @@ pub const Server = struct {
 
         c.grpc_server_register_completion_queue(server, cq, null);
 
-        const bound_port = c.grpc_server_add_insecure_http2_port(
+        const credentials = c.grpc_insecure_server_credentials_create() orelse
+            return error.GrpcCredentialsCreateFailed;
+        defer c.grpc_server_credentials_release(credentials);
+
+        const bound_port = c.grpc_server_add_http2_port(
             server,
             config.address.ptr,
+            credentials,
         );
         if (bound_port == 0) return error.GrpcBindFailed;
 
@@ -66,7 +72,8 @@ pub const Server = struct {
 
     pub fn deinit(self: *Server) void {
         var shutdown_tag: u8 = 0;
-        c.grpc_server_shutdown_and_notify(self.server, self.cq, &shutdown_tag);
+        const shutdown_tag_ptr: *anyopaque = @ptrCast(&shutdown_tag);
+        c.grpc_server_shutdown_and_notify(self.server, self.cq, shutdown_tag_ptr);
 
         while (true) {
             const event = c.grpc_completion_queue_next(
@@ -74,7 +81,7 @@ pub const Server = struct {
                 c.gpr_inf_future(c.GPR_CLOCK_REALTIME),
                 null,
             );
-            if (event.type == c.GRPC_OP_COMPLETE and event.tag == &shutdown_tag) {
+            if (event.type == c.GRPC_OP_COMPLETE and event.tag == shutdown_tag_ptr) {
                 break;
             }
             if (event.type == c.GRPC_QUEUE_SHUTDOWN) {
@@ -103,7 +110,7 @@ pub const Server = struct {
         call: *IncomingCall,
         tag: *anyopaque,
     ) void {
-        c.grpc_server_request_call(
+        _ = c.grpc_server_request_call(
             self.server,
             &call.call,
             &call.details,
@@ -400,9 +407,12 @@ fn readByteBuffer(
 }
 
 fn sliceBytes(slice: c.grpc_slice) []const u8 {
-    const ptr = c.GRPC_SLICE_START_PTR(slice);
-    const len = c.GRPC_SLICE_LENGTH(slice);
-    return @as([*]const u8, @ptrCast(ptr))[0..len];
+    if (slice.refcount != null) {
+        const ptr: [*]const u8 = @ptrCast(slice.data.refcounted.bytes);
+        return ptr[0..slice.data.refcounted.length];
+    }
+
+    return slice.data.inlined.bytes[0..slice.data.inlined.length];
 }
 
 const MappedStatus = struct {

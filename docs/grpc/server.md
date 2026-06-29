@@ -24,25 +24,25 @@ state such as `starting`, `playing`, `paused`, `stopped`, `ended`, and
 `error`. LSTN stream state is transport state for a specific media generation;
 clients should not treat it as a substitute for `Status` or `Watch`.
 
-The gRPC API should stay behind `src/grpc/server.zig` and control-plane logic
-should use `src/control.zig` types. The rest of the app should not see
+The gRPC API should stay behind `server/src/grpc/server.zig` and control-plane logic
+should use `server/src/control.zig` types. The rest of the app should not see
 `grpc_call`, `grpc_op`, completion-queue tags, or serialized protobuf buffers.
 
 ## Current Scaffold
 
-`src/grpc/server.zig` contains the gRPC server lifecycle and call-accept surface:
+`server/src/grpc/server.zig` contains the gRPC server lifecycle and call-accept surface:
 
 - `grpc_init` / `grpc_shutdown`
 - completion queue creation and draining
 - insecure HTTP/2 server port binding for local development
 - `grpc_server_request_call` for accepting calls
 
-`src/grpc/codec.zig` decodes Listener-specific protobuf request payloads into
-`src/control.zig` types. It intentionally does not implement a general Zig
+`server/src/grpc/codec.zig` decodes Listener-specific protobuf request payloads into
+`server/src/control.zig` types. It intentionally does not implement a general Zig
 protobuf or gRPC binding.
 
-`src/control.zig` defines the transport-neutral command, response, status, and
-event types. `src/playback.zig` owns playback IDs and state transitions behind
+`server/src/control.zig` defines the transport-neutral command, response, status, and
+event types. `server/src/playback.zig` owns playback IDs and state transitions behind
 that boundary. The gRPC serving loop should call the playback controller with
 decoded `control.Command` values and encode the returned `control.Response`
 values back to protobuf.
@@ -52,7 +52,7 @@ The next step is a Listener-specific control loop that:
 1. accepts only `listener.control.v1.ListenerControl` methods;
 2. receives request messages from the gRPC adapter and passes their payloads to the
    control-only codec;
-3. executes decoded commands through `src/playback.zig`; and
+3. executes decoded commands through `server/src/playback.zig`; and
 4. maps control failures to gRPC status codes.
 
 The TCP media session should report transport-derived progress and terminal
@@ -91,6 +91,9 @@ The gRPC schema models player control, not the LSTN media protocol:
 Transport-level and control-command failures should become gRPC statuses. LSTN
 protocol errors remain on the TCP media/data connection.
 
-An eventual client should open its playback-state subscription through
-`Watch(playback_id)` or query `Status(playback_id)` first, then use LSTN for
-the corresponding media stream bytes and buffer accounting.
+An eventual client should call `Start`, use the returned `playback_id` in the
+LSTN `START_STREAM` body, then open its playback-state subscription through
+`Watch(playback_id)` or query `Status(playback_id)`. The LSTN server binds
+that playback ID to the media header's `stream_id` and `generation_id`, and
+buffer accounting for the active stream reports progress back to the playback
+controller.

@@ -9,14 +9,24 @@ pub const SessionUpdate = struct {
     generation_id: ?u64 = null,
 };
 
+pub const StreamBinding = struct {
+    playback_id: []const u8,
+    media_path: []const u8,
+    stream_id: u64,
+    generation_id: u64,
+    start_frame: u64,
+};
+
 pub const Controller = struct {
     allocator: std.mem.Allocator,
+    mutex: std.atomic.Mutex = .unlocked,
     next_playback_number: u64 = 1,
     sessions: std.ArrayList(Session) = .empty,
 
     const Session = struct {
         playback_id: []u8,
         media_path: []u8,
+        lstn_stream: ?LstnStream = null,
         state: control.PlaybackState,
         current_frame: u64,
         generation_id: u64,
@@ -51,6 +61,11 @@ pub const Controller = struct {
         }
     };
 
+    const LstnStream = struct {
+        stream_id: u64,
+        generation_id: u64,
+    };
+
     pub fn init(allocator: std.mem.Allocator) Controller {
         return .{ .allocator = allocator };
     }
@@ -62,27 +77,46 @@ pub const Controller = struct {
         self.sessions.deinit(self.allocator);
     }
 
+    fn lock(self: *Controller) void {
+        while (!self.mutex.tryLock()) {
+            std.Thread.yield() catch {};
+        }
+    }
+
     pub fn execute(
         self: *Controller,
         command: control.Command,
     ) (std.mem.Allocator.Error || control.ControlError)!control.Response {
+        self.lock();
+        defer self.mutex.unlock();
+
         return switch (command) {
             .start => |start_request| .{
-                .start = try self.start(start_request),
+                .start = try self.startLocked(start_request),
             },
-            .stop => |target| .{ .command = try self.stop(target) },
-            .pause => |target| .{ .command = try self.pause(target) },
+            .stop => |target| .{ .command = try self.stopLocked(target) },
+            .pause => |target| .{ .command = try self.pauseLocked(target) },
             .resume_playback => |target| .{
-                .command = try self.resumePlayback(target),
+                .command = try self.resumePlaybackLocked(target),
             },
             .seek => |seek_request| .{
-                .command = try self.seek(seek_request),
+                .command = try self.seekLocked(seek_request),
             },
-            .status => |target| .{ .status = try self.status(target) },
+            .status => |target| .{ .status = try self.statusLocked(target) },
         };
     }
 
     pub fn start(
+        self: *Controller,
+        request: control.Start,
+    ) std.mem.Allocator.Error!control.StartResult {
+        self.lock();
+        defer self.mutex.unlock();
+
+        return self.startLocked(request);
+    }
+
+    fn startLocked(
         self: *Controller,
         request: control.Start,
     ) std.mem.Allocator.Error!control.StartResult {
@@ -112,12 +146,32 @@ pub const Controller = struct {
         self: *Controller,
         target: control.Target,
     ) control.ControlError!control.CommandResult {
+        self.lock();
+        defer self.mutex.unlock();
+
+        return self.stopLocked(target);
+    }
+
+    fn stopLocked(
+        self: *Controller,
+        target: control.Target,
+    ) control.ControlError!control.CommandResult {
         const session = try self.findSession(target.playback_id);
         session.state = .stopped;
         return session.commandResult();
     }
 
     pub fn pause(
+        self: *Controller,
+        target: control.Target,
+    ) control.ControlError!control.CommandResult {
+        self.lock();
+        defer self.mutex.unlock();
+
+        return self.pauseLocked(target);
+    }
+
+    fn pauseLocked(
         self: *Controller,
         target: control.Target,
     ) control.ControlError!control.CommandResult {
@@ -133,6 +187,16 @@ pub const Controller = struct {
         self: *Controller,
         target: control.Target,
     ) control.ControlError!control.CommandResult {
+        self.lock();
+        defer self.mutex.unlock();
+
+        return self.resumePlaybackLocked(target);
+    }
+
+    fn resumePlaybackLocked(
+        self: *Controller,
+        target: control.Target,
+    ) control.ControlError!control.CommandResult {
         const session = try self.findSession(target.playback_id);
         switch (session.state) {
             .starting, .playing, .paused => session.state = .playing,
@@ -142,6 +206,16 @@ pub const Controller = struct {
     }
 
     pub fn seek(
+        self: *Controller,
+        request: control.Seek,
+    ) control.ControlError!control.CommandResult {
+        self.lock();
+        defer self.mutex.unlock();
+
+        return self.seekLocked(request);
+    }
+
+    fn seekLocked(
         self: *Controller,
         request: control.Seek,
     ) control.ControlError!control.CommandResult {
@@ -160,13 +234,54 @@ pub const Controller = struct {
         self: *Controller,
         target: control.Target,
     ) control.ControlError!control.Status {
+        self.lock();
+        defer self.mutex.unlock();
+
+        return self.statusLocked(target);
+    }
+
+    fn statusLocked(
+        self: *Controller,
+        target: control.Target,
+    ) control.ControlError!control.Status {
         return (try self.findSession(target.playback_id)).status();
+    }
+
+    pub fn bindStream(
+        self: *Controller,
+        binding: StreamBinding,
+    ) control.ControlError!control.Status {
+        self.lock();
+        defer self.mutex.unlock();
+
+        const session = try self.findSession(binding.playback_id);
+        if (!std.mem.eql(u8, session.media_path, binding.media_path)) {
+            return error.InvalidState;
+        }
+
+        switch (session.state) {
+            .starting => session.state = .playing,
+            .playing, .paused => {},
+            .idle, .stopped, .ended, .error_state => return error.InvalidState,
+        }
+
+        session.lstn_stream = .{
+            .stream_id = binding.stream_id,
+            .generation_id = binding.generation_id,
+        };
+        session.current_frame = binding.start_frame;
+        session.generation_id = binding.generation_id;
+
+        return session.status();
     }
 
     pub fn updateSession(
         self: *Controller,
         update: SessionUpdate,
     ) control.ControlError!control.Status {
+        self.lock();
+        defer self.mutex.unlock();
+
         const session = try self.findSession(update.playback_id);
         if (update.state) |state| session.state = state;
         if (update.current_frame) |frame| session.current_frame = frame;
@@ -267,4 +382,40 @@ test "media session can report progress through the boundary" {
 
     try std.testing.expectEqual(control.PlaybackState.playing, status.state);
     try std.testing.expectEqual(@as(u64, 2048), status.current_frame);
+}
+
+test "controller binds lstn stream to playback id" {
+    var controller = Controller.init(std.testing.allocator);
+    defer controller.deinit();
+
+    const started = try controller.start(.{ .media_path = "/tmp/song.flac" });
+    const status = try controller.bindStream(.{
+        .playback_id = started.playback_id,
+        .media_path = "/tmp/song.flac",
+        .stream_id = 42,
+        .generation_id = 7,
+        .start_frame = 1024,
+    });
+
+    try std.testing.expectEqual(control.PlaybackState.playing, status.state);
+    try std.testing.expectEqual(@as(u64, 1024), status.current_frame);
+    try std.testing.expectEqual(@as(u64, 7), status.generation_id);
+}
+
+test "controller rejects lstn stream binding for a different media path" {
+    var controller = Controller.init(std.testing.allocator);
+    defer controller.deinit();
+
+    const started = try controller.start(.{ .media_path = "/tmp/song.flac" });
+
+    try std.testing.expectError(
+        error.InvalidState,
+        controller.bindStream(.{
+            .playback_id = started.playback_id,
+            .media_path = "/tmp/other.flac",
+            .stream_id = 42,
+            .generation_id = 7,
+            .start_frame = 0,
+        }),
+    );
 }
