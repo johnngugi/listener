@@ -7,6 +7,7 @@ environment:
   sdk: ^3.12.2
 
 dependencies:
+  ffi: ^2.2.0
   flutter:
     sdk: flutter
 
