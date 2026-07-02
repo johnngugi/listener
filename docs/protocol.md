@@ -3,7 +3,7 @@
 ## Status
 
 This document describes version 1 of the Listener media protocol as currently
-implemented in `server/src/lstn/protocol.zig`.
+implemented in `shared/lstn/protocol.zig`.
 
 The protocol is still under development. The common header and the
 `START_STREAM`, `STREAM_INFO`, `AUDIO_FRAME`, and `BUFFER_STATUS` bodies are

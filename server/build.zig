@@ -3,16 +3,22 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const lstn_protocol = b.createModule(.{
+        .root_source_file = b.path("../shared/lstn/protocol.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     const exe = b.addExecutable(.{
         .name = "listener",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("server/src/main.zig"),
+            .root_source_file = b.path("main.zig"),
             .target = target,
             .optimize = optimize,
             .link_libc = true,
         }),
     });
+    exe.root_module.addImport("lstn_protocol", lstn_protocol);
 
     linkServerLibraries(exe.root_module);
 
@@ -28,12 +34,13 @@ pub fn build(b: *std.Build) void {
 
     const server_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("server/src/tests.zig"),
+            .root_source_file = b.path("tests.zig"),
             .target = target,
             .optimize = optimize,
             .link_libc = true,
         }),
     });
+    server_tests.root_module.addImport("lstn_protocol", lstn_protocol);
     linkServerLibraries(server_tests.root_module);
     const run_server_tests = b.addRunArtifact(server_tests);
 

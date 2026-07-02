@@ -1,7 +1,7 @@
 const std = @import("std");
 const Stream = std.Io.net.Stream;
 
-const protocol = @import("protocol.zig");
+const protocol = @import("lstn_protocol");
 
 pub const RequestError = error{
     BodyBufferTooSmall,

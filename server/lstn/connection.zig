@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const decoder = @import("../decoder.zig");
-const protocol = @import("protocol.zig");
+const protocol = @import("lstn_protocol");
 const request = @import("request.zig");
 
 pub const StartStreamEvent = struct {
@@ -54,12 +54,20 @@ pub fn handle(
     };
     defer session.deinit();
 
-    try session.run(
+    session.run(
         io,
         &stream_reader.interface,
         &stream_writer.interface,
         .{},
-    );
+    ) catch |err| {
+        if (isExpectedConnectionClose(
+            err,
+            stream_reader.err,
+            stream_writer.err,
+        )) return;
+
+        return err;
+    };
 }
 
 const HeartbeatConfig = struct {
@@ -664,6 +672,25 @@ fn protocolFailure(err: anyerror) ?ProtocolFailure {
             .detail = "media stream could not be opened",
         },
         else => null,
+    };
+}
+
+fn isExpectedConnectionClose(
+    err: anyerror,
+    read_err: ?std.Io.net.Stream.Reader.Error,
+    write_err: ?std.Io.net.Stream.Writer.Error,
+) bool {
+    return switch (err) {
+        error.EndOfStream => true,
+        error.ReadFailed => if (read_err) |actual|
+            actual == error.ConnectionResetByPeer
+        else
+            false,
+        error.WriteFailed => if (write_err) |actual|
+            actual == error.ConnectionResetByPeer
+        else
+            false,
+        else => false,
     };
 }
 
