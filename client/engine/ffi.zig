@@ -1,6 +1,8 @@
 const std = @import("std");
 const lstn = @import("lstn/client.zig");
 const protocol = @import("lstn_protocol");
+const backend = @import("audio_backend");
+const selected_output = @import("selected_output");
 
 pub export fn listener_engine_abi_version() u32 {
     return 1;
@@ -80,11 +82,19 @@ const Engine = struct {
     allocator: std.mem.Allocator,
     io_thread: std.Io.Threaded,
     lstn_connection: ?lstn.Connection = null,
+    audio_backend: backend.OutputBackend,
 
     pub fn init(allocator: std.mem.Allocator) Engine {
+        var audio_backend = backend.OutputBackend{
+            .name = selected_output.Backend.name,
+            .impl = undefined,
+        };
+        selected_output.Backend.init(&audio_backend.impl);
+
         return .{
             .allocator = allocator,
             .io_thread = .init(allocator, .{}),
+            .audio_backend = audio_backend,
         };
     }
 
@@ -94,8 +104,19 @@ const Engine = struct {
     }
 
     pub fn startStream(self: *Engine, message: protocol.StartStream) !void {
-        if (self.lstn_connection == null) return error.ExpectedHello;
-        _ = try self.lstn_connection.?.startStream(message);
+        const conn = if (self.lstn_connection) |*conn|
+            conn
+        else
+            return error.ExpectedHello;
+
+        const stream_info = try conn.startStream(message);
+        const output_format = backend.OutputFormat{
+            .sample_format = stream_info.format,
+            .sample_rate = stream_info.sample_rate,
+            .channels = stream_info.channels,
+        };
+
+        try self.audio_backend.impl.open(output_format);
     }
 
     pub fn deinit(self: *Engine) void {
