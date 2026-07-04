@@ -196,11 +196,10 @@ pub const StartStream = struct {
     media_path: []const u8,
 
     pub fn encode(self: StartStream, out: []u8) ![]u8 {
+        try self.validate();
+
         const encoded_len = fixed_wire_len + self.playback_id.len + self.media_path.len;
         if (encoded_len > out.len) return error.BufferTooSmall;
-
-        try validatePlaybackId(self.playback_id);
-        try validateMediaPath(self.media_path);
 
         std.mem.writeInt(u64, out[0..8], self.requested_start_frame, .big);
         std.mem.writeInt(u16, out[8..10], @intCast(self.playback_id.len), .big);
@@ -241,6 +240,11 @@ pub const StartStream = struct {
         };
     }
 
+    pub fn validate(self: StartStream) ProtocolError!void {
+        try validatePlaybackId(self.playback_id);
+        try validateMediaPath(self.media_path);
+    }
+
     fn validatePlaybackId(playback_id: []const u8) ProtocolError!void {
         if (playback_id.len == 0 or playback_id.len > max_playback_id_len) {
             return error.InvalidPlaybackId;
@@ -250,7 +254,7 @@ pub const StartStream = struct {
             return error.InvalidPlaybackId;
         }
 
-        if (std.mem.indexOfScalar(u8, playback_id, 0) != null) {
+        if (std.mem.findScalar(u8, playback_id, 0) != null) {
             return error.InvalidPlaybackId;
         }
     }

@@ -158,7 +158,7 @@ path fields.
 | 0 | 8 | `u64` | `requested_start_frame` | Source PCM frame at which playback should begin; use `0` to start at the beginning |
 | 8 | 2 | `u16` | `playback_id_len` | Number of bytes in `playback_id` |
 | 10 | 2 | `u16` | `path_len` | Number of bytes in `media_path` |
-| 12 | `playback_id_len` | bytes | `playback_id` | UTF-8 playback ID returned by gRPC `Start` |
+| 12 | `playback_id_len` | bytes | `playback_id` | UTF-8 playback ID assigned by the control plane |
 | `12 + playback_id_len` | `path_len` | bytes | `media_path` | UTF-8 path of the media file accessible to the server |
 
 The body length is:

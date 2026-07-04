@@ -30,6 +30,25 @@ typedef _ConnectNative =
 typedef _ConnectDart =
     int Function(ffi.Pointer<Engine>, ffi.Pointer<ffi.Uint8>, int, int);
 
+typedef _StartStreamNative =
+    ffi.Uint32 Function(
+      ffi.Pointer<Engine>,
+      ffi.Uint64,
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Size,
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Size,
+    );
+typedef _StartStreamDart =
+    int Function(
+      ffi.Pointer<Engine>,
+      int,
+      ffi.Pointer<ffi.Uint8>,
+      int,
+      ffi.Pointer<ffi.Uint8>,
+      int,
+    );
+
 enum ListenerStatus {
   ok(0),
   nullEngine(1),
@@ -72,6 +91,11 @@ final class ListenerEngine {
       'listener_engine_connect',
     );
 
+    _startStream = _library.lookupFunction<
+      _StartStreamNative,
+      _StartStreamDart
+    >('listener_engine_start_stream');
+
     _engine = _create();
     if (_engine == ffi.nullptr) {
       throw StateError("listener_engine_create returned null");
@@ -90,6 +114,7 @@ final class ListenerEngine {
   late final _CreateDart _create;
   late final _DestroyDart _destroy;
   late final _ConnectDart _connect;
+  late final _StartStreamDart _startStream;
   late final ffi.Pointer<Engine> _engine;
 
   bool _closed = false;
@@ -120,6 +145,52 @@ final class ListenerEngine {
       return ListenerStatus.fromCode(code);
     } finally {
       malloc.free(hostPtr);
+    }
+  }
+
+  ListenerStatus startStream({
+    required String playbackId,
+    required String mediaPath,
+    int requestedStartFrame = 0,
+  }) {
+    if (_closed) {
+      throw StateError('ListenerEngine is closed');
+    }
+
+    if (requestedStartFrame < 0) {
+      throw RangeError.range(
+        requestedStartFrame,
+        0,
+        null,
+        'requestedStartFrame',
+      );
+    }
+
+    final playbackIdBytes = utf8.encode(playbackId);
+    final mediaPathBytes = utf8.encode(mediaPath);
+    final playbackIdPtr = malloc<ffi.Uint8>(playbackIdBytes.length);
+    final mediaPathPtr = malloc<ffi.Uint8>(mediaPathBytes.length);
+
+    try {
+      playbackIdPtr.asTypedList(playbackIdBytes.length).setAll(
+        0,
+        playbackIdBytes,
+      );
+      mediaPathPtr.asTypedList(mediaPathBytes.length).setAll(0, mediaPathBytes);
+
+      final code = _startStream(
+        _engine,
+        requestedStartFrame,
+        playbackIdPtr,
+        playbackIdBytes.length,
+        mediaPathPtr,
+        mediaPathBytes.length,
+      );
+
+      return ListenerStatus.fromCode(code);
+    } finally {
+      malloc.free(playbackIdPtr);
+      malloc.free(mediaPathPtr);
     }
   }
 
