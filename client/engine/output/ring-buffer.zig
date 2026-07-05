@@ -230,10 +230,7 @@ pub const SharedPcmRingBuffer = struct {
             !self.state.paused and
             !should_stop())
         {
-            self.changed.wait(self.io, &self.inner) catch |err| switch (err) {
-                error.TimeOut => {},
-                else => return err,
-            };
+            try self.changed.wait(self.io, &self.inner);
         }
 
         if (self.state.stopped or should_stop()) {
@@ -300,7 +297,7 @@ pub const SharedPcmRingBuffer = struct {
         try self.inner.lock(self.io);
         defer self.inner.unlock(self.io);
 
-        self.state.ring.markEndOfStream();
+        self.state.ring.mark_end_of_stream();
         self.changed.broadcast(self.io);
     }
 

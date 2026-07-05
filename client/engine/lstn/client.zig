@@ -11,6 +11,7 @@ pub const ClientError = error{
     UnexpectedStreamInfo,
     UnexpectedStreamScope,
     UnexpectedStreamMessage,
+    UnexpectedAudioFrameOffset,
     StartStreamRejected,
     OutputStopped,
 };
@@ -103,6 +104,7 @@ pub const Connection = struct {
         stream: StartedStream,
         output_format: audio_backend.OutputFormat,
         buffer: *ring_buffer.SharedPcmRingBuffer,
+        expected_frame_offset: *u64,
     ) !ReadAudioResult {
         var read_buffer: [1024]u8 = undefined;
         var stream_reader = self.connection.reader(self.io, &read_buffer);
@@ -126,7 +128,12 @@ pub const Connection = struct {
                 try reader.readSliceAll(body[0..header.body_len]);
 
                 const audio_frame = try lstn_protocol.AudioFrame.decode(body[0..header.body_len]);
+                if (audio_frame.frame_offset != expected_frame_offset.*) {
+                    return ClientError.UnexpectedAudioFrameOffset;
+                }
+
                 try writeAudioFrameToBuffer(output_format, buffer, audio_frame);
+                expected_frame_offset.* += audio_frame.frame_count;
 
                 return .{
                     .audio_frame = .{

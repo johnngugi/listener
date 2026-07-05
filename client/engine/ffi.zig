@@ -85,6 +85,7 @@ const Engine = struct {
     lstn_connection: ?lstn.Connection = null,
     audio_backend: backend.OutputBackend,
     playback_buffer: ?ring_buffer.SharedPcmRingBuffer = null,
+    receive_thread: ?std.Thread = null,
 
     pub fn init(allocator: std.mem.Allocator) Engine {
         var audio_backend = backend.OutputBackend{
@@ -143,16 +144,32 @@ const Engine = struct {
         );
         try self.audio_backend.impl.start();
         try conn.sendBufferStatus(started_stream, &self.playback_buffer.?, 0);
+
+        self.receive_thread = try std.Thread.spawn(.{}, receive_audio_frame, .{
+            conn,
+            output_format,
+            started_stream,
+            &self.playback_buffer.?,
+        });
     }
 
     pub fn deinit(self: *Engine) void {
         if (self.playback_buffer) |*buffer| {
             buffer.stop() catch {};
-            buffer.deinit();
         }
 
         if (self.lstn_connection) |*conn| {
             conn.close();
+        }
+
+        if (self.receive_thread) |thread| {
+            thread.join();
+            self.receive_thread = null;
+        }
+
+        if (self.playback_buffer) |*buffer| {
+            buffer.deinit();
+            self.playback_buffer = null;
         }
 
         self.io_thread.deinit();
@@ -175,6 +192,32 @@ pub const ListenerStatus = enum(u32) {
     out_of_memory = 8,
     unexpected = 255,
 };
+
+fn receive_audio_frame(
+    lstn_connection: *lstn.Connection,
+    output_format: backend.OutputFormat,
+    started_stream: lstn.StartedStream,
+    playback_buffer: *ring_buffer.SharedPcmRingBuffer,
+) !void {
+    var last_received_sequence: u64 = 0;
+    var expected_frame_offset = started_stream.info.actual_start_frame;
+
+    while (true) {
+        switch (try lstn_connection.readAudioIntoBuffer(
+            started_stream,
+            output_format,
+            playback_buffer,
+            &expected_frame_offset,
+        )) {
+            .audio_frame => |frame| {
+                last_received_sequence = frame.last_received_sequence;
+                try lstn_connection.sendBufferStatus(started_stream, playback_buffer, last_received_sequence);
+            },
+            .stream_end => break,
+            .ignored_message => {},
+        }
+    }
+}
 
 fn status_from_error(err: anyerror) ListenerStatus {
     return switch (err) {
@@ -223,6 +266,7 @@ fn status_from_error(err: anyerror) ListenerStatus {
         error.UnexpectedStreamInfo,
         error.UnexpectedStreamScope,
         error.UnexpectedStreamMessage,
+        error.UnexpectedAudioFrameOffset,
         error.StartStreamRejected,
         error.InvalidMagic,
         error.InvalidFlags,
