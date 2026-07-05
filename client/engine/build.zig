@@ -17,6 +17,13 @@ pub fn build(b: *std.Build) void {
     });
     audio_backend.addImport("lstn_protocol", lstn_protocol);
 
+    const audio_ring_buffer = b.createModule(.{
+        .root_source_file = b.path("output/ring-buffer.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    audio_ring_buffer.addImport("audio_backend", audio_backend);
+
     const selected_output = selectedOutputBackend(b, target, optimize, audio_backend);
 
     const root_module = b.createModule(.{
@@ -26,6 +33,7 @@ pub fn build(b: *std.Build) void {
     });
     root_module.addImport("lstn_protocol", lstn_protocol);
     root_module.addImport("audio_backend", audio_backend);
+    root_module.addImport("audio_ring_buffer", audio_ring_buffer);
     root_module.addImport("selected_output", selected_output);
 
     const lib = b.addLibrary(.{

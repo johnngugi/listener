@@ -2,6 +2,7 @@ const std = @import("std");
 const lstn = @import("lstn/client.zig");
 const protocol = @import("lstn_protocol");
 const backend = @import("audio_backend");
+const ring_buffer = @import("audio_ring_buffer");
 const selected_output = @import("selected_output");
 
 pub export fn listener_engine_abi_version() u32 {
@@ -83,6 +84,7 @@ const Engine = struct {
     io_thread: std.Io.Threaded,
     lstn_connection: ?lstn.Connection = null,
     audio_backend: backend.OutputBackend,
+    playback_buffer: ?ring_buffer.SharedPcmRingBuffer = null,
 
     pub fn init(allocator: std.mem.Allocator) Engine {
         var audio_backend = backend.OutputBackend{
@@ -109,17 +111,46 @@ const Engine = struct {
         else
             return error.ExpectedHello;
 
-        const stream_info = try conn.startStream(message);
+        const started_stream = try conn.startStream(message);
+        const stream_info = started_stream.info;
         const output_format = backend.OutputFormat{
             .sample_format = stream_info.format,
             .sample_rate = stream_info.sample_rate,
             .channels = stream_info.channels,
         };
 
-        try self.audio_backend.impl.open(output_format);
+        if (self.playback_buffer != null) return error.AlreadyStreaming;
+
+        const capacity_frames = if (stream_info.recommended_buffer_frames > 0)
+            stream_info.recommended_buffer_frames
+        else
+            stream_info.sample_rate / 2;
+
+        self.playback_buffer = try ring_buffer.SharedPcmRingBuffer.init(
+            self.io(),
+            self.allocator,
+            output_format,
+            capacity_frames,
+        );
+        errdefer {
+            self.playback_buffer.?.deinit();
+            self.playback_buffer = null;
+        }
+
+        try self.audio_backend.impl.open(
+            output_format,
+            self.playback_buffer.?.outputSource(),
+        );
+        try self.audio_backend.impl.start();
+        try conn.sendBufferStatus(started_stream, &self.playback_buffer.?, 0);
     }
 
     pub fn deinit(self: *Engine) void {
+        if (self.playback_buffer) |*buffer| {
+            buffer.stop() catch {};
+            buffer.deinit();
+        }
+
         if (self.lstn_connection) |*conn| {
             conn.close();
         }
@@ -191,6 +222,7 @@ fn status_from_error(err: anyerror) ListenerStatus {
         error.UnexpectedHelloAckBody,
         error.UnexpectedStreamInfo,
         error.UnexpectedStreamScope,
+        error.UnexpectedStreamMessage,
         error.StartStreamRejected,
         error.InvalidMagic,
         error.InvalidFlags,

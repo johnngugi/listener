@@ -2,13 +2,17 @@ const std = @import("std");
 const net = std.Io.net;
 
 const lstn_protocol = @import("lstn_protocol");
+const audio_backend = @import("audio_backend");
+const ring_buffer = @import("audio_ring_buffer");
 
 pub const ClientError = error{
     UnexpectedHelloAck,
     UnexpectedHelloAckBody,
     UnexpectedStreamInfo,
     UnexpectedStreamScope,
+    UnexpectedStreamMessage,
     StartStreamRejected,
+    OutputStopped,
 };
 
 pub const Config = struct {
@@ -47,7 +51,7 @@ pub const Connection = struct {
     pub fn startStream(
         self: *Connection,
         message: lstn_protocol.StartStream,
-    ) !lstn_protocol.StreamInfo {
+    ) !StartedStream {
         var stream_writer = self.connection.writer(self.io, &.{});
         const writer = &stream_writer.interface;
 
@@ -69,7 +73,116 @@ pub const Connection = struct {
         self.next_stream_id += 1;
         self.next_generation_id += 1;
 
-        return try readStreamInfo(reader, stream_id, generation_id);
+        const info = try readStreamInfo(reader, stream_id, generation_id);
+        return .{
+            .stream_id = stream_id,
+            .generation_id = generation_id,
+            .info = info,
+        };
+    }
+
+    pub fn sendBufferStatus(
+        self: *Connection,
+        stream: StartedStream,
+        buffer: *ring_buffer.SharedPcmRingBuffer,
+        last_received_sequence: u64,
+    ) !void {
+        var stream_writer = self.connection.writer(self.io, &.{});
+        const writer = &stream_writer.interface;
+
+        try self.sendBufferStatusWithWriter(
+            writer,
+            stream,
+            buffer,
+            last_received_sequence,
+        );
+    }
+
+    pub fn readAudioIntoBuffer(
+        self: *Connection,
+        stream: StartedStream,
+        output_format: audio_backend.OutputFormat,
+        buffer: *ring_buffer.SharedPcmRingBuffer,
+    ) !ReadAudioResult {
+        var read_buffer: [1024]u8 = undefined;
+        var stream_reader = self.connection.reader(self.io, &read_buffer);
+        const reader = &stream_reader.interface;
+
+        var header_bytes: [lstn_protocol.header_wire_len]u8 = undefined;
+        try reader.readSliceAll(&header_bytes);
+
+        const header = try lstn_protocol.Header.decode(&header_bytes);
+        if (header.stream_id != stream.stream_id or
+            header.generation_id != stream.generation_id)
+        {
+            try discardBody(reader, header.body_len);
+            return .ignored_message;
+        }
+
+        switch (header.message_type) {
+            .audio_frame => {
+                var body: [lstn_protocol.AudioFrame.max_wire_len]u8 = undefined;
+                if (header.body_len > body.len) return error.InvalidBodyLength;
+                try reader.readSliceAll(body[0..header.body_len]);
+
+                const audio_frame = try lstn_protocol.AudioFrame.decode(body[0..header.body_len]);
+                try writeAudioFrameToBuffer(output_format, buffer, audio_frame);
+
+                return .{
+                    .audio_frame = .{
+                        .last_received_sequence = header.sequence,
+                        .frame_count = audio_frame.frame_count,
+                    },
+                };
+            },
+            .stream_end => {
+                if (header.body_len != 0) return error.InvalidBodyLength;
+                try buffer.markEndOfStream();
+                return .stream_end;
+            },
+            .protocol_error => {
+                try discardBody(reader, header.body_len);
+                return ClientError.StartStreamRejected;
+            },
+            else => {
+                try discardBody(reader, header.body_len);
+                return ClientError.UnexpectedStreamMessage;
+            },
+        }
+    }
+
+    fn sendBufferStatusWithWriter(
+        self: *Connection,
+        writer: *std.Io.Writer,
+        stream: StartedStream,
+        buffer: *ring_buffer.SharedPcmRingBuffer,
+        last_received_sequence: u64,
+    ) !void {
+        const readable_frames = try buffer.readableFrames();
+        const capacity_frames = try buffer.capacityFrames();
+        const next_render_frame = try buffer.framesRead();
+
+        const status = lstn_protocol.BufferStatus{
+            .buffered_frames = saturatedU32(readable_frames),
+            .credit_frames = saturatedU32(capacity_frames),
+            .next_render_frame = next_render_frame,
+            .last_received_sequence = last_received_sequence,
+            .underrun_count = 0,
+        };
+        const body = status.encode();
+
+        const header = lstn_protocol.Header{
+            .message_type = .buffer_status,
+            .body_len = lstn_protocol.BufferStatus.wire_len,
+            .stream_id = stream.stream_id,
+            .generation_id = stream.generation_id,
+            .sequence = self.next_client_sequence,
+        };
+        const header_bytes = try header.encode();
+
+        try writer.writeAll(&header_bytes);
+        try writer.writeAll(&body);
+        self.next_client_sequence += 1;
     }
 
     fn handshake(self: *Connection) !void {
@@ -84,7 +197,21 @@ pub const Connection = struct {
         try readHelloAck(reader);
         std.debug.print("Received HELLO_ACK\n", .{});
     }
+};
 
+pub const StartedStream = struct {
+    stream_id: u64,
+    generation_id: u64,
+    info: lstn_protocol.StreamInfo,
+};
+
+pub const ReadAudioResult = union(enum) {
+    audio_frame: struct {
+        last_received_sequence: u64,
+        frame_count: u32,
+    },
+    stream_end,
+    ignored_message,
 };
 
 const StartStreamRequest = struct {
@@ -172,4 +299,39 @@ fn readStreamInfo(
         },
         else => return ClientError.UnexpectedStreamInfo,
     }
+}
+
+fn writeAudioFrameToBuffer(
+    output_format: audio_backend.OutputFormat,
+    buffer: *ring_buffer.SharedPcmRingBuffer,
+    audio_frame: lstn_protocol.AudioFrame,
+) !void {
+    const sample_bytes = try audio_backend.sample_format_bytes(output_format.sample_format);
+    const frame_bytes = @as(usize, output_format.channels) * sample_bytes;
+    const expected_len = @as(usize, audio_frame.frame_count) * frame_bytes;
+    if (audio_frame.audio_data.len != expected_len) {
+        return error.InvalidBodyLength;
+    }
+
+    var remaining = audio_frame.audio_data;
+    while (remaining.len > 0) {
+        const written_frames = try buffer.writeBlocking(remaining);
+        if (written_frames == 0) return ClientError.OutputStopped;
+        remaining = remaining[written_frames * frame_bytes ..];
+    }
+}
+
+fn discardBody(reader: *std.Io.Reader, body_len: u32) !void {
+    var remaining: usize = body_len;
+    var scratch: [1024]u8 = undefined;
+
+    while (remaining > 0) {
+        const chunk_len = @min(remaining, scratch.len);
+        try reader.readSliceAll(scratch[0..chunk_len]);
+        remaining -= chunk_len;
+    }
+}
+
+fn saturatedU32(value: usize) u32 {
+    return std.math.cast(u32, value) orelse std.math.maxInt(u32);
 }

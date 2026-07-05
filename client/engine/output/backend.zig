@@ -11,7 +11,8 @@ pub const OutputBackendBootstrap = struct {
 };
 
 pub const OutputImpl = struct {
-    open: *const fn (OutputFormat) anyerror!void,
+    open: *const fn (OutputFormat, OutputSource) anyerror!void,
+    start: *const fn () anyerror!void,
 };
 
 pub const OutputFormat = struct {
@@ -19,3 +20,20 @@ pub const OutputFormat = struct {
     sample_rate: u32,
     channels: u16,
 };
+
+pub const OutputSource = struct {
+    context: *anyopaque,
+    frame_bytes: usize,
+    readAvailable: *const fn (
+        context: *anyopaque,
+        max_frames: usize,
+        output_buffer: []u8,
+    ) []u8,
+};
+
+pub fn sample_format_bytes(sample_format: protocol.SampleFormat) !u32 {
+    return switch (sample_format) {
+        .pcm_s16le => 2,
+        else => return error.UnsupportedSampleFormat,
+    };
+}

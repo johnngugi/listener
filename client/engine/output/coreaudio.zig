@@ -59,6 +59,8 @@ extern fn AudioUnitSetProperty(
 
 extern fn AudioUnitInitialize(in_unit: AudioUnit) callconv(.c) c.OSStatus;
 
+extern fn AudioOutputUnitStart(in_unit: AudioUnit) callconv(.c) c.OSStatus;
+
 const kAudioUnitType_Output = fourCC("auou");
 const kAudioUnitSubType_DefaultOutput = fourCC("def ");
 const kAudioUnitManufacturer_Apple = fourCC("appl");
@@ -75,12 +77,19 @@ pub const Backend = backend.OutputBackendBootstrap{
 
 fn coreAudioInit(impl: *backend.OutputImpl) void {
     impl.*.open = &open;
+    impl.*.start = &start;
 }
 
 var output_unit: AudioUnit = null;
+var playback_state = PlaybackState{ .source = undefined };
 
-fn open(output_format: backend.OutputFormat) !void {
+const PlaybackState = struct {
+    source: backend.OutputSource,
+};
+
+fn open(output_format: backend.OutputFormat, output_source: backend.OutputSource) !void {
     if (output_unit != null) return error.AlreadyOpen;
+    playback_state.source = output_source;
 
     var stream_format = try makeStreamFormat(output_format);
 
@@ -111,9 +120,10 @@ fn open(output_format: backend.OutputFormat) !void {
     ));
 
     var callback = AURenderCallbackStruct{
-        .inputProc = &renderSilence,
-        .inputProcRefCon = null,
+        .inputProc = &renderFromSource,
+        .inputProcRefCon = &playback_state,
     };
+
     try checkStatus(AudioUnitSetProperty(
         unit,
         kAudioUnitProperty_SetRenderCallback,
@@ -127,13 +137,58 @@ fn open(output_format: backend.OutputFormat) !void {
     output_unit = unit;
 }
 
+fn renderFromSource(
+    in_ref_con: ?*anyopaque,
+    _: [*c]AudioUnitRenderActionFlags,
+    _: [*c]const c.AudioTimeStamp,
+    _: c.UInt32,
+    in_number_frames: c.UInt32,
+    io_data: [*c]c.AudioBufferList,
+) callconv(.c) c.OSStatus {
+    if (io_data == null) return c.noErr;
+    const state: *PlaybackState = @ptrCast(@alignCast(in_ref_con orelse return c.noErr));
+    const source = state.source;
+
+    const buffers = @as(
+        [*]c.AudioBuffer,
+        @ptrCast(&io_data.*.mBuffers),
+    )[0..io_data.*.mNumberBuffers];
+
+    for (buffers) |buffer| {
+        const data = buffer.mData orelse continue;
+        const data_len: usize = @intCast(buffer.mDataByteSize);
+        const data_slice = @as([*]u8, @ptrCast(data))[0..data_len];
+
+        const requested_bytes = @min(
+            data_len,
+            @as(usize, @intCast(in_number_frames)) * source.frame_bytes,
+        );
+        const requested_frames = requested_bytes / source.frame_bytes;
+        const written = source.readAvailable(
+            source.context,
+            requested_frames,
+            data_slice[0 .. requested_frames * source.frame_bytes],
+        );
+
+        @memset(data_slice[written.len..], 0);
+    }
+
+    return c.noErr;
+}
+
+fn start() !void {
+    try startUnit(output_unit);
+}
+
+fn startUnit(unit: AudioUnit) !void {
+    const opened_unit = unit orelse return error.NotOpen;
+    try checkStatus(AudioOutputUnitStart(opened_unit));
+}
+
 fn makeStreamFormat(
     output_format: backend.OutputFormat,
 ) !c.AudioStreamBasicDescription {
-    const sample_bytes: c.UInt32 = switch (output_format.sample_format) {
-        .pcm_s16le => 2,
-        else => return error.UnsupportedSampleFormat,
-    };
+    const sample_bytes: c.UInt32 = @intCast(try backend.sample_format_bytes(output_format.sample_format));
     if (output_format.sample_rate == 0) return error.InvalidSampleRate;
 
     const channels: c.UInt32 = output_format.channels;
@@ -232,12 +287,68 @@ test "renderSilence clears output buffers" {
     try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 16), &data);
 }
 
+test "renderFromSource copies available PCM and zero fills underrun" {
+    const FakeSource = struct {
+        bytes: []const u8,
+
+        fn readAvailable(context: *anyopaque, _: usize, output_buffer: []u8) []u8 {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            const copy_len = @min(self.bytes.len, output_buffer.len);
+            @memcpy(output_buffer[0..copy_len], self.bytes[0..copy_len]);
+            return output_buffer[0..copy_len];
+        }
+    };
+
+    var fake = FakeSource{ .bytes = &.{ 1, 2, 3, 4 } };
+    var state = PlaybackState{
+        .source = .{
+            .context = &fake,
+            .frame_bytes = 4,
+            .readAvailable = &FakeSource.readAvailable,
+        },
+    };
+
+    var data = [_]u8{0xff} ** 8;
+    var buffer_list = c.AudioBufferList{
+        .mNumberBuffers = 1,
+        .mBuffers = .{.{
+            .mNumberChannels = 2,
+            .mDataByteSize = data.len,
+            .mData = &data,
+        }},
+    };
+
+    try std.testing.expectEqual(
+        c.noErr,
+        renderFromSource(&state, null, null, 0, 2, &buffer_list),
+    );
+
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 0, 0, 0, 0 }, &data);
+}
+
+test "start requires an open output unit" {
+    try std.testing.expectError(error.NotOpen, startUnit(null));
+}
+
 test "open compiles without opening the device by default" {
     if (getenv("LISTENER_TEST_COREAUDIO_OPEN") != null) {
-        try open(.{
-            .sample_format = .pcm_s16le,
-            .sample_rate = 48_000,
-            .channels = 2,
-        });
+        const FakeSource = struct {
+            fn readAvailable(_: *anyopaque, _: usize, output_buffer: []u8) []u8 {
+                return output_buffer[0..0];
+            }
+        };
+        var fake_context: u8 = 0;
+        try open(
+            .{
+                .sample_format = .pcm_s16le,
+                .sample_rate = 48_000,
+                .channels = 2,
+            },
+            .{
+                .context = &fake_context,
+                .frame_bytes = 4,
+                .readAvailable = &FakeSource.readAvailable,
+            },
+        );
     }
 }
