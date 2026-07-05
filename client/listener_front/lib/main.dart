@@ -49,6 +49,9 @@ typedef _StartStreamDart =
       int,
     );
 
+typedef _StopNative = ffi.Uint32 Function(ffi.Pointer<Engine>);
+typedef _StopDart = int Function(ffi.Pointer<Engine>);
+
 enum ListenerStatus {
   ok(0),
   nullEngine(1),
@@ -96,6 +99,10 @@ final class ListenerEngine {
       _StartStreamDart
     >('listener_engine_start_stream');
 
+    _stop = _library.lookupFunction<_StopNative, _StopDart>(
+      'listener_engine_stop',
+    );
+
     _engine = _create();
     if (_engine == ffi.nullptr) {
       throw StateError("listener_engine_create returned null");
@@ -115,6 +122,7 @@ final class ListenerEngine {
   late final _DestroyDart _destroy;
   late final _ConnectDart _connect;
   late final _StartStreamDart _startStream;
+  late final _StopDart _stop;
   late final ffi.Pointer<Engine> _engine;
 
   bool _closed = false;
@@ -192,6 +200,14 @@ final class ListenerEngine {
       malloc.free(playbackIdPtr);
       malloc.free(mediaPathPtr);
     }
+  }
+
+  ListenerStatus stop() {
+    if (_closed) {
+      throw StateError('ListenerEngine is closed');
+    }
+
+    return ListenerStatus.fromCode(_stop(_engine));
   }
 
   void close() {

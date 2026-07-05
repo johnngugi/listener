@@ -59,7 +59,11 @@ extern fn AudioUnitSetProperty(
 
 extern fn AudioUnitInitialize(in_unit: AudioUnit) callconv(.c) c.OSStatus;
 
+extern fn AudioUnitUninitialize(in_unit: AudioUnit) callconv(.c) c.OSStatus;
+
 extern fn AudioOutputUnitStart(in_unit: AudioUnit) callconv(.c) c.OSStatus;
+
+extern fn AudioOutputUnitStop(in_unit: AudioUnit) callconv(.c) c.OSStatus;
 
 const kAudioUnitType_Output = fourCC("auou");
 const kAudioUnitSubType_DefaultOutput = fourCC("def ");
@@ -78,6 +82,8 @@ pub const Backend = backend.OutputBackendBootstrap{
 fn coreAudioInit(impl: *backend.OutputImpl) void {
     impl.*.open = &open;
     impl.*.start = &start;
+    impl.*.stop = &stop;
+    impl.*.close = &close;
 }
 
 var output_unit: AudioUnit = null;
@@ -178,6 +184,20 @@ fn renderFromSource(
 
 fn start() !void {
     try startUnit(output_unit);
+}
+
+fn stop() !void {
+    const opened_unit = output_unit orelse return;
+    try checkStatus(AudioOutputUnitStop(opened_unit));
+}
+
+fn close() void {
+    const opened_unit = output_unit orelse return;
+
+    _ = AudioOutputUnitStop(opened_unit);
+    _ = AudioUnitUninitialize(opened_unit);
+    _ = AudioComponentInstanceDispose(opened_unit);
+    output_unit = null;
 }
 
 fn startUnit(unit: AudioUnit) !void {

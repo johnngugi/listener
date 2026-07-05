@@ -13,6 +13,8 @@ pub const OutputBackendBootstrap = struct {
 pub const OutputImpl = struct {
     open: *const fn (OutputFormat, OutputSource) anyerror!void,
     start: *const fn () anyerror!void,
+    stop: *const fn () anyerror!void,
+    close: *const fn () void,
 };
 
 pub const OutputFormat = struct {

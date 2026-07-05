@@ -24,6 +24,7 @@ pub const Config = struct {
 pub const Connection = struct {
     io: std.Io,
     connection: net.Stream,
+    outbound_mutex: std.Io.Mutex = .init,
     next_client_sequence: u64 = 2,
     next_stream_id: u64 = 1,
     next_generation_id: u64 = 1,
@@ -88,6 +89,9 @@ pub const Connection = struct {
         buffer: *ring_buffer.SharedPcmRingBuffer,
         last_received_sequence: u64,
     ) !void {
+        try self.outbound_mutex.lock(self.io);
+        defer self.outbound_mutex.unlock(self.io);
+
         var stream_writer = self.connection.writer(self.io, &.{});
         const writer = &stream_writer.interface;
 
@@ -156,6 +160,22 @@ pub const Connection = struct {
                 return ClientError.UnexpectedStreamMessage;
             },
         }
+    }
+
+    pub fn stopStream(self: *Connection, stream: StartedStream) !void {
+        try self.outbound_mutex.lock(self.io);
+        defer self.outbound_mutex.unlock(self.io);
+
+        var stream_writer = self.connection.writer(self.io, &.{});
+        const writer = &stream_writer.interface;
+
+        try sendCancelGeneration(
+            writer,
+            stream.stream_id,
+            stream.generation_id,
+            self.next_client_sequence,
+        );
+        self.next_client_sequence += 1;
     }
 
     fn sendBufferStatusWithWriter(
@@ -326,6 +346,24 @@ fn writeAudioFrameToBuffer(
         if (written_frames == 0) return ClientError.OutputStopped;
         remaining = remaining[written_frames * frame_bytes ..];
     }
+}
+
+fn sendCancelGeneration(
+    writer: *std.Io.Writer,
+    stream_id: u64,
+    generation_id: u64,
+    sequence: u64,
+) !void {
+    const header = lstn_protocol.Header{
+        .message_type = lstn_protocol.MessageType.cancel_generation,
+        .body_len = 0,
+        .stream_id = stream_id,
+        .generation_id = generation_id,
+        .sequence = sequence,
+    };
+
+    const header_bytes = try header.encode();
+    try writer.writeAll(&header_bytes);
 }
 
 fn discardBody(reader: *std.Io.Reader, body_len: u32) !void {

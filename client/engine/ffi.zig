@@ -79,11 +79,23 @@ pub export fn listener_engine_start_stream(
     return .ok;
 }
 
+pub export fn listener_engine_stop(engine_ptr: ?*Engine) ListenerStatus {
+    const engine = engine_ptr orelse return .null_engine;
+
+    engine.stopStream() catch |err| {
+        std.debug.print("listener_engine_stop failed: {}\n", .{err});
+        return status_from_error(err);
+    };
+
+    return .ok;
+}
+
 const Engine = struct {
     allocator: std.mem.Allocator,
     io_thread: std.Io.Threaded,
     lstn_connection: ?lstn.Connection = null,
     audio_backend: backend.OutputBackend,
+    active_stream: ?lstn.StartedStream = null,
     playback_buffer: ?ring_buffer.SharedPcmRingBuffer = null,
     receive_thread: ?std.Thread = null,
 
@@ -112,15 +124,22 @@ const Engine = struct {
         else
             return error.ExpectedHello;
 
+        if (self.active_stream != null or
+            self.playback_buffer != null or
+            self.receive_thread != null)
+        {
+            return error.AlreadyStreaming;
+        }
+
         const started_stream = try conn.startStream(message);
+        errdefer conn.stopStream(started_stream) catch {};
+
         const stream_info = started_stream.info;
         const output_format = backend.OutputFormat{
             .sample_format = stream_info.format,
             .sample_rate = stream_info.sample_rate,
             .channels = stream_info.channels,
         };
-
-        if (self.playback_buffer != null) return error.AlreadyStreaming;
 
         const capacity_frames = if (stream_info.recommended_buffer_frames > 0)
             stream_info.recommended_buffer_frames
@@ -142,6 +161,8 @@ const Engine = struct {
             output_format,
             self.playback_buffer.?.outputSource(),
         );
+        errdefer self.audio_backend.impl.close();
+
         try self.audio_backend.impl.start();
         try conn.sendBufferStatus(started_stream, &self.playback_buffer.?, 0);
 
@@ -151,15 +172,26 @@ const Engine = struct {
             started_stream,
             &self.playback_buffer.?,
         });
+        self.active_stream = started_stream;
     }
 
-    pub fn deinit(self: *Engine) void {
-        if (self.playback_buffer) |*buffer| {
-            buffer.stop() catch {};
-        }
+    pub fn stopStream(self: *Engine) !void {
+        const started_stream = self.active_stream orelse return;
+        const conn = if (self.lstn_connection) |*conn| conn else return error.ExpectedHello;
 
-        if (self.lstn_connection) |*conn| {
+        var cleanup_error: ?anyerror = null;
+        var connection_closed = false;
+
+        conn.stopStream(started_stream) catch |err| {
+            cleanup_error = err;
             conn.close();
+            connection_closed = true;
+        };
+
+        if (self.playback_buffer) |*buffer| {
+            buffer.stop() catch |err| {
+                if (cleanup_error == null) cleanup_error = err;
+            };
         }
 
         if (self.receive_thread) |thread| {
@@ -167,9 +199,39 @@ const Engine = struct {
             self.receive_thread = null;
         }
 
+        self.audio_backend.impl.stop() catch {};
+        self.audio_backend.impl.close();
+
         if (self.playback_buffer) |*buffer| {
             buffer.deinit();
             self.playback_buffer = null;
+        }
+
+        self.active_stream = null;
+        if (connection_closed) {
+            self.lstn_connection = null;
+        }
+        if (cleanup_error) |err| return err;
+    }
+
+    pub fn deinit(self: *Engine) void {
+        self.stopStream() catch {};
+
+        if (self.receive_thread) |thread| {
+            thread.join();
+            self.receive_thread = null;
+        }
+
+        self.audio_backend.impl.stop() catch {};
+        self.audio_backend.impl.close();
+
+        if (self.playback_buffer) |*buffer| {
+            buffer.deinit();
+            self.playback_buffer = null;
+        }
+
+        if (self.lstn_connection) |*conn| {
+            conn.close();
         }
 
         self.io_thread.deinit();
@@ -203,12 +265,17 @@ fn receive_audio_frame(
     var expected_frame_offset = started_stream.info.actual_start_frame;
 
     while (true) {
-        switch (try lstn_connection.readAudioIntoBuffer(
+        const read_result = lstn_connection.readAudioIntoBuffer(
             started_stream,
             output_format,
             playback_buffer,
             &expected_frame_offset,
-        )) {
+        ) catch |err| switch (err) {
+            error.OutputStopped => continue,
+            else => return err,
+        };
+
+        switch (read_result) {
             .audio_frame => |frame| {
                 last_received_sequence = frame.last_received_sequence;
                 try lstn_connection.sendBufferStatus(started_stream, playback_buffer, last_received_sequence);

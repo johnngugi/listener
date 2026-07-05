@@ -351,8 +351,8 @@ a newer generation.
 
 Cancellation does not retract bytes already written to the TCP connection.
 The client must discard buffered audio for the cancelled generation and ignore
-any late messages carrying its identifiers. The server does not currently send
-an acknowledgement or `STREAM_END` in response.
+any late messages carrying its identifiers. After processing a matching
+cancellation, the server sends `STREAM_END` for the cancelled generation.
 
 ## `PING` and `PONG`
 

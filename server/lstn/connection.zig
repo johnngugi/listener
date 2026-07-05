@@ -249,7 +249,7 @@ const Session = struct {
             },
             .cancel_generation => {
                 try self.requireHello();
-                try self.handleCancelGeneration(request_obj);
+                try self.handleCancelGeneration(writer, request_obj);
             },
             .ping => {
                 try self.requireHello();
@@ -437,6 +437,7 @@ const Session = struct {
 
     fn handleCancelGeneration(
         self: *Session,
+        writer: *std.Io.Writer,
         request_obj: request.Request,
     ) !void {
         const active = if (self.active_stream) |*active|
@@ -447,6 +448,13 @@ const Session = struct {
         if (request_obj.stream_id != active.stream_id or request_obj.generation_id != active.generation_id) {
             return;
         }
+
+        try sendStreamEnd(
+            writer,
+            active,
+            self.next_server_sequence,
+        );
+        self.next_server_sequence += 1;
 
         active.deinit(self.allocator);
         self.active_stream = null;
