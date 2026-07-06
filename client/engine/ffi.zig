@@ -43,11 +43,6 @@ pub export fn listener_engine_connect(
         return status_from_error(err);
     };
 
-    std.debug.print(
-        "Connected to {s}:{d} ...\n",
-        .{ config.host, config.port },
-    );
-
     return .ok;
 }
 
