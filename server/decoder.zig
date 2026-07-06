@@ -88,7 +88,9 @@ pub const AudioDecoder = struct {
         // Give the decoder the stream time base.
         // Mostly useful if you care about timestamps later.
         codec_ctx.*.pkt_timebase = audio_stream.*.time_base;
-        codec_ctx.*.request_sample_fmt = options.sample_format.toAv();
+        if (options.sample_format) |sample_format| {
+            codec_ctx.*.request_sample_fmt = sample_format.toAv();
+        }
 
         // Open/initialize the decoder.
         if (c.avcodec_open2(codec_ctx, decoder, null) < 0) {
@@ -108,7 +110,8 @@ pub const AudioDecoder = struct {
         errdefer c.av_frame_free(&frame);
 
         const native_sample_fmt = try SampleFormat.fromAv(codec_ctx.*.sample_fmt);
-        if (native_sample_fmt != options.sample_format) {
+        const output_sample_fmt = options.sample_format orelse native_sample_fmt;
+        if (native_sample_fmt != output_sample_fmt) {
             return error.UnsupportedSampleFormatConversion;
         }
 
@@ -123,8 +126,9 @@ pub const AudioDecoder = struct {
                 .sample_rate = @intCast(codec_ctx.*.sample_rate),
                 .channels = @intCast(codec_ctx.*.ch_layout.nb_channels),
                 .duration_frames = durationFrames(audio_stream, codec_ctx.*.sample_rate),
+                .valid_bits_per_sample = validBitsPerSample(codecpar, output_sample_fmt),
                 .native_sample_format = native_sample_fmt,
-                .output_sample_format = options.sample_format,
+                .output_sample_format = output_sample_fmt,
                 .output_layout = options.layout,
             },
         };
@@ -327,7 +331,7 @@ pub const AudioDecoder = struct {
 };
 
 pub const Options = struct {
-    sample_format: SampleFormat = .s32,
+    sample_format: ?SampleFormat = null,
     layout: PcmLayout = .interleaved,
 };
 
@@ -350,6 +354,10 @@ pub const SampleFormat = enum {
         };
     }
 
+    fn bits(self: SampleFormat) u16 {
+        return @intCast(self.bytes() * 8);
+    }
+
     fn toAv(self: SampleFormat) c.enum_AVSampleFormat {
         return switch (self) {
             .s16 => c.AV_SAMPLE_FMT_S16,
@@ -362,6 +370,7 @@ pub const TrackInfo = struct {
     sample_rate: u32,
     channels: u32,
     duration_frames: ?u64 = null,
+    valid_bits_per_sample: u16,
 
     native_sample_format: SampleFormat,
     output_sample_format: SampleFormat,
@@ -401,4 +410,15 @@ fn durationFrames(stream: [*c]c.AVStream, sample_rate: c_int) ?u64 {
     if (duration < 0 or num <= 0 or den <= 0) return null;
 
     return @intCast(@divTrunc(duration * num * rate, den));
+}
+
+fn validBitsPerSample(
+    codecpar: [*c]const c.AVCodecParameters,
+    sample_format: SampleFormat,
+) u16 {
+    if (codecpar.*.bits_per_raw_sample > 0) {
+        return @intCast(codecpar.*.bits_per_raw_sample);
+    }
+
+    return sample_format.bits();
 }

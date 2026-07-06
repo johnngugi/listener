@@ -1,3 +1,4 @@
+const std = @import("std");
 const protocol = @import("lstn_protocol");
 
 pub const OutputBackend = struct {
@@ -36,6 +37,18 @@ pub const OutputSource = struct {
 pub fn sample_format_bytes(sample_format: protocol.SampleFormat) !u32 {
     return switch (sample_format) {
         .pcm_s16le => 2,
-        else => return error.UnsupportedSampleFormat,
+        .pcm_s24le_packed => 3,
+        .pcm_s24le_in_s32le,
+        .pcm_s32le,
+        .pcm_f32le,
+        => 4,
     };
+}
+
+test "sample_format_bytes returns protocol sample widths" {
+    try std.testing.expectEqual(@as(u32, 2), try sample_format_bytes(.pcm_s16le));
+    try std.testing.expectEqual(@as(u32, 3), try sample_format_bytes(.pcm_s24le_packed));
+    try std.testing.expectEqual(@as(u32, 4), try sample_format_bytes(.pcm_s24le_in_s32le));
+    try std.testing.expectEqual(@as(u32, 4), try sample_format_bytes(.pcm_s32le));
+    try std.testing.expectEqual(@as(u32, 4), try sample_format_bytes(.pcm_f32le));
 }

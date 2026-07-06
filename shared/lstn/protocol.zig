@@ -114,7 +114,7 @@ pub const Header = struct {
 pub const SampleFormat = enum(u16) {
     pcm_s16le = 1,
     pcm_s24le_packed = 2,
-    // A signed 24-bit value sign-extended into a little-endian i32.
+    // A signed 24-bit value left-justified in a little-endian i32 container.
     pcm_s24le_in_s32le = 3,
     pcm_s32le = 4,
     pcm_f32le = 5,

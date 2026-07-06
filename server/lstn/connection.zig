@@ -325,10 +325,7 @@ const Session = struct {
         errdefer audio_decoder.deinit();
 
         const track = audio_decoder.trackInfo();
-        const format: protocol.SampleFormat = switch (track.output_sample_format) {
-            .s16 => .pcm_s16le,
-            .s32 => .pcm_s32le,
-        };
+        const format = try protocolSampleFormat(track);
         const channels = std.math.cast(u16, track.channels) orelse
             return error.TooManyChannels;
 
@@ -833,4 +830,203 @@ test "missing pong closes the session after the heartbeat timeout" {
     try std.testing.expectEqual(protocol.MessageType.ping, ping.header.message_type);
 
     try std.testing.expectError(error.HeartbeatTimeout, server_future.await(io));
+}
+
+test "server sends decoded fixture PCM as contiguous audio frames" {
+    try expectFixtureAudio(.{
+        .name = "strict-s16le-stereo",
+        .flac_path = "testdata/fixtures/strict-s16le-stereo.flac",
+        .expected_pcm = @embedFile("../testdata/fixtures/strict-s16le-stereo.expected.pcm"),
+        .expected_format = .pcm_s16le,
+        .expected_sample_rate = 44_100,
+        .expected_channels = 2,
+    });
+
+    try expectFixtureAudio(.{
+        .name = "strict-s24le-stereo",
+        .flac_path = "testdata/fixtures/strict-s24le-stereo.flac",
+        .expected_pcm = @embedFile("../testdata/fixtures/strict-s24le-stereo.expected-24in32.pcm"),
+        .expected_format = .pcm_s24le_in_s32le,
+        .expected_sample_rate = 96_000,
+        .expected_channels = 2,
+    });
+}
+
+const AudioFixture = struct {
+    name: []const u8,
+    flac_path: []const u8,
+    expected_pcm: []const u8,
+    expected_format: protocol.SampleFormat,
+    expected_sample_rate: u32,
+    expected_channels: u16,
+};
+
+fn expectFixtureAudio(fixture: AudioFixture) !void {
+    const allocator = std.testing.allocator;
+    const stream_id: u64 = 41;
+    const generation_id: u64 = 7;
+
+    const media_path = try fixturePath(allocator, fixture.flac_path);
+    defer allocator.free(media_path);
+
+    var session = Session{
+        .allocator = allocator,
+        .hello_received = true,
+    };
+    defer session.deinit();
+
+    var response_storage: [4096]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&response_storage);
+
+    try session.handleRequest(&writer, .{
+        .stream_id = stream_id,
+        .generation_id = generation_id,
+        .sequence = 2,
+        .message = .{ .start_stream = .{
+            .requested_start_frame = 0,
+            .playback_id = fixture.name,
+            .media_path = media_path,
+        } },
+    });
+
+    var offset: usize = 0;
+    const stream_info_frame = try readServerFrame(writer.buffered(), &offset);
+    try expectServerFrameScope(stream_info_frame.header, stream_id, generation_id);
+    try std.testing.expectEqual(protocol.MessageType.stream_info, stream_info_frame.header.message_type);
+
+    const stream_info = try protocol.StreamInfo.decode(stream_info_frame.body);
+    try std.testing.expectEqual(fixture.expected_format, stream_info.format);
+    try std.testing.expectEqual(fixture.expected_sample_rate, stream_info.sample_rate);
+    try std.testing.expectEqual(fixture.expected_channels, stream_info.channels);
+    try std.testing.expectEqual(@as(u64, 0), stream_info.actual_start_frame);
+
+    const bytes_per_frame = try protocolBytesPerFrame(stream_info.format, stream_info.channels);
+    try std.testing.expectEqual(@as(usize, 0), fixture.expected_pcm.len % bytes_per_frame);
+
+    const expected_frames = fixture.expected_pcm.len / bytes_per_frame;
+    try std.testing.expectEqual(@as(u64, @intCast(expected_frames)), stream_info.total_frames);
+
+    try session.handleRequest(&writer, .{
+        .stream_id = stream_id,
+        .generation_id = generation_id,
+        .sequence = 3,
+        .message = .{ .buffer_status = .{
+            .buffered_frames = 0,
+            .credit_frames = 1024,
+            .next_render_frame = 0,
+            .last_received_sequence = stream_info_frame.header.sequence,
+            .underrun_count = 0,
+        } },
+    });
+
+    var received_pcm: std.ArrayList(u8) = .empty;
+    defer received_pcm.deinit(allocator);
+
+    var expected_frame_offset: u64 = 0;
+    var saw_stream_end = false;
+
+    while (offset < writer.buffered().len) {
+        const frame = try readServerFrame(writer.buffered(), &offset);
+        try expectServerFrameScope(frame.header, stream_id, generation_id);
+
+        switch (frame.header.message_type) {
+            .audio_frame => {
+                const audio_frame = try protocol.AudioFrame.decode(frame.body);
+                try std.testing.expectEqual(expected_frame_offset, audio_frame.frame_offset);
+                try std.testing.expectEqual(
+                    @as(usize, audio_frame.frame_count) * bytes_per_frame,
+                    audio_frame.audio_data.len,
+                );
+
+                try received_pcm.appendSlice(allocator, audio_frame.audio_data);
+                expected_frame_offset += audio_frame.frame_count;
+            },
+            .stream_end => {
+                try std.testing.expectEqual(@as(u32, 0), frame.header.body_len);
+                saw_stream_end = true;
+            },
+            else => return error.UnexpectedServerMessage,
+        }
+    }
+
+    try std.testing.expect(saw_stream_end);
+    try std.testing.expectEqual(@as(u64, @intCast(expected_frames)), expected_frame_offset);
+    try std.testing.expectEqualSlices(u8, fixture.expected_pcm, received_pcm.items);
+}
+
+const ServerFrame = struct {
+    header: protocol.Header,
+    body: []const u8,
+};
+
+fn readServerFrame(bytes: []const u8, offset: *usize) !ServerFrame {
+    if (bytes.len - offset.* < protocol.header_wire_len) {
+        return error.TruncatedHeader;
+    }
+
+    const header_start = offset.*;
+    const header_end = header_start + protocol.header_wire_len;
+    const header = try protocol.Header.decode(bytes[header_start..header_end]);
+
+    const body_start = header_end;
+    const body_end = body_start + @as(usize, header.body_len);
+    if (body_end > bytes.len) return error.TruncatedBody;
+
+    offset.* = body_end;
+    return .{
+        .header = header,
+        .body = bytes[body_start..body_end],
+    };
+}
+
+fn expectServerFrameScope(
+    header: protocol.Header,
+    stream_id: u64,
+    generation_id: u64,
+) !void {
+    try std.testing.expectEqual(stream_id, header.stream_id);
+    try std.testing.expectEqual(generation_id, header.generation_id);
+}
+
+fn protocolBytesPerFrame(format: protocol.SampleFormat, channels: u16) !usize {
+    const bytes_per_sample: usize = switch (format) {
+        .pcm_s16le => 2,
+        .pcm_s24le_packed => 3,
+        .pcm_s24le_in_s32le,
+        .pcm_s32le,
+        .pcm_f32le,
+        => 4,
+    };
+    return bytes_per_sample * @as(usize, channels);
+}
+
+fn protocolSampleFormat(track: decoder.TrackInfo) !protocol.SampleFormat {
+    return switch (track.output_sample_format) {
+        .s16 => if (track.valid_bits_per_sample == 16)
+            .pcm_s16le
+        else
+            error.UnsupportedSampleFormat,
+        .s32 => switch (track.valid_bits_per_sample) {
+            24 => .pcm_s24le_in_s32le,
+            32 => .pcm_s32le,
+            else => error.UnsupportedSampleFormat,
+        },
+    };
+}
+
+fn fixturePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    return realPathFileDup(allocator, path) catch |first_err| switch (first_err) {
+        error.FileNotFound => {
+            const fallback = try std.fs.path.join(allocator, &.{ "server", path });
+            defer allocator.free(fallback);
+            return try realPathFileDup(allocator, fallback);
+        },
+        else => first_err,
+    };
+}
+
+fn realPathFileDup(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try std.Io.Dir.cwd().realPathFile(std.testing.io, path, &buffer);
+    return try allocator.dupe(u8, buffer[0..len]);
 }

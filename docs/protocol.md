@@ -130,11 +130,19 @@ Unknown message-type values are rejected.
 |---:|---|---:|---|
 | 1 | `pcm_s16le` | 2 | Signed 16-bit little-endian PCM |
 | 2 | `pcm_s24le_packed` | 3 | Signed 24-bit little-endian PCM packed into three bytes |
-| 3 | `pcm_s24le_in_s32le` | 4 | Signed 24-bit value sign-extended into a little-endian `i32` |
+| 3 | `pcm_s24le_in_s32le` | 4 | Signed 24-bit value left-justified in a little-endian `i32` container |
 | 4 | `pcm_s32le` | 4 | Signed 32-bit little-endian PCM |
 | 5 | `pcm_f32le` | 4 | IEEE-754 binary32 little-endian PCM |
 
 Unknown sample-format values are rejected.
+
+For `pcm_s24le_in_s32le`, the 32-bit container is little-endian and the valid
+24 sample bits occupy the most significant 24 bits. The least significant 8
+bits are padding and must be zero. For example, the packed signed 24-bit maximum
+sample `ff ff 7f` is carried as `00 ff ff 7f`, and the signed 24-bit minimum
+sample `00 00 80` is carried as `00 00 00 80`. A client that needs the original
+24-bit value can interpret the lane as signed `i32` and arithmetic-shift right
+by 8 bits.
 
 PCM is interleaved by channel unless a future protocol version states
 otherwise. For stereo audio, samples are ordered:

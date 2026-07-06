@@ -209,24 +209,49 @@ fn makeStreamFormat(
     output_format: backend.OutputFormat,
 ) !c.AudioStreamBasicDescription {
     const sample_bytes: c.UInt32 = @intCast(try backend.sample_format_bytes(output_format.sample_format));
+    const valid_bits = try validBitsPerChannel(output_format.sample_format);
     if (output_format.sample_rate == 0) return error.InvalidSampleRate;
 
     const channels: c.UInt32 = output_format.channels;
     if (channels == 0) return error.InvalidChannelCount;
 
     const bytes_per_frame = sample_bytes * channels;
+    const total_bits = sample_bytes * 8;
+
+    const packing_flag: c.AudioFormatFlags = if (valid_bits == total_bits)
+        c.kAudioFormatFlagIsPacked
+    else
+        c.kAudioFormatFlagIsAlignedHigh;
+
+    const numeric_flag: c.AudioFormatFlags = if (output_format.sample_format == .pcm_f32le)
+        c.kAudioFormatFlagIsFloat
+    else
+        c.kAudioFormatFlagIsSignedInteger;
+
     return .{
         .mSampleRate = @floatFromInt(output_format.sample_rate),
         .mFormatID = c.kAudioFormatLinearPCM,
-        .mFormatFlags = c.kAudioFormatFlagIsSignedInteger |
-            c.kAudioFormatFlagIsPacked |
+        .mFormatFlags = numeric_flag |
+            packing_flag |
             c.kAudioFormatFlagsNativeEndian,
         .mBytesPerPacket = bytes_per_frame,
         .mFramesPerPacket = 1,
         .mBytesPerFrame = bytes_per_frame,
         .mChannelsPerFrame = channels,
-        .mBitsPerChannel = sample_bytes * 8,
+        .mBitsPerChannel = valid_bits,
         .mReserved = 0,
+    };
+}
+
+fn validBitsPerChannel(sample_format: anytype) !c.UInt32 {
+    return switch (sample_format) {
+        .pcm_s16le => 16,
+        .pcm_s24le_packed,
+        .pcm_s24le_in_s32le,
+        => 24,
+        .pcm_s32le,
+        .pcm_f32le,
+        => 32,
     };
 }
 
@@ -286,6 +311,21 @@ test "makeStreamFormat builds interleaved s16 PCM format" {
     try std.testing.expectEqual(@as(c.UInt32, 4), stream_format.mBytesPerFrame);
     try std.testing.expectEqual(@as(c.UInt32, 2), stream_format.mChannelsPerFrame);
     try std.testing.expectEqual(@as(c.UInt32, 16), stream_format.mBitsPerChannel);
+}
+
+test "makeStreamFormat builds high-aligned s24 in s32 PCM format" {
+    const stream_format = try makeStreamFormat(.{
+        .sample_format = .pcm_s24le_in_s32le,
+        .sample_rate = 96_000,
+        .channels = 2,
+    });
+
+    try std.testing.expect(stream_format.mFormatFlags & c.kAudioFormatFlagIsSignedInteger != 0);
+    try std.testing.expect(stream_format.mFormatFlags & c.kAudioFormatFlagIsPacked == 0);
+    try std.testing.expect(stream_format.mFormatFlags & c.kAudioFormatFlagIsAlignedHigh != 0);
+    try std.testing.expectEqual(@as(c.UInt32, 8), stream_format.mBytesPerPacket);
+    try std.testing.expectEqual(@as(c.UInt32, 8), stream_format.mBytesPerFrame);
+    try std.testing.expectEqual(@as(c.UInt32, 24), stream_format.mBitsPerChannel);
 }
 
 test "renderSilence clears output buffers" {
