@@ -866,9 +866,6 @@ fn expectFixtureAudio(fixture: AudioFixture) !void {
     const stream_id: u64 = 41;
     const generation_id: u64 = 7;
 
-    const media_path = try fixturePath(allocator, fixture.flac_path);
-    defer allocator.free(media_path);
-
     var session = Session{
         .allocator = allocator,
         .hello_received = true,
@@ -885,7 +882,7 @@ fn expectFixtureAudio(fixture: AudioFixture) !void {
         .message = .{ .start_stream = .{
             .requested_start_frame = 0,
             .playback_id = fixture.name,
-            .media_path = media_path,
+            .media_path = fixture.flac_path,
         } },
     });
 
@@ -1012,21 +1009,4 @@ fn protocolSampleFormat(track: decoder.TrackInfo) !protocol.SampleFormat {
             else => error.UnsupportedSampleFormat,
         },
     };
-}
-
-fn fixturePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    return realPathFileDup(allocator, path) catch |first_err| switch (first_err) {
-        error.FileNotFound => {
-            const fallback = try std.fs.path.join(allocator, &.{ "server", path });
-            defer allocator.free(fallback);
-            return try realPathFileDup(allocator, fallback);
-        },
-        else => first_err,
-    };
-}
-
-fn realPathFileDup(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const len = try std.Io.Dir.cwd().realPathFile(std.testing.io, path, &buffer);
-    return try allocator.dupe(u8, buffer[0..len]);
 }
