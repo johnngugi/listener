@@ -222,7 +222,6 @@ pub const Connection = struct {
 
         try sendHello(writer);
         try readHelloAck(reader);
-        std.debug.print("Received HELLO_ACK\n", .{});
     }
 };
 
