@@ -359,6 +359,17 @@ pub const SharedPcmRingBuffer = struct {
         return self.state.ring.is_drained();
     }
 
+    pub fn waitUntilDrained(self: *SharedPcmRingBuffer) !bool {
+        try self.inner.lock(self.io);
+        defer self.inner.unlock(self.io);
+
+        while (!self.state.ring.is_drained() and !self.state.stopped) {
+            try self.changed.wait(self.io, &self.inner);
+        }
+
+        return self.state.ring.is_drained();
+    }
+
     pub fn isStopped(self: *SharedPcmRingBuffer) !bool {
         try self.inner.lock(self.io);
         defer self.inner.unlock(self.io);

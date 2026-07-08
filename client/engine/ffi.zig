@@ -85,6 +85,26 @@ pub export fn listener_engine_stop(engine_ptr: ?*Engine) ListenerStatus {
     return .ok;
 }
 
+pub export fn listener_engine_set_event_callback(
+    engine_ptr: ?*Engine,
+    callback: ?PlaybackEventCallback,
+    context: ?*anyopaque,
+) ListenerStatus {
+    const engine = engine_ptr orelse return .null_engine;
+    engine.event_callback = callback;
+    engine.event_context = context;
+    return .ok;
+}
+
+const PlaybackEventCallback = *const fn (
+    context: ?*anyopaque,
+    event: u32,
+) callconv(.c) void;
+
+const PlaybackEvent = enum(u32) {
+    ended = 1,
+};
+
 const Engine = struct {
     allocator: std.mem.Allocator,
     io_thread: std.Io.Threaded,
@@ -93,6 +113,8 @@ const Engine = struct {
     active_stream: ?lstn.StartedStream = null,
     playback_buffer: ?ring_buffer.SharedPcmRingBuffer = null,
     receive_thread: ?std.Thread = null,
+    event_callback: ?PlaybackEventCallback = null,
+    event_context: ?*anyopaque = null,
 
     pub fn init(allocator: std.mem.Allocator) Engine {
         var audio_backend = backend.OutputBackend{
@@ -166,6 +188,8 @@ const Engine = struct {
             output_format,
             started_stream,
             &self.playback_buffer.?,
+            self.event_callback,
+            self.event_context,
         });
         self.active_stream = started_stream;
     }
@@ -176,12 +200,21 @@ const Engine = struct {
 
         var cleanup_error: ?anyerror = null;
         var connection_closed = false;
+        const playback_ended = if (self.playback_buffer) |*buffer|
+            buffer.isDrained() catch |err| ended: {
+                cleanup_error = err;
+                break :ended false;
+            }
+        else
+            false;
 
-        conn.stopStream(started_stream) catch |err| {
-            cleanup_error = err;
-            conn.close();
-            connection_closed = true;
-        };
+        if (!playback_ended) {
+            conn.stopStream(started_stream) catch |err| {
+                if (cleanup_error == null) cleanup_error = err;
+                conn.close();
+                connection_closed = true;
+            };
+        }
 
         if (self.playback_buffer) |*buffer| {
             buffer.stop() catch |err| {
@@ -255,18 +288,26 @@ fn receive_audio_frame(
     output_format: backend.OutputFormat,
     started_stream: lstn.StartedStream,
     playback_buffer: *ring_buffer.SharedPcmRingBuffer,
+    event_callback: ?PlaybackEventCallback,
+    event_context: ?*anyopaque,
 ) !void {
     var last_received_sequence: u64 = 0;
     var expected_frame_offset = started_stream.info.actual_start_frame;
 
-    while (true) {
+    receive: while (true) {
         const read_result = lstn_connection.readAudioIntoBuffer(
             started_stream,
             output_format,
             playback_buffer,
             &expected_frame_offset,
         ) catch |err| switch (err) {
-            error.OutputStopped => continue,
+            // stopStream wakes a producer that may be blocked on a full
+            // playback buffer. The audio frame has already been consumed
+            // from the socket at this point, so keep reading until the
+            // server's STREAM_END cancellation acknowledgement is consumed.
+            // Otherwise that stale frame is mistaken for the next stream's
+            // STREAM_INFO when playback starts again.
+            error.OutputStopped => continue :receive,
             else => return err,
         };
 
@@ -275,8 +316,15 @@ fn receive_audio_frame(
                 last_received_sequence = frame.last_received_sequence;
                 try lstn_connection.sendBufferStatus(started_stream, playback_buffer, last_received_sequence);
             },
-            .stream_end => break,
+            .stream_end => break :receive,
+            .ping => try lstn_connection.sendPong(),
             .ignored_message => {},
+        }
+    }
+
+    if (try playback_buffer.waitUntilDrained()) {
+        if (event_callback) |callback| {
+            callback(event_context, @intFromEnum(PlaybackEvent.ended));
         }
     }
 }
@@ -346,6 +394,84 @@ fn status_from_error(err: anyerror) ListenerStatus {
 }
 
 test "engine streams network audio to the selected output backend" {
+    try expectEngineStreamsNetworkAudio(.one_at_a_time);
+}
+
+test "engine preserves back-to-back audio frames from one socket write" {
+    try expectEngineStreamsNetworkAudio(.back_to_back);
+}
+
+test "stopped receiver consumes stream end before the next start" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var listen_address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var listener = try listen_address.listen(io, .{
+        .mode = std.Io.net.Socket.Mode.stream,
+        .protocol = std.Io.net.Protocol.tcp,
+    });
+    defer listener.deinit(io);
+
+    var server = RestartFakeLstnServer{
+        .io = io,
+        .listener = &listener,
+    };
+    const server_thread = try std.Thread.spawn(.{}, RestartFakeLstnServer.run, .{&server});
+    var server_joined = false;
+    defer if (!server_joined) server_thread.join();
+
+    var connection = try lstn.Connection.connect(io, .{
+        .host = "127.0.0.1",
+        .port = listener.socket.address.getPort(),
+    });
+    defer connection.close();
+
+    const first_stream = try connection.startStream(.{
+        .requested_start_frame = 0,
+        .playback_id = "playback-1",
+        .media_path = "first.flac",
+    });
+    const output_format = backend.OutputFormat{
+        .sample_format = first_stream.info.format,
+        .sample_rate = first_stream.info.sample_rate,
+        .channels = first_stream.info.channels,
+    };
+
+    var playback_buffer = try ring_buffer.SharedPcmRingBuffer.init(
+        io,
+        allocator,
+        output_format,
+        1,
+    );
+    defer playback_buffer.deinit();
+    try playback_buffer.stop();
+
+    try receive_audio_frame(
+        &connection,
+        output_format,
+        first_stream,
+        &playback_buffer,
+        null,
+        null,
+    );
+
+    _ = try connection.startStream(.{
+        .requested_start_frame = 0,
+        .playback_id = "playback-2",
+        .media_path = "second.flac",
+    });
+
+    server_thread.join();
+    server_joined = true;
+    try server.result;
+}
+
+const AudioDelivery = enum {
+    one_at_a_time,
+    back_to_back,
+};
+
+fn expectEngineStreamsNetworkAudio(audio_delivery: AudioDelivery) !void {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
     const expected_audio = &[_]u8{
@@ -371,6 +497,7 @@ test "engine streams network audio to the selected output backend" {
         .io = io,
         .listener = &listener,
         .expected_audio = expected_audio,
+        .audio_delivery = audio_delivery,
     };
     const server_thread = try std.Thread.spawn(.{}, FakeLstnServer.run, .{&server});
     var server_joined = false;
@@ -378,6 +505,10 @@ test "engine streams network audio to the selected output backend" {
 
     var engine = Engine.init(allocator);
     defer engine.deinit();
+
+    var playback_ended = std.atomic.Value(bool).init(false);
+    engine.event_callback = &recordPlaybackEvent;
+    engine.event_context = &playback_ended;
 
     try engine.connect(.{
         .host = "127.0.0.1",
@@ -390,6 +521,7 @@ test "engine streams network audio to the selected output backend" {
     });
 
     try selected_output.waitForCapturedBytes(expected_audio.len, 100_000);
+    try waitForPlaybackEnded(&playback_ended, 100_000);
     try engine.stopStream();
 
     server_thread.join();
@@ -402,10 +534,114 @@ test "engine streams network audio to the selected output backend" {
     try std.testing.expectEqualSlices(u8, expected_audio, captured);
 }
 
+fn recordPlaybackEvent(context: ?*anyopaque, event: u32) callconv(.c) void {
+    if (event != @intFromEnum(PlaybackEvent.ended)) return;
+    const playback_ended: *std.atomic.Value(bool) = @ptrCast(@alignCast(context.?));
+    playback_ended.store(true, .release);
+}
+
+fn waitForPlaybackEnded(
+    playback_ended: *const std.atomic.Value(bool),
+    max_yields: usize,
+) !void {
+    var remaining = max_yields;
+    while (remaining > 0) : (remaining -= 1) {
+        if (playback_ended.load(.acquire)) return;
+        std.Thread.yield() catch {};
+    }
+
+    return error.Timeout;
+}
+
+const RestartFakeLstnServer = struct {
+    io: std.Io,
+    listener: *std.Io.net.Server,
+    result: anyerror!void = {},
+
+    fn run(self: *RestartFakeLstnServer) void {
+        self.result = self.runInner();
+    }
+
+    fn runInner(self: *RestartFakeLstnServer) !void {
+        const stream = try self.listener.accept(self.io);
+        defer stream.close(self.io);
+
+        var read_buffer: [1024]u8 = undefined;
+        var reader = stream.reader(self.io, &read_buffer);
+        var writer = stream.writer(self.io, &.{});
+        var body_storage: [protocol.StartStream.max_wire_len]u8 = undefined;
+
+        const hello = try readClientFrame(&reader.interface, &body_storage);
+        try std.testing.expectEqual(protocol.MessageType.hello, hello.header.message_type);
+        try sendEmptyServerMessage(&writer.interface, .hello_ack, 1, 0, 0);
+
+        const first_start = try readClientFrame(&reader.interface, &body_storage);
+        try std.testing.expectEqual(protocol.MessageType.start_stream, first_start.header.message_type);
+        try sendTestStreamInfo(&writer.interface, 2, first_start.header);
+
+        const audio = [_]u8{ 0, 0, 0, 0 };
+        try sendAudioFrame(
+            &writer.interface,
+            3,
+            first_start.header.stream_id,
+            first_start.header.generation_id,
+            0,
+            1,
+            &audio,
+        );
+        try sendAudioFrame(
+            &writer.interface,
+            4,
+            first_start.header.stream_id,
+            first_start.header.generation_id,
+            1,
+            1,
+            &audio,
+        );
+        try sendEmptyServerMessage(
+            &writer.interface,
+            .stream_end,
+            5,
+            first_start.header.stream_id,
+            first_start.header.generation_id,
+        );
+
+        const second_start = try readClientFrame(&reader.interface, &body_storage);
+        try std.testing.expectEqual(protocol.MessageType.start_stream, second_start.header.message_type);
+        try sendTestStreamInfo(&writer.interface, 6, second_start.header);
+    }
+};
+
+fn sendTestStreamInfo(
+    writer: *std.Io.Writer,
+    sequence: u64,
+    request_header: protocol.Header,
+) !void {
+    const stream_info = protocol.StreamInfo{
+        .format = .pcm_s16le,
+        .sample_rate = 48_000,
+        .channels = 2,
+        .channel_layout = 0,
+        .total_frames = 1,
+        .actual_start_frame = 0,
+        .recommended_buffer_frames = 1,
+    };
+    const body = stream_info.encode();
+    try sendServerMessage(
+        writer,
+        .stream_info,
+        sequence,
+        request_header.stream_id,
+        request_header.generation_id,
+        &body,
+    );
+}
+
 const FakeLstnServer = struct {
     io: std.Io,
     listener: *std.Io.net.Server,
     expected_audio: []const u8,
+    audio_delivery: AudioDelivery,
     result: anyerror!void = {},
 
     fn run(self: *FakeLstnServer) void {
@@ -463,45 +699,84 @@ const FakeLstnServer = struct {
         const frame_bytes = try backend.sample_format_bytes(stream_info.format) * stream_info.channels;
         try std.testing.expectEqual(@as(usize, 0), self.expected_audio.len % frame_bytes);
 
-        try sendAudioFrame(
-            &writer.interface,
-            3,
-            stream_id,
-            generation_id,
-            0,
-            1,
-            self.expected_audio[0..frame_bytes],
-        );
+        switch (self.audio_delivery) {
+            .one_at_a_time => try sendAudioFrame(
+                &writer.interface,
+                3,
+                stream_id,
+                generation_id,
+                0,
+                1,
+                self.expected_audio[0..frame_bytes],
+            ),
+            .back_to_back => {
+                var batch_storage: [256]u8 = undefined;
+                var batch_writer: std.Io.Writer = .fixed(&batch_storage);
+
+                try sendAudioFrame(
+                    &batch_writer,
+                    3,
+                    stream_id,
+                    generation_id,
+                    0,
+                    1,
+                    self.expected_audio[0..frame_bytes],
+                );
+                try sendAudioFrame(
+                    &batch_writer,
+                    4,
+                    stream_id,
+                    generation_id,
+                    1,
+                    2,
+                    self.expected_audio[frame_bytes..],
+                );
+
+                // A single socket write makes the next frame available for
+                // read-ahead while the client is decoding the first frame.
+                try writer.interface.writeAll(batch_writer.buffered());
+            },
+        }
 
         const first_ack = try readClientFrame(&reader.interface, &body_storage);
         try expectBufferStatusAck(first_ack, stream_id, generation_id, 3);
 
-        try sendAudioFrame(
-            &writer.interface,
-            4,
-            stream_id,
-            generation_id,
-            1,
-            2,
-            self.expected_audio[frame_bytes..],
-        );
+        if (self.audio_delivery == .one_at_a_time) {
+            try sendAudioFrame(
+                &writer.interface,
+                4,
+                stream_id,
+                generation_id,
+                1,
+                2,
+                self.expected_audio[frame_bytes..],
+            );
+        }
 
         const second_ack = try readClientFrame(&reader.interface, &body_storage);
         try expectBufferStatusAck(second_ack, stream_id, generation_id, 4);
 
         try sendEmptyServerMessage(
             &writer.interface,
-            .stream_end,
+            .ping,
             5,
+            0,
+            0,
+        );
+
+        const pong = try readClientFrame(&reader.interface, &body_storage);
+        try std.testing.expectEqual(protocol.MessageType.pong, pong.header.message_type);
+        try std.testing.expectEqual(@as(u32, 0), pong.header.body_len);
+        try std.testing.expectEqual(@as(u64, 0), pong.header.stream_id);
+        try std.testing.expectEqual(@as(u64, 0), pong.header.generation_id);
+
+        try sendEmptyServerMessage(
+            &writer.interface,
+            .stream_end,
+            6,
             stream_id,
             generation_id,
         );
-
-        const cancel = try readClientFrame(&reader.interface, &body_storage);
-        try std.testing.expectEqual(protocol.MessageType.cancel_generation, cancel.header.message_type);
-        try std.testing.expectEqual(stream_id, cancel.header.stream_id);
-        try std.testing.expectEqual(generation_id, cancel.header.generation_id);
-        try std.testing.expectEqual(@as(u32, 0), cancel.header.body_len);
     }
 };
 

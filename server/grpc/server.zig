@@ -225,11 +225,10 @@ pub const Server = struct {
         call: *c.grpc_call,
     ) ReceivePayloadError![]u8 {
         var request_payload: ?*c.grpc_byte_buffer = null;
-        var cancelled: c_int = 0;
 
-        var ops = receiveUnaryPayloadOps(&request_payload, &cancelled);
+        var ops = receiveUnaryPayloadOps(&request_payload);
         const event = try self.runBatch(call, ops[0..]);
-        if (event.success == 0 or cancelled != 0) {
+        if (event.success == 0) {
             return error.Cancelled;
         }
 
@@ -373,15 +372,11 @@ fn startBatch(
 
 fn receiveUnaryPayloadOps(
     request_payload: *?*c.grpc_byte_buffer,
-    cancelled: *c_int,
-) [2]c.grpc_op {
-    var ops = zeroedGrpcOps(2);
+) [1]c.grpc_op {
+    var ops = zeroedGrpcOps(1);
 
     ops[0].op = c.GRPC_OP_RECV_MESSAGE;
     ops[0].data.recv_message.recv_message = request_payload;
-
-    ops[1].op = c.GRPC_OP_RECV_CLOSE_ON_SERVER;
-    ops[1].data.recv_close_on_server.cancelled = cancelled;
 
     return ops;
 }

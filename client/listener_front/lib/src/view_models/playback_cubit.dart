@@ -1,0 +1,161 @@
+import 'dart:async';
+
+import 'package:grpc/grpc.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:listener_front/src/generated/listener/v1/listener.pbgrpc.dart'
+    as control;
+import 'package:listener_front/src/models/playback_state.dart';
+import 'package:listener_front/src/services/playback_engine.dart';
+
+const hardcodedMediaPath =
+    '/Users/johnngugi/Music/Library/Sauti Sol/Midnight Train [44_1kHz · 24bit]/01 - Intro.flac';
+const _controlCallTimeout = Duration(seconds: 5);
+
+class PlaybackCubit extends Cubit<PlaybackState> {
+  PlaybackCubit._(this._engine, this._channel, this._control)
+    : super(PlaybackState.initial()) {
+    _engineEvents = _engine.events.listen(_onEngineEvent);
+  }
+
+  factory PlaybackCubit.connect(ListenerEngine engine) {
+    final channel = ClientChannel(
+      '127.0.0.1',
+      port: 5779,
+      options: const ChannelOptions(credentials: ChannelCredentials.insecure()),
+    );
+
+    return PlaybackCubit._(
+      engine,
+      channel,
+      control.ListenerControlClient(channel),
+    );
+  }
+
+  final ListenerEngine _engine;
+  final ClientChannel _channel;
+  final control.ListenerControlClient _control;
+  late final StreamSubscription<PlaybackEngineEvent> _engineEvents;
+
+  String? _playbackId;
+
+  Future<void> play() async {
+    if (state.status == PlaybackStatus.starting ||
+        state.status == PlaybackStatus.playing) {
+      return;
+    }
+
+    emit(PlaybackState(track: state.track, status: PlaybackStatus.starting));
+
+    String? playbackId;
+    try {
+      final response = await _control.start(
+        control.StartRequest(mediaPath: hardcodedMediaPath),
+        options: CallOptions(timeout: _controlCallTimeout),
+      );
+      playbackId = response.playbackId;
+
+      final status = _engine.startStream(
+        playbackId: playbackId,
+        mediaPath: hardcodedMediaPath,
+      );
+      if (status != ListenerStatus.ok) {
+        throw StateError('Engine start failed: ${status.name}');
+      }
+
+      _playbackId = playbackId;
+      emit(PlaybackState(track: state.track, status: PlaybackStatus.playing));
+    } catch (error) {
+      if (playbackId != null && playbackId.isNotEmpty) {
+        try {
+          await _control.stop(
+            control.StopRequest(playbackId: playbackId),
+            options: CallOptions(timeout: _controlCallTimeout),
+          );
+        } catch (_) {
+          // Preserve the original playback failure.
+        }
+      }
+
+      emit(
+        PlaybackState(
+          track: state.track,
+          status: PlaybackStatus.error,
+          errorMessage: error.toString(),
+        ),
+      );
+    }
+  }
+
+  Future<void> stop() async {
+    final playbackId = _playbackId;
+    if (playbackId == null) return;
+    _playbackId = null;
+
+    try {
+      final status = _engine.stop();
+      if (status != ListenerStatus.ok) {
+        throw StateError('Engine stop failed: ${status.name}');
+      }
+
+      await _control.stop(
+        control.StopRequest(playbackId: playbackId),
+        options: CallOptions(timeout: _controlCallTimeout),
+      );
+      emit(PlaybackState(track: state.track, status: PlaybackStatus.stopped));
+    } catch (error) {
+      emit(
+        PlaybackState(
+          track: state.track,
+          status: PlaybackStatus.error,
+          errorMessage: error.toString(),
+        ),
+      );
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    await _engineEvents.cancel();
+    if (_playbackId != null) {
+      _engine.stop();
+    }
+    _engine.close();
+    await _channel.shutdown();
+    return super.close();
+  }
+
+  void _onEngineEvent(PlaybackEngineEvent event) {
+    if (event == PlaybackEngineEvent.ended) {
+      unawaited(_handlePlaybackEnded());
+    }
+  }
+
+  Future<void> _handlePlaybackEnded() async {
+    final playbackId = _playbackId;
+    if (playbackId == null || isClosed) return;
+    _playbackId = null;
+
+    final status = _engine.stop();
+    if (status != ListenerStatus.ok) {
+      emit(
+        PlaybackState(
+          track: state.track,
+          status: PlaybackStatus.error,
+          errorMessage: 'Engine cleanup failed: ${status.name}',
+        ),
+      );
+      return;
+    }
+
+    emit(PlaybackState(track: state.track, status: PlaybackStatus.stopped));
+
+    try {
+      await _control.stop(
+        control.StopRequest(playbackId: playbackId),
+        options: CallOptions(timeout: _controlCallTimeout),
+      );
+    } catch (_) {
+      // Playback has already ended locally; server cleanup is best-effort.
+    }
+  }
+}

@@ -1,8 +1,11 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:listener_front/src/models/playback_state.dart';
 import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/theme.dart';
+import 'package:listener_front/src/view_models/playback_cubit.dart';
 import 'package:listener_front/src/widgets/album_art.dart';
 
 class NowPlayingBar extends StatelessWidget {
@@ -80,7 +83,7 @@ class TransportControls extends StatelessWidget {
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: const [
+            children: [
               Icon(
                 Icons.fiber_manual_record,
                 color: Color(0xFF656568),
@@ -89,7 +92,43 @@ class TransportControls extends StatelessWidget {
               SizedBox(width: 62),
               Icon(Icons.skip_previous, color: textColor, size: 28),
               SizedBox(width: 34),
-              Icon(Icons.play_arrow, color: textColor, size: 40),
+              BlocConsumer<PlaybackCubit, PlaybackState>(
+                listenWhen: (previous, current) =>
+                    previous.errorMessage != current.errorMessage &&
+                    current.errorMessage != null,
+                listener: (context, state) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(state.errorMessage!)));
+                },
+                builder: (context, state) {
+                  final isStarting = state.status == PlaybackStatus.starting;
+                  final isPlaying = state.status == PlaybackStatus.playing;
+
+                  VoidCallback? onPressed;
+                  Widget icon;
+
+                  if (isStarting) {
+                    onPressed = null;
+                    icon = const SizedBox.square(
+                      dimension: 28,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    );
+                  } else if (isPlaying) {
+                    onPressed = context.read<PlaybackCubit>().stop;
+                    icon = const Icon(Icons.stop, color: textColor, size: 40);
+                  } else {
+                    onPressed = context.read<PlaybackCubit>().play;
+                    icon = const Icon(
+                      Icons.play_arrow,
+                      color: textColor,
+                      size: 40,
+                    );
+                  }
+
+                  return IconButton(onPressed: onPressed, icon: icon);
+                },
+              ),
               SizedBox(width: 34),
               Icon(Icons.skip_next, color: textColor, size: 28),
               SizedBox(width: 52),

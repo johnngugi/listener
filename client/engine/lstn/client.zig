@@ -57,8 +57,7 @@ pub const Connection = struct {
         var stream_writer = self.connection.writer(self.io, &.{});
         const writer = &stream_writer.interface;
 
-        var read_buffer: [1024]u8 = undefined;
-        var stream_reader = self.connection.reader(self.io, &read_buffer);
+        var stream_reader = self.connection.reader(self.io, &.{});
         const reader = &stream_reader.interface;
 
         const stream_id = self.next_stream_id;
@@ -103,6 +102,24 @@ pub const Connection = struct {
         );
     }
 
+    pub fn sendPong(self: *Connection) !void {
+        try self.outbound_mutex.lock(self.io);
+        defer self.outbound_mutex.unlock(self.io);
+
+        var stream_writer = self.connection.writer(self.io, &.{});
+        const writer = &stream_writer.interface;
+
+        const header = lstn_protocol.Header{
+            .message_type = .pong,
+            .body_len = 0,
+            .sequence = self.next_client_sequence,
+        };
+        const header_bytes = try header.encode();
+
+        try writer.writeAll(&header_bytes);
+        self.next_client_sequence += 1;
+    }
+
     pub fn readAudioIntoBuffer(
         self: *Connection,
         stream: StartedStream,
@@ -110,14 +127,18 @@ pub const Connection = struct {
         buffer: *ring_buffer.SharedPcmRingBuffer,
         expected_frame_offset: *u64,
     ) !ReadAudioResult {
-        var read_buffer: [1024]u8 = undefined;
-        var stream_reader = self.connection.reader(self.io, &read_buffer);
+        var stream_reader = self.connection.reader(self.io, &.{});
         const reader = &stream_reader.interface;
 
         var header_bytes: [lstn_protocol.header_wire_len]u8 = undefined;
         try reader.readSliceAll(&header_bytes);
 
         const header = try lstn_protocol.Header.decode(&header_bytes);
+        if (header.message_type == .ping) {
+            if (header.body_len != 0) return error.InvalidBodyLength;
+            return .ping;
+        }
+
         if (header.stream_id != stream.stream_id or
             header.generation_id != stream.generation_id)
         {
@@ -136,7 +157,15 @@ pub const Connection = struct {
                     return ClientError.UnexpectedAudioFrameOffset;
                 }
 
-                try writeAudioFrameToBuffer(output_format, buffer, audio_frame);
+                writeAudioFrameToBuffer(output_format, buffer, audio_frame) catch |err| {
+                    // The frame has already been consumed from the socket.
+                    // Keep its offset accounted for while cancellation drains
+                    // any audio queued before STREAM_END.
+                    if (err == ClientError.OutputStopped) {
+                        expected_frame_offset.* += audio_frame.frame_count;
+                    }
+                    return err;
+                };
                 expected_frame_offset.* += audio_frame.frame_count;
 
                 return .{
@@ -216,8 +245,7 @@ pub const Connection = struct {
         var stream_writer = self.connection.writer(self.io, &.{});
         const writer = &stream_writer.interface;
 
-        var read_buffer: [1024]u8 = undefined;
-        var stream_reader = self.connection.reader(self.io, &read_buffer);
+        var stream_reader = self.connection.reader(self.io, &.{});
         const reader = &stream_reader.interface;
 
         try sendHello(writer);
@@ -237,6 +265,7 @@ pub const ReadAudioResult = union(enum) {
         frame_count: u32,
     },
     stream_end,
+    ping,
     ignored_message,
 };
 
