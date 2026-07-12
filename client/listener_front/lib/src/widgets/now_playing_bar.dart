@@ -104,6 +104,7 @@ class TransportControls extends StatelessWidget {
                 builder: (context, state) {
                   final isStarting = state.status == PlaybackStatus.starting;
                   final isPlaying = state.status == PlaybackStatus.playing;
+                  final isPaused = state.status == PlaybackStatus.paused;
 
                   VoidCallback? onPressed;
                   Widget icon;
@@ -115,8 +116,15 @@ class TransportControls extends StatelessWidget {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     );
                   } else if (isPlaying) {
-                    onPressed = context.read<PlaybackCubit>().stop;
-                    icon = const Icon(Icons.stop, color: textColor, size: 40);
+                    onPressed = context.read<PlaybackCubit>().pause;
+                    icon = const Icon(Icons.pause, color: textColor, size: 40);
+                  } else if (isPaused) {
+                    onPressed = context.read<PlaybackCubit>().resume;
+                    icon = const Icon(
+                      Icons.play_arrow,
+                      color: textColor,
+                      size: 40,
+                    );
                   } else {
                     onPressed = context.read<PlaybackCubit>().play;
                     icon = const Icon(

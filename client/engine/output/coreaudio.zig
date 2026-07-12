@@ -83,10 +83,13 @@ fn coreAudioInit(impl: *backend.OutputImpl) void {
     impl.*.open = &open;
     impl.*.start = &start;
     impl.*.stop = &stop;
+    impl.*.pause_playback = &pausePlayback;
+    impl.*.resume_playback = &resumePlayback;
     impl.*.close = &close;
 }
 
 var output_unit: AudioUnit = null;
+var output_started = false;
 var playback_state = PlaybackState{ .source = undefined };
 
 const PlaybackState = struct {
@@ -141,6 +144,7 @@ fn open(output_format: backend.OutputFormat, output_source: backend.OutputSource
 
     try checkStatus(AudioUnitInitialize(unit));
     output_unit = unit;
+    output_started = false;
 }
 
 fn renderFromSource(
@@ -183,26 +187,43 @@ fn renderFromSource(
 }
 
 fn start() !void {
-    try startUnit(output_unit);
+    try startOutputUnit();
 }
 
 fn stop() !void {
-    const opened_unit = output_unit orelse return;
-    try checkStatus(AudioOutputUnitStop(opened_unit));
+    try stopOutputUnit();
+}
+
+fn pausePlayback() !void {
+    try stopOutputUnit();
+}
+
+fn resumePlayback() !void {
+    try startOutputUnit();
 }
 
 fn close() void {
     const opened_unit = output_unit orelse return;
 
-    _ = AudioOutputUnitStop(opened_unit);
+    stopOutputUnit() catch {};
     _ = AudioUnitUninitialize(opened_unit);
     _ = AudioComponentInstanceDispose(opened_unit);
     output_unit = null;
+    output_started = false;
 }
 
-fn startUnit(unit: AudioUnit) !void {
-    const opened_unit = unit orelse return error.NotOpen;
+fn startOutputUnit() !void {
+    if (output_started) return;
+    const opened_unit = output_unit orelse return error.NotOpen;
     try checkStatus(AudioOutputUnitStart(opened_unit));
+    output_started = true;
+}
+
+fn stopOutputUnit() !void {
+    if (!output_started) return;
+    const opened_unit = output_unit orelse return;
+    try checkStatus(AudioOutputUnitStop(opened_unit));
+    output_started = false;
 }
 
 fn makeStreamFormat(
@@ -387,7 +408,7 @@ test "renderFromSource copies available PCM and zero fills underrun" {
 }
 
 test "start requires an open output unit" {
-    try std.testing.expectError(error.NotOpen, startUnit(null));
+    try std.testing.expectError(error.NotOpen, startOutputUnit());
 }
 
 test "open compiles without opening the device by default" {

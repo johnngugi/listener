@@ -85,6 +85,28 @@ pub export fn listener_engine_stop(engine_ptr: ?*Engine) ListenerStatus {
     return .ok;
 }
 
+pub export fn listener_engine_pause(engine_ptr: ?*Engine) ListenerStatus {
+    const engine = engine_ptr orelse return .null_engine;
+
+    engine.pauseStream() catch |err| {
+        std.debug.print("listener_engine_pause failed: {}\n", .{err});
+        return status_from_error(err);
+    };
+
+    return .ok;
+}
+
+pub export fn listener_engine_resume(engine_ptr: ?*Engine) ListenerStatus {
+    const engine = engine_ptr orelse return .null_engine;
+
+    engine.resumeStream() catch |err| {
+        std.debug.print("listener_engine_resume failed: {}\n", .{err});
+        return status_from_error(err);
+    };
+
+    return .ok;
+}
+
 pub export fn listener_engine_set_event_callback(
     engine_ptr: ?*Engine,
     callback: ?PlaybackEventCallback,
@@ -113,6 +135,7 @@ const Engine = struct {
     active_stream: ?lstn.StartedStream = null,
     playback_buffer: ?ring_buffer.SharedPcmRingBuffer = null,
     receive_thread: ?std.Thread = null,
+    flow_control: FlowControlState = .{},
     event_callback: ?PlaybackEventCallback = null,
     event_context: ?*anyopaque = null,
 
@@ -180,14 +203,23 @@ const Engine = struct {
         );
         errdefer self.audio_backend.impl.close();
 
+        self.flow_control.paused.store(false, .release);
+        self.flow_control.last_received_sequence.store(0, .release);
+
         try self.audio_backend.impl.start();
-        try conn.sendBufferStatus(started_stream, &self.playback_buffer.?, 0);
+        try conn.sendBufferStatus(
+            started_stream,
+            &self.playback_buffer.?,
+            0,
+            &self.flow_control.paused,
+        );
 
         self.receive_thread = try std.Thread.spawn(.{}, receive_audio_frame, .{
             conn,
             output_format,
             started_stream,
             &self.playback_buffer.?,
+            &self.flow_control,
             self.event_callback,
             self.event_context,
         });
@@ -242,6 +274,53 @@ const Engine = struct {
         if (cleanup_error) |err| return err;
     }
 
+    pub fn pauseStream(self: *Engine) !void {
+        const started_stream = self.active_stream orelse return;
+        const conn = if (self.lstn_connection) |*conn| conn else return error.ExpectedHello;
+        const buffer = if (self.playback_buffer) |*buffer| buffer else return error.AlreadyStreaming;
+
+        if (self.flow_control.paused.swap(true, .acq_rel)) return;
+        errdefer self.flow_control.paused.store(false, .release);
+
+        try conn.sendBufferStatus(
+            started_stream,
+            buffer,
+            self.flow_control.last_received_sequence.load(.acquire),
+            &self.flow_control.paused,
+        );
+        self.audio_backend.impl.pause_playback() catch |err| {
+            self.flow_control.paused.store(false, .release);
+            conn.sendBufferStatus(
+                started_stream,
+                buffer,
+                self.flow_control.last_received_sequence.load(.acquire),
+                &self.flow_control.paused,
+            ) catch {};
+            return err;
+        };
+    }
+
+    pub fn resumeStream(self: *Engine) !void {
+        const started_stream = self.active_stream orelse return;
+        const conn = if (self.lstn_connection) |*conn| conn else return error.ExpectedHello;
+        const buffer = if (self.playback_buffer) |*buffer| buffer else return error.AlreadyStreaming;
+
+        if (!self.flow_control.paused.load(.acquire)) return;
+        try self.audio_backend.impl.resume_playback();
+
+        self.flow_control.paused.store(false, .release);
+        conn.sendBufferStatus(
+            started_stream,
+            buffer,
+            self.flow_control.last_received_sequence.load(.acquire),
+            &self.flow_control.paused,
+        ) catch |err| {
+            self.flow_control.paused.store(true, .release);
+            self.audio_backend.impl.pause_playback() catch {};
+            return err;
+        };
+    }
+
     pub fn deinit(self: *Engine) void {
         self.stopStream() catch {};
 
@@ -288,6 +367,7 @@ fn receive_audio_frame(
     output_format: backend.OutputFormat,
     started_stream: lstn.StartedStream,
     playback_buffer: *ring_buffer.SharedPcmRingBuffer,
+    flow_control: *FlowControlState,
     event_callback: ?PlaybackEventCallback,
     event_context: ?*anyopaque,
 ) !void {
@@ -314,7 +394,13 @@ fn receive_audio_frame(
         switch (read_result) {
             .audio_frame => |frame| {
                 last_received_sequence = frame.last_received_sequence;
-                try lstn_connection.sendBufferStatus(started_stream, playback_buffer, last_received_sequence);
+                flow_control.last_received_sequence.store(last_received_sequence, .release);
+                try lstn_connection.sendBufferStatus(
+                    started_stream,
+                    playback_buffer,
+                    last_received_sequence,
+                    &flow_control.paused,
+                );
             },
             .stream_end => break :receive,
             .ping => try lstn_connection.sendPong(),
@@ -328,6 +414,11 @@ fn receive_audio_frame(
         }
     }
 }
+
+const FlowControlState = struct {
+    paused: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    last_received_sequence: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+};
 
 fn status_from_error(err: anyerror) ListenerStatus {
     return switch (err) {
@@ -401,6 +492,50 @@ test "engine preserves back-to-back audio frames from one socket write" {
     try expectEngineStreamsNetworkAudio(.back_to_back);
 }
 
+test "pause advertises zero credit and resume restores stream credit" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    selected_output.reset(allocator);
+    defer selected_output.reset(allocator);
+
+    var listen_address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var listener = try listen_address.listen(io, .{
+        .mode = std.Io.net.Socket.Mode.stream,
+        .protocol = std.Io.net.Protocol.tcp,
+    });
+    defer listener.deinit(io);
+
+    var server = PauseResumeFakeLstnServer{
+        .io = io,
+        .listener = &listener,
+    };
+    const server_thread = try std.Thread.spawn(.{}, PauseResumeFakeLstnServer.run, .{&server});
+    var server_joined = false;
+    defer if (!server_joined) server_thread.join();
+
+    var engine = Engine.init(allocator);
+    defer engine.deinit();
+    try engine.connect(.{
+        .host = "127.0.0.1",
+        .port = listener.socket.address.getPort(),
+    });
+    try engine.startStream(.{
+        .requested_start_frame = 0,
+        .playback_id = "pause-resume-test",
+        .media_path = "silence.flac",
+    });
+
+    try waitForAtomicBool(&server.initial_status_received, 100_000);
+    try engine.pauseStream();
+    try engine.resumeStream();
+    try engine.stopStream();
+
+    server_thread.join();
+    server_joined = true;
+    try server.result;
+}
+
 test "stopped receiver consumes stream end before the next start" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
@@ -445,12 +580,14 @@ test "stopped receiver consumes stream end before the next start" {
     );
     defer playback_buffer.deinit();
     try playback_buffer.stop();
+    var flow_control = FlowControlState{};
 
     try receive_audio_frame(
         &connection,
         output_format,
         first_stream,
         &playback_buffer,
+        &flow_control,
         null,
         null,
     );
@@ -552,6 +689,77 @@ fn waitForPlaybackEnded(
 
     return error.Timeout;
 }
+
+fn waitForAtomicBool(value: *const std.atomic.Value(bool), max_yields: usize) !void {
+    var remaining = max_yields;
+    while (remaining > 0) : (remaining -= 1) {
+        if (value.load(.acquire)) return;
+        std.Thread.yield() catch {};
+    }
+    return error.Timeout;
+}
+
+const PauseResumeFakeLstnServer = struct {
+    io: std.Io,
+    listener: *std.Io.net.Server,
+    initial_status_received: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    result: anyerror!void = {},
+
+    fn run(self: *PauseResumeFakeLstnServer) void {
+        self.result = self.runInner();
+    }
+
+    fn runInner(self: *PauseResumeFakeLstnServer) !void {
+        const stream = try self.listener.accept(self.io);
+        defer stream.close(self.io);
+
+        var read_buffer: [1024]u8 = undefined;
+        var reader = stream.reader(self.io, &read_buffer);
+        var writer = stream.writer(self.io, &.{});
+        var body_storage: [protocol.StartStream.max_wire_len]u8 = undefined;
+
+        const hello = try readClientFrame(&reader.interface, &body_storage);
+        try std.testing.expectEqual(protocol.MessageType.hello, hello.header.message_type);
+        try sendEmptyServerMessage(&writer.interface, .hello_ack, 1, 0, 0);
+
+        const start = try readClientFrame(&reader.interface, &body_storage);
+        try std.testing.expectEqual(protocol.MessageType.start_stream, start.header.message_type);
+        try sendTestStreamInfo(&writer.interface, 2, start.header);
+
+        const initial = try readClientFrame(&reader.interface, &body_storage);
+        const initial_status = try expectBufferStatus(initial, start.header);
+        try std.testing.expect(initial_status.credit_frames > 0);
+        self.initial_status_received.store(true, .release);
+
+        const paused = try readClientFrame(&reader.interface, &body_storage);
+        const paused_status = try expectBufferStatus(paused, start.header);
+        try std.testing.expectEqual(@as(u32, 0), paused_status.credit_frames);
+
+        const resumed = try readClientFrame(&reader.interface, &body_storage);
+        const resumed_status = try expectBufferStatus(resumed, start.header);
+        try std.testing.expect(resumed_status.credit_frames > 0);
+
+        const cancel = try readClientFrame(&reader.interface, &body_storage);
+        try std.testing.expectEqual(protocol.MessageType.cancel_generation, cancel.header.message_type);
+        try sendEmptyServerMessage(
+            &writer.interface,
+            .stream_end,
+            3,
+            start.header.stream_id,
+            start.header.generation_id,
+        );
+    }
+
+    fn expectBufferStatus(
+        frame: ClientFrame,
+        start_header: protocol.Header,
+    ) !protocol.BufferStatus {
+        try std.testing.expectEqual(protocol.MessageType.buffer_status, frame.header.message_type);
+        try std.testing.expectEqual(start_header.stream_id, frame.header.stream_id);
+        try std.testing.expectEqual(start_header.generation_id, frame.header.generation_id);
+        return protocol.BufferStatus.decode(frame.body);
+    }
+};
 
 const RestartFakeLstnServer = struct {
     io: std.Io,

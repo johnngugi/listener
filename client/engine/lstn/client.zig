@@ -87,6 +87,7 @@ pub const Connection = struct {
         stream: StartedStream,
         buffer: *ring_buffer.SharedPcmRingBuffer,
         last_received_sequence: u64,
+        paused: *const std.atomic.Value(bool),
     ) !void {
         try self.outbound_mutex.lock(self.io);
         defer self.outbound_mutex.unlock(self.io);
@@ -99,6 +100,7 @@ pub const Connection = struct {
             stream,
             buffer,
             last_received_sequence,
+            paused.load(.acquire),
         );
     }
 
@@ -213,6 +215,7 @@ pub const Connection = struct {
         stream: StartedStream,
         buffer: *ring_buffer.SharedPcmRingBuffer,
         last_received_sequence: u64,
+        paused: bool,
     ) !void {
         const readable_frames = try buffer.readableFrames();
         const capacity_frames = try buffer.capacityFrames();
@@ -220,7 +223,7 @@ pub const Connection = struct {
 
         const status = lstn_protocol.BufferStatus{
             .buffered_frames = saturatedU32(readable_frames),
-            .credit_frames = saturatedU32(capacity_frames),
+            .credit_frames = if (paused) 0 else saturatedU32(capacity_frames),
             .next_render_frame = next_render_frame,
             .last_received_sequence = last_received_sequence,
             .underrun_count = 0,

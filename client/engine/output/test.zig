@@ -60,6 +60,8 @@ fn init(impl: *backend.OutputImpl) void {
         .open = &open,
         .start = &start,
         .stop = &stop,
+        .pause_playback = &pausePlayback,
+        .resume_playback = &resumePlayback,
         .close = &close,
     };
 }
@@ -81,6 +83,7 @@ fn start() !void {
     if (state.source == null) return error.NotOpen;
     if (state.started) return;
 
+    state.stop_requested = false;
     state.started = true;
     state.render_thread = try std.Thread.spawn(.{}, renderLoop, .{});
 }
@@ -98,6 +101,14 @@ fn stop() !void {
     if (thread) |joined_thread| {
         joined_thread.join();
     }
+}
+
+fn pausePlayback() !void {
+    try stop();
+}
+
+fn resumePlayback() !void {
+    try start();
 }
 
 fn close() void {

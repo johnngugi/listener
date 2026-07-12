@@ -113,6 +113,59 @@ class PlaybackCubit extends Cubit<PlaybackState> {
     }
   }
 
+  Future<void> pause() async {
+    final playbackId = _playbackId;
+    if (playbackId == null || state.status != PlaybackStatus.playing) return;
+
+    try {
+      final status = _engine.pause();
+      if (status != ListenerStatus.ok) {
+        throw StateError('Engine pause failed: ${status.name}');
+      }
+
+      await _control.pause(
+        control.PauseRequest(playbackId: playbackId),
+        options: CallOptions(timeout: _controlCallTimeout),
+      );
+      emit(PlaybackState(track: state.track, status: PlaybackStatus.paused));
+    } catch (error) {
+      emit(
+        PlaybackState(
+          track: state.track,
+          status: PlaybackStatus.error,
+          errorMessage: error.toString(),
+        ),
+      );
+    }
+  }
+
+  Future<void> resume() async {
+    final playbackId = _playbackId;
+    if (playbackId == null || state.status != PlaybackStatus.paused) return;
+
+    try {
+      await _control.resume(
+        control.ResumeRequest(playbackId: playbackId),
+        options: CallOptions(timeout: _controlCallTimeout),
+      );
+
+      final status = _engine.resume();
+      if (status != ListenerStatus.ok) {
+        throw StateError('Engine resume failed: ${status.name}');
+      }
+
+      emit(PlaybackState(track: state.track, status: PlaybackStatus.playing));
+    } catch (error) {
+      emit(
+        PlaybackState(
+          track: state.track,
+          status: PlaybackStatus.error,
+          errorMessage: error.toString(),
+        ),
+      );
+    }
+  }
+
   @override
   Future<void> close() async {
     await _engineEvents.cancel();

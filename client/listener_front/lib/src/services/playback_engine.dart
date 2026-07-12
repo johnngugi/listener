@@ -52,6 +52,12 @@ typedef _StartStreamDart =
 typedef _StopNative = ffi.Uint32 Function(ffi.Pointer<Engine>);
 typedef _StopDart = int Function(ffi.Pointer<Engine>);
 
+typedef _PauseNative = ffi.Uint32 Function(ffi.Pointer<Engine>);
+typedef _PauseDart = int Function(ffi.Pointer<Engine>);
+
+typedef _ResumeNative = ffi.Uint32 Function(ffi.Pointer<Engine>);
+typedef _ResumeDart = int Function(ffi.Pointer<Engine>);
+
 typedef _PlaybackEventCallbackNative =
     ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Uint32);
 typedef _SetEventCallbackNative =
@@ -120,6 +126,14 @@ final class ListenerEngine {
       'listener_engine_stop',
     );
 
+    _pause = _library.lookupFunction<_PauseNative, _PauseDart>(
+      'listener_engine_pause',
+    );
+
+    _resume = _library.lookupFunction<_ResumeNative, _ResumeDart>(
+      'listener_engine_resume',
+    );
+
     _setEventCallback = _library
         .lookupFunction<_SetEventCallbackNative, _SetEventCallbackDart>(
           'listener_engine_set_event_callback',
@@ -159,6 +173,8 @@ final class ListenerEngine {
   late final _ConnectDart _connect;
   late final _StartStreamDart _startStream;
   late final _StopDart _stop;
+  late final _PauseDart _pause;
+  late final _ResumeDart _resume;
   late final _SetEventCallbackDart _setEventCallback;
   late final ffi.Pointer<Engine> _engine;
   late final ffi.NativeCallable<_PlaybackEventCallbackNative> _eventCallback;
@@ -249,6 +265,22 @@ final class ListenerEngine {
     }
 
     return ListenerStatus.fromCode(_stop(_engine));
+  }
+
+  ListenerStatus pause() {
+    if (_closed) {
+      throw StateError('ListenerEngine is closed');
+    }
+
+    return ListenerStatus.fromCode(_pause(_engine));
+  }
+
+  ListenerStatus resume() {
+    if (_closed) {
+      throw StateError('ListenerEngine is closed');
+    }
+
+    return ListenerStatus.fromCode(_resume(_engine));
   }
 
   void close() {
