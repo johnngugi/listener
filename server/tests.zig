@@ -6,4 +6,7 @@ test "server modules are included from the server source root" {
     _ = @import("lstn/connection.zig");
     _ = @import("grpc/codec.zig");
     _ = @import("grpc/server.zig");
+    _ = @import("library/database.zig");
+    _ = @import("library/sqlite.zig");
+    _ = @import("library/scan.zig");
 }

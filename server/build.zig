@@ -56,6 +56,8 @@ fn linkServerLibraries(module: *std.Build.Module) void {
     module.linkSystemLibrary("avutil", .{});
     module.linkSystemLibrary("swresample", .{});
 
+    module.linkSystemLibrary("sqlite3", .{});
+
     module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/include" });
     module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/lib" });
     module.linkSystemLibrary("grpc", .{});
