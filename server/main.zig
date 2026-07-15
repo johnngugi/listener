@@ -3,15 +3,30 @@ const std = @import("std");
 const grpc_server = @import("grpc/server.zig");
 const lstn_server = @import("lstn/server.zig");
 const playback = @import("playback.zig");
+const library_scan = @import("library/scan.zig");
+const library_service = @import("library/service.zig");
+const sqlite = @import("library/sqlite.zig");
 
 const Config = struct {
     lstn_host: []const u8 = "127.0.0.1",
     lstn_port: u16 = 5778,
     grpc_address: [:0]const u8 = "127.0.0.1:5779",
+    library_database_path: [:0]const u8 = "listener.db",
 };
 
 pub fn main(init: std.process.Init) !void {
     const config = Config{};
+
+    const home = init.environ_map.get("HOME") orelse return error.HomeNotSet;
+    const library_root = try std.fs.path.join(init.gpa, &.{ home, "Music" });
+    defer init.gpa.free(library_root);
+
+    var library_db = try sqlite.open(init.gpa, config.library_database_path, .{});
+    defer library_db.deinit();
+    try library_db.migrate();
+    try library_scan.scanLibrary(library_root, init.io, init.gpa, library_db);
+
+    var library_api = library_service.Service.init(library_db);
 
     var controller = playback.Controller.init(init.gpa);
 
@@ -25,7 +40,7 @@ pub fn main(init: std.process.Init) !void {
     const grpc_thread = std.Thread.spawn(
         .{},
         runGrpcControlLoop,
-        .{ &grpc, init.gpa, &controller },
+        .{ &grpc, init.gpa, &controller, &library_api },
     ) catch |err| {
         grpc.deinit();
         controller.deinit();
@@ -83,8 +98,9 @@ fn runGrpcControlLoop(
     server: *grpc_server.Server,
     allocator: std.mem.Allocator,
     controller: *playback.Controller,
+    library_api: *const library_service.Service,
 ) void {
-    server.runUnaryControlLoop(allocator, controller) catch |err| {
+    server.runUnaryControlLoop(allocator, controller, library_api) catch |err| {
         std.debug.print("gRPC control loop stopped: {}\n", .{err});
     };
 }

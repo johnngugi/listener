@@ -28,7 +28,26 @@ pub const FileState = struct {
     modified_ns: i64,
 };
 
-/// A storage-neutral interface for the library scanner.
+pub const Track = struct {
+    id: i64,
+    path: []u8,
+    size: u64,
+    modified_ns: i64,
+};
+
+pub const TrackPage = struct {
+    tracks: []Track,
+    total_size: u64,
+    has_more: bool,
+
+    pub fn deinit(self: *TrackPage, allocator: std.mem.Allocator) void {
+        for (self.tracks) |track| allocator.free(track.path);
+        allocator.free(self.tracks);
+        self.* = undefined;
+    }
+};
+
+/// A storage-neutral interface for library scanning and browsing.
 ///
 /// This interface deliberately exposes library operations instead of SQL. A
 /// different implementation can therefore use another database without
@@ -45,6 +64,12 @@ pub const Database = struct {
         upsert_files: *const fn (context: *anyopaque, scan: Scan, files: []const ScannedFile) Error!void,
         finish_scan: *const fn (context: *anyopaque, scan: Scan) Error!void,
         abort_scan: *const fn (context: *anyopaque, scan: Scan) void,
+        list_tracks: *const fn (
+            context: *anyopaque,
+            allocator: std.mem.Allocator,
+            after_id: i64,
+            limit: u32,
+        ) Error!TrackPage,
     };
 
     pub fn deinit(self: *Database) void {
@@ -77,6 +102,15 @@ pub const Database = struct {
     /// Aborting never removes files that were absent from a partial scan.
     pub fn abortScan(self: Database, scan: Scan) void {
         self.vtable.abort_scan(self.context, scan);
+    }
+
+    pub fn listTracks(
+        self: Database,
+        allocator: std.mem.Allocator,
+        after_id: i64,
+        limit: u32,
+    ) Error!TrackPage {
+        return self.vtable.list_tracks(self.context, allocator, after_id, limit);
     }
 };
 

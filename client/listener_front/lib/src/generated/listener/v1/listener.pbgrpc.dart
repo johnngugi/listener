@@ -229,3 +229,54 @@ abstract class ListenerControlServiceBase extends $grpc.Service {
   $async.Stream<$0.PlaybackEvent> watch(
       $grpc.ServiceCall call, $0.WatchRequest request);
 }
+
+@$pb.GrpcServiceName('listener.control.v1.ListenerLibrary')
+class ListenerLibraryClient extends $grpc.Client {
+  /// The hostname for this service.
+  static const $core.String defaultHost = '';
+
+  /// OAuth scopes needed for the client.
+  static const $core.List<$core.String> oauthScopes = [
+    '',
+  ];
+
+  ListenerLibraryClient(super.channel, {super.options, super.interceptors});
+
+  $grpc.ResponseFuture<$0.ListTracksResponse> listTracks(
+    $0.ListTracksRequest request, {
+    $grpc.CallOptions? options,
+  }) {
+    return $createUnaryCall(_$listTracks, request, options: options);
+  }
+
+  // method descriptors
+
+  static final _$listTracks =
+      $grpc.ClientMethod<$0.ListTracksRequest, $0.ListTracksResponse>(
+          '/listener.control.v1.ListenerLibrary/ListTracks',
+          ($0.ListTracksRequest value) => value.writeToBuffer(),
+          $0.ListTracksResponse.fromBuffer);
+}
+
+@$pb.GrpcServiceName('listener.control.v1.ListenerLibrary')
+abstract class ListenerLibraryServiceBase extends $grpc.Service {
+  $core.String get $name => 'listener.control.v1.ListenerLibrary';
+
+  ListenerLibraryServiceBase() {
+    $addMethod($grpc.ServiceMethod<$0.ListTracksRequest, $0.ListTracksResponse>(
+        'ListTracks',
+        listTracks_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.ListTracksRequest.fromBuffer(value),
+        ($0.ListTracksResponse value) => value.writeToBuffer()));
+  }
+
+  $async.Future<$0.ListTracksResponse> listTracks_Pre($grpc.ServiceCall $call,
+      $async.Future<$0.ListTracksRequest> $request) async {
+    return listTracks($call, await $request);
+  }
+
+  $async.Future<$0.ListTracksResponse> listTracks(
+      $grpc.ServiceCall call, $0.ListTracksRequest request);
+}

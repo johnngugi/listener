@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const control = @import("../control.zig");
+const library = @import("../library/service.zig");
 const playback = @import("../playback.zig");
 const codec = @import("codec.zig");
 
@@ -129,6 +130,7 @@ pub const Server = struct {
         self: *Server,
         allocator: std.mem.Allocator,
         controller: *playback.Controller,
+        library_service: *const library.Service,
     ) ControlLoopError!void {
         while (true) {
             var incoming = IncomingCall.init();
@@ -140,6 +142,7 @@ pub const Server = struct {
             try self.handleUnaryControlCall(
                 allocator,
                 controller,
+                library_service,
                 &incoming,
             );
         }
@@ -149,6 +152,7 @@ pub const Server = struct {
         self: *Server,
         allocator: std.mem.Allocator,
         controller: *playback.Controller,
+        library_service: *const library.Service,
         incoming: *IncomingCall,
     ) ControlLoopError!void {
         const call = incoming.call.?;
@@ -186,6 +190,35 @@ pub const Server = struct {
                 c.GRPC_STATUS_UNIMPLEMENTED,
                 "watch is not implemented",
             ),
+            .list_tracks => |list_request| {
+                var page = library_service.listTracks(
+                    allocator,
+                    list_request,
+                ) catch |err| {
+                    const mapped = mapLibraryError(err);
+                    return self.sendStatus(call, mapped.status, mapped.detail);
+                };
+                defer page.deinit(allocator);
+
+                const response_payload = codec.encodeListTracksResponse(
+                    allocator,
+                    page,
+                ) catch {
+                    return self.sendStatus(
+                        call,
+                        c.GRPC_STATUS_RESOURCE_EXHAUSTED,
+                        "response allocation failed",
+                    );
+                };
+                defer allocator.free(response_payload);
+
+                return self.sendMessage(
+                    call,
+                    response_payload,
+                    c.GRPC_STATUS_OK,
+                    "ok",
+                );
+            },
         };
 
         const response = controller.execute(command) catch |err| {
@@ -454,6 +487,31 @@ fn mapExecuteError(
     };
 }
 
+fn mapLibraryError(err: library.Error) MappedStatus {
+    return switch (err) {
+        error.InvalidPageSize, error.InvalidPageToken => .{
+            .status = c.GRPC_STATUS_INVALID_ARGUMENT,
+            .detail = "invalid library page request",
+        },
+        error.DatabaseBusy => .{
+            .status = c.GRPC_STATUS_UNAVAILABLE,
+            .detail = "library database is busy",
+        },
+        error.OutOfMemory => .{
+            .status = c.GRPC_STATUS_RESOURCE_EXHAUSTED,
+            .detail = "allocation failed",
+        },
+        error.DatabaseConstraint,
+        error.DatabaseOpenFailed,
+        error.DatabaseOperationFailed,
+        error.InvalidScan,
+        => .{
+            .status = c.GRPC_STATUS_INTERNAL,
+            .detail = "library database operation failed",
+        },
+    };
+}
+
 test "maps control errors to grpc statuses inside the adapter" {
     try std.testing.expectEqual(
         @as(c.grpc_status_code, @intCast(c.GRPC_STATUS_NOT_FOUND)),
@@ -481,5 +539,16 @@ test "maps malformed control requests to grpc statuses inside the adapter" {
     try std.testing.expectEqual(
         @as(c.grpc_status_code, @intCast(c.GRPC_STATUS_INVALID_ARGUMENT)),
         mapDecodeError(error.TruncatedMessage),
+    );
+}
+
+test "maps library errors to grpc statuses inside the adapter" {
+    try std.testing.expectEqual(
+        @as(c.grpc_status_code, @intCast(c.GRPC_STATUS_INVALID_ARGUMENT)),
+        mapLibraryError(error.InvalidPageToken).status,
+    );
+    try std.testing.expectEqual(
+        @as(c.grpc_status_code, @intCast(c.GRPC_STATUS_UNAVAILABLE)),
+        mapLibraryError(error.DatabaseBusy).status,
     );
 }

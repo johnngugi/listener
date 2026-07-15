@@ -187,6 +187,65 @@ const Sqlite = struct {
         _ = stmt.step() catch return;
     }
 
+    fn listTracks(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        after_id: i64,
+        limit: u32,
+    ) database.Error!database.TrackPage {
+        const self = fromContext(context);
+
+        var count_stmt = try self.prepare("SELECT COUNT(*) FROM tracks");
+        defer count_stmt.deinit();
+
+        if (try count_stmt.step() != .row) return error.DatabaseOperationFailed;
+
+        const total_count = count_stmt.columnI64(0);
+        if (total_count < 0) return error.DatabaseOperationFailed;
+
+        var stmt = try self.prepare(
+            "SELECT id, path, size, modified_ns FROM tracks " ++
+                "WHERE id>?1 ORDER BY id LIMIT ?2",
+        );
+        defer stmt.deinit();
+
+        try stmt.bindI64(1, after_id);
+        try stmt.bindI64(2, @as(i64, limit) + 1);
+
+        var tracks: std.ArrayList(database.Track) = .empty;
+        errdefer {
+            for (tracks.items) |track| allocator.free(track.path);
+            tracks.deinit(allocator);
+        }
+
+        while (try stmt.step() == .row) {
+            const path = try stmt.columnTextAlloc(allocator, 1);
+            errdefer allocator.free(path);
+
+            const size = stmt.columnI64(2);
+            if (size < 0) return error.DatabaseOperationFailed;
+
+            tracks.append(allocator, .{
+                .id = stmt.columnI64(0),
+                .path = path,
+                .size = @intCast(size),
+                .modified_ns = stmt.columnI64(3),
+            }) catch return error.OutOfMemory;
+        }
+
+        const has_more = tracks.items.len > limit;
+        if (has_more) {
+            const extra = tracks.pop().?;
+            allocator.free(extra.path);
+        }
+
+        return .{
+            .tracks = tracks.toOwnedSlice(allocator) catch return error.OutOfMemory,
+            .total_size = @intCast(total_count),
+            .has_more = has_more,
+        };
+    }
+
     fn requireOpenScan(self: *Sqlite, scan: database.Scan) database.Error!void {
         var stmt = try self.prepare(
             "SELECT 1 FROM library_scans " ++
@@ -261,6 +320,18 @@ const Statement = struct {
     fn columnI64(self: Statement, index: c_int) i64 {
         return c.sqlite3_column_int64(self.handle, index);
     }
+
+    fn columnTextAlloc(
+        self: Statement,
+        allocator: std.mem.Allocator,
+        index: c_int,
+    ) database.Error![]u8 {
+        const length = c.sqlite3_column_bytes(self.handle, index);
+        if (length < 0) return error.DatabaseOperationFailed;
+        const text = c.sqlite3_column_text(self.handle, index) orelse
+            return error.DatabaseOperationFailed;
+        return allocator.dupe(u8, text[0..@intCast(length)]) catch error.OutOfMemory;
+    }
 };
 
 const vtable: database.Database.VTable = .{
@@ -271,6 +342,7 @@ const vtable: database.Database.VTable = .{
     .upsert_files = Sqlite.upsertFiles,
     .finish_scan = Sqlite.finishScan,
     .abort_scan = Sqlite.abortScan,
+    .list_tracks = Sqlite.listTracks,
 };
 
 pub fn open(
@@ -351,4 +423,31 @@ test "aborted scan does not remove unseen files" {
     db.abortScan(partial);
 
     try std.testing.expect((try db.findFile(complete, "/music/one.flac")) != null);
+}
+
+test "lists tracks with stable keyset pagination" {
+    var db = try open(std.testing.allocator, ":memory:", .{});
+    defer db.deinit();
+    try db.migrate();
+
+    const scan = try db.beginScan("/music");
+    try db.upsertFiles(scan, &.{
+        .{ .path = "/music/one.flac", .size = 100, .modified_ns = 10 },
+        .{ .path = "/music/two.flac", .size = 200, .modified_ns = 20 },
+        .{ .path = "/music/three.flac", .size = 300, .modified_ns = 30 },
+    });
+    try db.finishScan(scan);
+
+    var first = try db.listTracks(std.testing.allocator, 0, 2);
+    defer first.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), first.tracks.len);
+    try std.testing.expectEqual(@as(u64, 3), first.total_size);
+    try std.testing.expect(first.has_more);
+    try std.testing.expectEqualStrings("/music/one.flac", first.tracks[0].path);
+
+    var second = try db.listTracks(std.testing.allocator, first.tracks[1].id, 2);
+    defer second.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), second.tracks.len);
+    try std.testing.expect(!second.has_more);
+    try std.testing.expectEqualStrings("/music/three.flac", second.tracks[0].path);
 }

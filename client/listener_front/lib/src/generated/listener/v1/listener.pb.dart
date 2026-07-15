@@ -21,6 +21,240 @@ export 'package:protobuf/protobuf.dart' show GeneratedMessageGenericExtensions;
 
 export 'listener.pbenum.dart';
 
+class ListTracksRequest extends $pb.GeneratedMessage {
+  factory ListTracksRequest({
+    $core.int? pageSize,
+    $core.String? pageToken,
+  }) {
+    final result = create();
+    if (pageSize != null) result.pageSize = pageSize;
+    if (pageToken != null) result.pageToken = pageToken;
+    return result;
+  }
+
+  ListTracksRequest._();
+
+  factory ListTracksRequest.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      create()..mergeFromBuffer(data, registry);
+  factory ListTracksRequest.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      create()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'ListTracksRequest',
+      package:
+          const $pb.PackageName(_omitMessageNames ? '' : 'listener.control.v1'),
+      createEmptyInstance: create)
+    ..aI(1, _omitFieldNames ? '' : 'pageSize', fieldType: $pb.PbFieldType.OU3)
+    ..aOS(2, _omitFieldNames ? '' : 'pageToken')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ListTracksRequest clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ListTracksRequest copyWith(void Function(ListTracksRequest) updates) =>
+      super.copyWith((message) => updates(message as ListTracksRequest))
+          as ListTracksRequest;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  static ListTracksRequest create() => ListTracksRequest._();
+  @$core.override
+  ListTracksRequest createEmptyInstance() => create();
+  @$core.pragma('dart2js:noInline')
+  static ListTracksRequest getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<ListTracksRequest>(create);
+  static ListTracksRequest? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.int get pageSize => $_getIZ(0);
+  @$pb.TagNumber(1)
+  set pageSize($core.int value) => $_setUnsignedInt32(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasPageSize() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearPageSize() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get pageToken => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set pageToken($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasPageToken() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearPageToken() => $_clearField(2);
+}
+
+class ListTracksResponse extends $pb.GeneratedMessage {
+  factory ListTracksResponse({
+    $core.Iterable<Track>? tracks,
+    $core.String? nextPageToken,
+    $fixnum.Int64? totalSize,
+  }) {
+    final result = create();
+    if (tracks != null) result.tracks.addAll(tracks);
+    if (nextPageToken != null) result.nextPageToken = nextPageToken;
+    if (totalSize != null) result.totalSize = totalSize;
+    return result;
+  }
+
+  ListTracksResponse._();
+
+  factory ListTracksResponse.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      create()..mergeFromBuffer(data, registry);
+  factory ListTracksResponse.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      create()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'ListTracksResponse',
+      package:
+          const $pb.PackageName(_omitMessageNames ? '' : 'listener.control.v1'),
+      createEmptyInstance: create)
+    ..pPM<Track>(1, _omitFieldNames ? '' : 'tracks', subBuilder: Track.create)
+    ..aOS(2, _omitFieldNames ? '' : 'nextPageToken')
+    ..a<$fixnum.Int64>(
+        3, _omitFieldNames ? '' : 'totalSize', $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ListTracksResponse clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ListTracksResponse copyWith(void Function(ListTracksResponse) updates) =>
+      super.copyWith((message) => updates(message as ListTracksResponse))
+          as ListTracksResponse;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  static ListTracksResponse create() => ListTracksResponse._();
+  @$core.override
+  ListTracksResponse createEmptyInstance() => create();
+  @$core.pragma('dart2js:noInline')
+  static ListTracksResponse getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<ListTracksResponse>(create);
+  static ListTracksResponse? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $pb.PbList<Track> get tracks => $_getList(0);
+
+  @$pb.TagNumber(2)
+  $core.String get nextPageToken => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set nextPageToken($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasNextPageToken() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearNextPageToken() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $fixnum.Int64 get totalSize => $_getI64(2);
+  @$pb.TagNumber(3)
+  set totalSize($fixnum.Int64 value) => $_setInt64(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasTotalSize() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearTotalSize() => $_clearField(3);
+}
+
+class Track extends $pb.GeneratedMessage {
+  factory Track({
+    $fixnum.Int64? id,
+    $core.String? path,
+    $fixnum.Int64? sizeBytes,
+    $fixnum.Int64? modifiedUnixNanos,
+  }) {
+    final result = create();
+    if (id != null) result.id = id;
+    if (path != null) result.path = path;
+    if (sizeBytes != null) result.sizeBytes = sizeBytes;
+    if (modifiedUnixNanos != null) result.modifiedUnixNanos = modifiedUnixNanos;
+    return result;
+  }
+
+  Track._();
+
+  factory Track.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      create()..mergeFromBuffer(data, registry);
+  factory Track.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      create()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'Track',
+      package:
+          const $pb.PackageName(_omitMessageNames ? '' : 'listener.control.v1'),
+      createEmptyInstance: create)
+    ..aInt64(1, _omitFieldNames ? '' : 'id')
+    ..aOS(2, _omitFieldNames ? '' : 'path')
+    ..a<$fixnum.Int64>(
+        3, _omitFieldNames ? '' : 'sizeBytes', $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
+    ..aInt64(4, _omitFieldNames ? '' : 'modifiedUnixNanos')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  Track clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  Track copyWith(void Function(Track) updates) =>
+      super.copyWith((message) => updates(message as Track)) as Track;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  static Track create() => Track._();
+  @$core.override
+  Track createEmptyInstance() => create();
+  @$core.pragma('dart2js:noInline')
+  static Track getDefault() =>
+      _defaultInstance ??= $pb.GeneratedMessage.$_defaultFor<Track>(create);
+  static Track? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $fixnum.Int64 get id => $_getI64(0);
+  @$pb.TagNumber(1)
+  set id($fixnum.Int64 value) => $_setInt64(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearId() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get path => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set path($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasPath() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearPath() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $fixnum.Int64 get sizeBytes => $_getI64(2);
+  @$pb.TagNumber(3)
+  set sizeBytes($fixnum.Int64 value) => $_setInt64(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasSizeBytes() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearSizeBytes() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $fixnum.Int64 get modifiedUnixNanos => $_getI64(3);
+  @$pb.TagNumber(4)
+  set modifiedUnixNanos($fixnum.Int64 value) => $_setInt64(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasModifiedUnixNanos() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearModifiedUnixNanos() => $_clearField(4);
+}
+
 class StartRequest extends $pb.GeneratedMessage {
   factory StartRequest({
     $core.String? mediaPath,

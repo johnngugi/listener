@@ -13,7 +13,14 @@ service ListenerControl {
   rpc Status(StatusRequest) returns (StatusResponse);
   rpc Watch(WatchRequest) returns (stream PlaybackEvent);
 }
+
+service ListenerLibrary {
+  rpc ListTracks(ListTracksRequest) returns (ListTracksResponse);
+}
 ```
+
+Both services are hosted by the same gRPC server on the same port. gRPC routes
+calls by their fully qualified service and method names.
 
 The LSTN TCP protocol remains the media/data plane. It still carries audio
 frames, buffer status, stream generations, heartbeats, and protocol errors on
@@ -24,9 +31,10 @@ state such as `starting`, `playing`, `paused`, `stopped`, `ended`, and
 `error`. LSTN stream state is transport state for a specific media generation;
 clients should not treat it as a substitute for `Status` or `Watch`.
 
-The gRPC API should stay behind `server/grpc/server.zig` and control-plane logic
-should use `server/control.zig` types. The rest of the app should not see
-`grpc_call`, `grpc_op`, completion-queue tags, or serialized protobuf buffers.
+The gRPC API stays behind `server/grpc/server.zig`; application logic uses the
+transport-neutral types in `server/control.zig` and `server/library/service.zig`.
+The rest of the app should not see `grpc_call`, `grpc_op`, completion-queue tags,
+or serialized protobuf buffers.
 
 ## Current Scaffold
 
@@ -38,8 +46,8 @@ should use `server/control.zig` types. The rest of the app should not see
 - `grpc_server_request_call` for accepting calls
 
 `server/grpc/codec.zig` decodes Listener-specific protobuf request payloads into
-`server/control.zig` types. It intentionally does not implement a general Zig
-protobuf or gRPC binding.
+transport-neutral control or library types. It intentionally does not implement
+a general Zig protobuf or gRPC binding.
 
 `server/control.zig` defines the transport-neutral command, response, status, and
 event types. `server/playback.zig` owns playback IDs and state transitions behind
@@ -47,13 +55,21 @@ that boundary. The gRPC serving loop should call the playback controller with
 decoded `control.Command` values and encode the returned `control.Response`
 values back to protobuf.
 
-The next step is a Listener-specific control loop that:
+`server/library/service.zig` is the transport-neutral boundary for library
+browsing. `ListTracks` reads bounded pages from SQLite using the last returned
+track ID as a cursor. A page size of zero selects the default of 100 tracks;
+requests above the maximum of 500 are rejected with `INVALID_ARGUMENT`.
+`next_page_token` is empty when no further page exists.
 
-1. accepts only `listener.control.v1.ListenerControl` methods;
+The Listener-specific serving loop:
+
+1. accepts `listener.control.v1.ListenerControl` and
+   `listener.control.v1.ListenerLibrary` methods;
 2. receives request messages from the gRPC adapter and passes their payloads to the
-   control-only codec;
-3. executes decoded commands through `server/playback.zig`; and
-4. maps control failures to gRPC status codes.
+   Listener-specific codec;
+3. executes decoded calls through `server/playback.zig` or the library service;
+   and
+4. maps application failures to gRPC status codes.
 
 The TCP media session should report transport-derived progress and terminal
 events back through the playback boundary. For example, `BUFFER_STATUS` can
@@ -88,6 +104,7 @@ The gRPC schema models player control, not the LSTN media protocol:
 | Seek playback | `Seek(SeekRequest)` |
 | Query state | `Status(StatusRequest)` |
 | Observe changes | `Watch(WatchRequest)` |
+| Browse scanned tracks | `ListTracks(ListTracksRequest)` |
 
 Transport-level and control-command failures should become gRPC statuses. LSTN
 protocol errors remain on the TCP media/data connection.

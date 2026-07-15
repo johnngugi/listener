@@ -1,11 +1,14 @@
 const std = @import("std");
 
 const control = @import("../control.zig");
+const database = @import("../library/database.zig");
+const library = @import("../library/service.zig");
 
 pub const DecodeError = error{
     EmptyRequiredString,
     InvalidFieldNumber,
     InvalidMethod,
+    InvalidInteger,
     InvalidString,
     InvalidWireType,
     MalformedVarint,
@@ -18,6 +21,7 @@ const max_control_string_len = 4096;
 pub const Request = union(enum) {
     command: control.Command,
     watch: control.Target,
+    list_tracks: library.ListTracksRequest,
 };
 
 pub fn encodeResponse(
@@ -48,7 +52,42 @@ pub fn encodeResponse(
     return out.toOwnedSlice(allocator);
 }
 
+pub fn encodeListTracksResponse(
+    allocator: std.mem.Allocator,
+    page: database.TrackPage,
+) std.mem.Allocator.Error![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    for (page.tracks) |track| {
+        var encoded_track: std.ArrayList(u8) = .empty;
+        defer encoded_track.deinit(allocator);
+
+        try appendInt64(&encoded_track, allocator, 1, track.id);
+        try appendString(&encoded_track, allocator, 2, track.path);
+        try appendUint64(&encoded_track, allocator, 3, track.size);
+        try appendInt64(&encoded_track, allocator, 4, track.modified_ns);
+        try appendMessage(&out, allocator, 1, encoded_track.items);
+    }
+
+    if (page.has_more and page.tracks.len != 0) {
+        const token = try std.fmt.allocPrint(
+            allocator,
+            "{d}",
+            .{page.tracks[page.tracks.len - 1].id},
+        );
+        defer allocator.free(token);
+        try appendString(&out, allocator, 2, token);
+    }
+    try appendUint64(&out, allocator, 3, page.total_size);
+
+    return out.toOwnedSlice(allocator);
+}
+
 pub fn decodeRequest(method: []const u8, message: []const u8) DecodeError!Request {
+    if (std.mem.eql(u8, method, library.Method.list_tracks.fullName())) {
+        return .{ .list_tracks = try decodeListTracks(message) };
+    }
     if (std.mem.eql(u8, method, control.Method.start.fullName())) {
         return .{ .command = .{ .start = try decodeStart(message) } };
     }
@@ -72,6 +111,15 @@ pub fn decodeRequest(method: []const u8, message: []const u8) DecodeError!Reques
     }
 
     return error.InvalidMethod;
+}
+
+fn appendMessage(
+    out: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    field_number: u32,
+    value: []const u8,
+) std.mem.Allocator.Error!void {
+    try appendString(out, allocator, field_number, value);
 }
 
 fn appendString(
@@ -102,6 +150,15 @@ fn appendUint64(
 ) std.mem.Allocator.Error!void {
     try appendKey(out, allocator, field_number, .varint);
     try appendVarint(out, allocator, value);
+}
+
+fn appendInt64(
+    out: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    field_number: u32,
+    value: i64,
+) std.mem.Allocator.Error!void {
+    try appendUint64(out, allocator, field_number, @bitCast(value));
 }
 
 fn appendKey(
@@ -192,6 +249,22 @@ fn decodeSeek(message: []const u8) DecodeError!control.Seek {
     }
 
     try validateRequiredString(out.playback_id);
+    return out;
+}
+
+fn decodeListTracks(message: []const u8) DecodeError!library.ListTracksRequest {
+    var out = library.ListTracksRequest{};
+
+    var reader = ProtoReader.init(message);
+    while (try reader.next()) |field| {
+        switch (field.number) {
+            1 => out.page_size = std.math.cast(u32, try field.uint64()) orelse
+                return error.InvalidInteger,
+            2 => out.page_token = try field.string(),
+            else => try field.skip(),
+        }
+    }
+
     return out;
 }
 
@@ -326,6 +399,43 @@ test "decodes start request" {
         request.command.start.media_path,
     );
     try std.testing.expectEqual(@as(u64, 150), request.command.start.start_frame);
+}
+
+test "decodes list tracks request" {
+    const request = try decodeRequest(
+        library.Method.list_tracks.fullName(),
+        "\x08\xfa\x01\x12\x02\x34\x32",
+    );
+
+    try std.testing.expect(request == .list_tracks);
+    try std.testing.expectEqual(@as(u32, 250), request.list_tracks.page_size);
+    try std.testing.expectEqualStrings("42", request.list_tracks.page_token);
+}
+
+test "encodes list tracks response" {
+    var tracks = [_]database.Track{.{
+        .id = 7,
+        .path = @constCast("/music/a.flac"),
+        .size = 123,
+        .modified_ns = 456,
+    }};
+    const encoded = try encodeListTracksResponse(std.testing.allocator, .{
+        .tracks = &tracks,
+        .total_size = 9,
+        .has_more = true,
+    });
+    defer std.testing.allocator.free(encoded);
+
+    try std.testing.expectEqualStrings(
+        "\x0a\x16" ++
+            "\x08\x07" ++
+            "\x12\x0d/music/a.flac" ++
+            "\x18\x7b" ++
+            "\x20\xc8\x03" ++
+            "\x12\x01\x37" ++
+            "\x18\x09",
+        encoded,
+    );
 }
 
 test "encodes start response" {

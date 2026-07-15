@@ -2,16 +2,7 @@ const std = @import("std");
 const database = @import("database.zig");
 const sqlite = @import("sqlite.zig");
 
-pub fn scanLibrary(root_dir: []const u8, io: std.Io, allocator: std.mem.Allocator) !void {
-    var db = try sqlite.open(allocator, "listener.db", .{});
-    defer db.deinit();
-
-    try db.migrate();
-
-    try scanLibraryWithDatabase(root_dir, io, allocator, db);
-}
-
-fn scanLibraryWithDatabase(
+pub fn scanLibrary(
     root_dir: []const u8,
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -128,7 +119,7 @@ test "scanner traverses nested directories and flushes a partial batch" {
     defer db.deinit();
     try db.migrate();
 
-    try scanLibraryWithDatabase(root_path, io, allocator, db);
+    try scanLibrary(root_path, io, allocator, db);
 
     const check_scan = try db.beginScan(root_path);
     defer db.abortScan(check_scan);

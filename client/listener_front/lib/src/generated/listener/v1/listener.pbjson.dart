@@ -38,6 +38,66 @@ final $typed_data.Uint8List playbackStateDescriptor = $convert.base64Decode(
     'NLX1NUQVRFX1NUT1BQRUQQBRIYChRQTEFZQkFDS19TVEFURV9FTkRFRBAGEhgKFFBMQVlCQUNL'
     'X1NUQVRFX0VSUk9SEAc=');
 
+@$core.Deprecated('Use listTracksRequestDescriptor instead')
+const ListTracksRequest$json = {
+  '1': 'ListTracksRequest',
+  '2': [
+    {'1': 'page_size', '3': 1, '4': 1, '5': 13, '10': 'pageSize'},
+    {'1': 'page_token', '3': 2, '4': 1, '5': 9, '10': 'pageToken'},
+  ],
+};
+
+/// Descriptor for `ListTracksRequest`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List listTracksRequestDescriptor = $convert.base64Decode(
+    'ChFMaXN0VHJhY2tzUmVxdWVzdBIbCglwYWdlX3NpemUYASABKA1SCHBhZ2VTaXplEh0KCnBhZ2'
+    'VfdG9rZW4YAiABKAlSCXBhZ2VUb2tlbg==');
+
+@$core.Deprecated('Use listTracksResponseDescriptor instead')
+const ListTracksResponse$json = {
+  '1': 'ListTracksResponse',
+  '2': [
+    {
+      '1': 'tracks',
+      '3': 1,
+      '4': 3,
+      '5': 11,
+      '6': '.listener.control.v1.Track',
+      '10': 'tracks'
+    },
+    {'1': 'next_page_token', '3': 2, '4': 1, '5': 9, '10': 'nextPageToken'},
+    {'1': 'total_size', '3': 3, '4': 1, '5': 4, '10': 'totalSize'},
+  ],
+};
+
+/// Descriptor for `ListTracksResponse`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List listTracksResponseDescriptor = $convert.base64Decode(
+    'ChJMaXN0VHJhY2tzUmVzcG9uc2USMgoGdHJhY2tzGAEgAygLMhoubGlzdGVuZXIuY29udHJvbC'
+    '52MS5UcmFja1IGdHJhY2tzEiYKD25leHRfcGFnZV90b2tlbhgCIAEoCVINbmV4dFBhZ2VUb2tl'
+    'bhIdCgp0b3RhbF9zaXplGAMgASgEUgl0b3RhbFNpemU=');
+
+@$core.Deprecated('Use trackDescriptor instead')
+const Track$json = {
+  '1': 'Track',
+  '2': [
+    {'1': 'id', '3': 1, '4': 1, '5': 3, '10': 'id'},
+    {'1': 'path', '3': 2, '4': 1, '5': 9, '10': 'path'},
+    {'1': 'size_bytes', '3': 3, '4': 1, '5': 4, '10': 'sizeBytes'},
+    {
+      '1': 'modified_unix_nanos',
+      '3': 4,
+      '4': 1,
+      '5': 3,
+      '10': 'modifiedUnixNanos'
+    },
+  ],
+};
+
+/// Descriptor for `Track`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List trackDescriptor = $convert.base64Decode(
+    'CgVUcmFjaxIOCgJpZBgBIAEoA1ICaWQSEgoEcGF0aBgCIAEoCVIEcGF0aBIdCgpzaXplX2J5dG'
+    'VzGAMgASgEUglzaXplQnl0ZXMSLgoTbW9kaWZpZWRfdW5peF9uYW5vcxgEIAEoA1IRbW9kaWZp'
+    'ZWRVbml4TmFub3M=');
+
 @$core.Deprecated('Use startRequestDescriptor instead')
 const StartRequest$json = {
   '1': 'StartRequest',

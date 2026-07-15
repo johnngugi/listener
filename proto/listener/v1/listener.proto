@@ -12,6 +12,28 @@ service ListenerControl {
   rpc Watch(WatchRequest) returns (stream PlaybackEvent);
 }
 
+service ListenerLibrary {
+  rpc ListTracks(ListTracksRequest) returns (ListTracksResponse);
+}
+
+message ListTracksRequest {
+  uint32 page_size = 1;
+  string page_token = 2;
+}
+
+message ListTracksResponse {
+  repeated Track tracks = 1;
+  string next_page_token = 2;
+  uint64 total_size = 3;
+}
+
+message Track {
+  int64 id = 1;
+  string path = 2;
+  uint64 size_bytes = 3;
+  int64 modified_unix_nanos = 4;
+}
+
 message StartRequest {
   string media_path = 1;
   uint64 start_frame = 2;
