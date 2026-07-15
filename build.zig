@@ -9,6 +9,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const stdout = b.createModule(.{
+        .root_source_file = b.path("shared/stdout.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     const audio_backend = b.createModule(.{
         .root_source_file = b.path("client/engine/output/backend.zig"),
@@ -40,6 +45,7 @@ pub fn build(b: *std.Build) void {
     client_engine.addImport("audio_backend", audio_backend);
     client_engine.addImport("audio_ring_buffer", audio_ring_buffer);
     client_engine.addImport("selected_output", selected_output);
+    client_engine.addImport("stdout", stdout);
 
     const server = b.createModule(.{
         .root_source_file = b.path("server/module.zig"),

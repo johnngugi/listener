@@ -8,6 +8,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const stdout = b.createModule(.{
+        .root_source_file = b.path("../shared/stdout.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     const exe = b.addExecutable(.{
         .name = "listener",
@@ -19,6 +24,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.root_module.addImport("lstn_protocol", lstn_protocol);
+    exe.root_module.addImport("stdout", stdout);
 
     linkServerLibraries(exe.root_module);
 
@@ -41,6 +47,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     server_tests.root_module.addImport("lstn_protocol", lstn_protocol);
+    server_tests.root_module.addImport("stdout", stdout);
     linkServerLibraries(server_tests.root_module);
     const run_server_tests = b.addRunArtifact(server_tests);
 

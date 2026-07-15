@@ -1,5 +1,6 @@
 const std = @import("std");
 const connection = @import("connection.zig");
+const stdout = @import("stdout");
 
 pub const BufferStatusEvent = connection.BufferStatusEvent;
 pub const Hooks = connection.Hooks;
@@ -27,7 +28,8 @@ pub fn run(
     });
     defer listener.deinit(io);
 
-    std.debug.print(
+    stdout.print(
+        io,
         "Listening on {s}:{d} ...\n",
         .{ config.host, config.port },
     );
@@ -36,7 +38,7 @@ pub fn run(
         const stream = try listener.accept(io);
 
         const thread = std.Thread.spawn(.{}, connection.handle, .{ io, stream, allocator, hooks }) catch |err| {
-            std.debug.print("Failed to spawn connection: {}\n", .{err});
+            stdout.print(io, "Failed to spawn connection: {}\n", .{err});
             stream.close(io);
             continue;
         };

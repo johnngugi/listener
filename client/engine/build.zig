@@ -9,6 +9,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const stdout = b.createModule(.{
+        .root_source_file = b.path("../../shared/stdout.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     const audio_backend = b.createModule(.{
         .root_source_file = b.path("output/backend.zig"),
@@ -24,7 +29,7 @@ pub fn build(b: *std.Build) void {
     });
     audio_ring_buffer.addImport("audio_backend", audio_backend);
 
-    const selected_output = selectedOutputBackend(b, target, optimize, audio_backend);
+    const selected_output = selectedOutputBackend(b, target, optimize, audio_backend, stdout);
 
     const root_module = b.createModule(.{
         .root_source_file = b.path("ffi.zig"),
@@ -35,6 +40,7 @@ pub fn build(b: *std.Build) void {
     root_module.addImport("audio_backend", audio_backend);
     root_module.addImport("audio_ring_buffer", audio_ring_buffer);
     root_module.addImport("selected_output", selected_output);
+    root_module.addImport("stdout", stdout);
 
     const lib = b.addLibrary(.{
         .name = "listener_engine",
@@ -54,6 +60,7 @@ pub fn build(b: *std.Build) void {
             audio_backend,
             audio_ring_buffer,
             testOutputBackend(b, target, optimize, audio_backend),
+            stdout,
         ),
     });
     const run_tests = b.addRunArtifact(tests);
@@ -70,6 +77,7 @@ fn clientEngineModule(
     audio_backend: *std.Build.Module,
     audio_ring_buffer: *std.Build.Module,
     selected_output: *std.Build.Module,
+    stdout: *std.Build.Module,
 ) *std.Build.Module {
     const module = b.createModule(.{
         .root_source_file = b.path("ffi.zig"),
@@ -80,6 +88,7 @@ fn clientEngineModule(
     module.addImport("audio_backend", audio_backend);
     module.addImport("audio_ring_buffer", audio_ring_buffer);
     module.addImport("selected_output", selected_output);
+    module.addImport("stdout", stdout);
     return module;
 }
 
@@ -88,6 +97,7 @@ fn selectedOutputBackend(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     audio_backend: *std.Build.Module,
+    stdout: *std.Build.Module,
 ) *std.Build.Module {
     const root_source_file = switch (target.result.os.tag) {
         .macos => "output/coreaudio.zig",
@@ -104,6 +114,7 @@ fn selectedOutputBackend(
         .optimize = optimize,
     });
     module.addImport("audio_backend", audio_backend);
+    module.addImport("stdout", stdout);
     return module;
 }
 

@@ -6,6 +6,7 @@ const playback = @import("playback.zig");
 const library_scan = @import("library/scan.zig");
 const library_service = @import("library/service.zig");
 const sqlite = @import("library/sqlite.zig");
+const stdout = @import("stdout");
 
 const Config = struct {
     lstn_host: []const u8 = "127.0.0.1",
@@ -40,7 +41,7 @@ pub fn main(init: std.process.Init) !void {
     const grpc_thread = std.Thread.spawn(
         .{},
         runGrpcControlLoop,
-        .{ &grpc, init.gpa, &controller, &library_api },
+        .{ &grpc, init.io, init.gpa, &controller, &library_api },
     ) catch |err| {
         grpc.deinit();
         controller.deinit();
@@ -48,7 +49,8 @@ pub fn main(init: std.process.Init) !void {
     };
     grpc_thread.detach();
 
-    std.debug.print(
+    stdout.print(
+        init.io,
         "gRPC control listening on {s} ...\n",
         .{config.grpc_address},
     );
@@ -96,11 +98,12 @@ fn onLstnBufferStatus(
 
 fn runGrpcControlLoop(
     server: *grpc_server.Server,
+    io: std.Io,
     allocator: std.mem.Allocator,
     controller: *playback.Controller,
     library_api: *const library_service.Service,
 ) void {
     server.runUnaryControlLoop(allocator, controller, library_api) catch |err| {
-        std.debug.print("gRPC control loop stopped: {}\n", .{err});
+        stdout.print(io, "gRPC control loop stopped: {}\n", .{err});
     };
 }

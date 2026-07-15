@@ -4,6 +4,7 @@ const protocol = @import("lstn_protocol");
 const backend = @import("audio_backend");
 const ring_buffer = @import("audio_ring_buffer");
 const selected_output = @import("selected_output");
+const stdout = @import("stdout");
 
 pub export fn listener_engine_abi_version() u32 {
     return 1;
@@ -39,7 +40,7 @@ pub export fn listener_engine_connect(
     };
 
     engine.connect(config) catch |err| {
-        std.debug.print("listener_engine_connect failed: {}\n", .{err});
+        stdout.print(engine.io(), "listener_engine_connect failed: {}\n", .{err});
         return status_from_error(err);
     };
 
@@ -67,7 +68,7 @@ pub export fn listener_engine_start_stream(
     start_stream.validate() catch |err| return status_from_error(err);
 
     engine.startStream(start_stream) catch |err| {
-        std.debug.print("listener_engine_start_stream failed: {}\n", .{err});
+        stdout.print(engine.io(), "listener_engine_start_stream failed: {}\n", .{err});
         return status_from_error(err);
     };
 
@@ -78,7 +79,7 @@ pub export fn listener_engine_stop(engine_ptr: ?*Engine) ListenerStatus {
     const engine = engine_ptr orelse return .null_engine;
 
     engine.stopStream() catch |err| {
-        std.debug.print("listener_engine_stop failed: {}\n", .{err});
+        stdout.print(engine.io(), "listener_engine_stop failed: {}\n", .{err});
         return status_from_error(err);
     };
 
@@ -89,7 +90,7 @@ pub export fn listener_engine_pause(engine_ptr: ?*Engine) ListenerStatus {
     const engine = engine_ptr orelse return .null_engine;
 
     engine.pauseStream() catch |err| {
-        std.debug.print("listener_engine_pause failed: {}\n", .{err});
+        stdout.print(engine.io(), "listener_engine_pause failed: {}\n", .{err});
         return status_from_error(err);
     };
 
@@ -100,7 +101,7 @@ pub export fn listener_engine_resume(engine_ptr: ?*Engine) ListenerStatus {
     const engine = engine_ptr orelse return .null_engine;
 
     engine.resumeStream() catch |err| {
-        std.debug.print("listener_engine_resume failed: {}\n", .{err});
+        stdout.print(engine.io(), "listener_engine_resume failed: {}\n", .{err});
         return status_from_error(err);
     };
 

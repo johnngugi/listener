@@ -1,5 +1,6 @@
 const std = @import("std");
 const backend = @import("audio_backend");
+const stdout = @import("stdout");
 
 const c = @cImport({
     @cInclude("CoreAudioTypes/CoreAudioBaseTypes.h");
@@ -302,7 +303,7 @@ fn renderSilence(
 
 fn checkStatus(status: c.OSStatus) !void {
     if (status == c.noErr) return;
-    std.debug.print("CoreAudio call failed with OSStatus {d}\n", .{status});
+    stdout.printGlobal("CoreAudio call failed with OSStatus {d}\n", .{status});
     return error.CoreAudioCallFailed;
 }
 

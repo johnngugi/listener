@@ -1,6 +1,7 @@
 .zig-cache/
 zig-out/
 zig-cache/
+listener.db
 
 # OS/editor noise
 .DS_Store
