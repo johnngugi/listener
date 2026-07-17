@@ -10,4 +10,5 @@ test "server modules are included from the server source root" {
     _ = @import("library/sqlite.zig");
     _ = @import("library/scan.zig");
     _ = @import("library/service.zig");
+    _ = @import("library/track_info.zig");
 }

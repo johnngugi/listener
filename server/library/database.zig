@@ -21,6 +21,17 @@ pub const ScannedFile = struct {
     path: []const u8,
     size: u64,
     modified_ns: i64,
+    title: ?[]const u8,
+    track_artist: ?[]const u8,
+    album_artist: ?[]const u8,
+    album: ?[]const u8,
+    track_number: ?u16,
+    disc_number: ?u16,
+    release_date: ?[]const u8,
+    duration_ms: ?u64,
+    codec: []const u8,
+    sample_rate: u32,
+    bits_per_sample: u8,
 };
 
 pub const FileState = struct {
@@ -33,6 +44,29 @@ pub const Track = struct {
     path: []u8,
     size: u64,
     modified_ns: i64,
+    title: ?[]u8,
+    track_artist: ?[]u8,
+    album_artist: ?[]u8,
+    album: ?[]u8,
+    track_number: ?u16,
+    disc_number: ?u16,
+    release_date: ?[]u8,
+    duration_ms: ?u64,
+    codec: []u8,
+    sample_rate: u32,
+    bits_per_sample: u8,
+    date_added: i64,
+
+    pub fn deinit(self: *Track, allocator: std.mem.Allocator) void {
+        allocator.free(self.path);
+        freeOptional(allocator, self.title);
+        freeOptional(allocator, self.track_artist);
+        freeOptional(allocator, self.album_artist);
+        freeOptional(allocator, self.album);
+        freeOptional(allocator, self.release_date);
+        allocator.free(self.codec);
+        self.* = undefined;
+    }
 };
 
 pub const TrackPage = struct {
@@ -41,11 +75,15 @@ pub const TrackPage = struct {
     has_more: bool,
 
     pub fn deinit(self: *TrackPage, allocator: std.mem.Allocator) void {
-        for (self.tracks) |track| allocator.free(track.path);
+        for (self.tracks) |*track| track.deinit(allocator);
         allocator.free(self.tracks);
         self.* = undefined;
     }
 };
+
+fn freeOptional(allocator: std.mem.Allocator, value: ?[]u8) void {
+    if (value) |text| allocator.free(text);
+}
 
 /// A storage-neutral interface for library scanning and browsing.
 ///

@@ -28,6 +28,18 @@ const schema =
     \\    path TEXT NOT NULL,
     \\    size INTEGER NOT NULL CHECK (size >= 0),
     \\    modified_ns INTEGER NOT NULL,
+    \\    title TEXT,
+    \\    track_artist TEXT,
+    \\    album_artist TEXT,
+    \\    album TEXT,
+    \\    track_number INTEGER,
+    \\    disc_number INTEGER,
+    \\    release_date TEXT,
+    \\    duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+    \\    codec TEXT NOT NULL,
+    \\    sample_rate INTEGER NOT NULL CHECK (sample_rate >= 0),
+    \\    bits_per_sample INTEGER NOT NULL CHECK (bits_per_sample >= 0),
+    \\    date_added INTEGER NOT NULL DEFAULT (unixepoch()),
     \\    last_seen_scan_id INTEGER NOT NULL,
     \\    UNIQUE (root_id, path)
     \\);
@@ -124,10 +136,20 @@ const Sqlite = struct {
         errdefer self.rollback();
 
         var stmt = try self.prepare(
-            "INSERT INTO tracks(root_id, path, size, modified_ns, last_seen_scan_id) " ++
-                "VALUES (?1, ?2, ?3, ?4, ?5) " ++
+            "INSERT INTO tracks(" ++
+                "root_id, path, size, modified_ns, title, track_artist, " ++
+                "album_artist, album, track_number, disc_number, release_date, " ++
+                "duration_ms, codec, sample_rate, bits_per_sample, last_seen_scan_id" ++
+                ") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, " ++
+                "?12, ?13, ?14, ?15, ?16) " ++
                 "ON CONFLICT(root_id, path) DO UPDATE SET " ++
                 "size=excluded.size, modified_ns=excluded.modified_ns, " ++
+                "title=excluded.title, track_artist=excluded.track_artist, " ++
+                "album_artist=excluded.album_artist, album=excluded.album, " ++
+                "track_number=excluded.track_number, disc_number=excluded.disc_number, " ++
+                "release_date=excluded.release_date, duration_ms=excluded.duration_ms, " ++
+                "codec=excluded.codec, sample_rate=excluded.sample_rate, " ++
+                "bits_per_sample=excluded.bits_per_sample, " ++
                 "last_seen_scan_id=excluded.last_seen_scan_id",
         );
         defer stmt.deinit();
@@ -137,7 +159,18 @@ const Sqlite = struct {
             try stmt.bindText(2, file.path);
             try stmt.bindI64(3, std.math.cast(i64, file.size) orelse return error.DatabaseConstraint);
             try stmt.bindI64(4, file.modified_ns);
-            try stmt.bindI64(5, scan.id);
+            try stmt.bindOptionalText(5, file.title);
+            try stmt.bindOptionalText(6, file.track_artist);
+            try stmt.bindOptionalText(7, file.album_artist);
+            try stmt.bindOptionalText(8, file.album);
+            try stmt.bindOptionalI64(9, try optionalInt(file.track_number));
+            try stmt.bindOptionalI64(10, try optionalInt(file.disc_number));
+            try stmt.bindOptionalText(11, file.release_date);
+            try stmt.bindOptionalI64(12, try optionalInt(file.duration_ms));
+            try stmt.bindText(13, file.codec);
+            try stmt.bindI64(14, file.sample_rate);
+            try stmt.bindI64(15, file.bits_per_sample);
+            try stmt.bindI64(16, scan.id);
 
             if (try stmt.step() != .done) return error.DatabaseOperationFailed;
             try stmt.reset();
@@ -204,7 +237,10 @@ const Sqlite = struct {
         if (total_count < 0) return error.DatabaseOperationFailed;
 
         var stmt = try self.prepare(
-            "SELECT id, path, size, modified_ns FROM tracks " ++
+            "SELECT id, path, size, modified_ns, title, track_artist, " ++
+                "album_artist, album, track_number, disc_number, release_date, " ++
+                "duration_ms, codec, sample_rate, bits_per_sample, date_added " ++
+                "FROM tracks " ++
                 "WHERE id>?1 ORDER BY id LIMIT ?2",
         );
         defer stmt.deinit();
@@ -214,7 +250,7 @@ const Sqlite = struct {
 
         var tracks: std.ArrayList(database.Track) = .empty;
         errdefer {
-            for (tracks.items) |track| allocator.free(track.path);
+            for (tracks.items) |*track| track.deinit(allocator);
             tracks.deinit(allocator);
         }
 
@@ -222,21 +258,58 @@ const Sqlite = struct {
             const path = try stmt.columnTextAlloc(allocator, 1);
             errdefer allocator.free(path);
 
+            const title = try stmt.columnOptionalTextAlloc(allocator, 4);
+            errdefer freeOptional(allocator, title);
+
+            const track_artist = try stmt.columnOptionalTextAlloc(allocator, 5);
+            errdefer freeOptional(allocator, track_artist);
+
+            const album_artist = try stmt.columnOptionalTextAlloc(allocator, 6);
+            errdefer freeOptional(allocator, album_artist);
+
+            const album = try stmt.columnOptionalTextAlloc(allocator, 7);
+            errdefer freeOptional(allocator, album);
+
+            const release_date = try stmt.columnOptionalTextAlloc(allocator, 10);
+            errdefer freeOptional(allocator, release_date);
+
+            const codec = try stmt.columnTextAlloc(allocator, 12);
+            errdefer allocator.free(codec);
+
             const size = stmt.columnI64(2);
-            if (size < 0) return error.DatabaseOperationFailed;
+            const sample_rate = stmt.columnI64(13);
+            const bits_per_sample = stmt.columnI64(14);
+
+            if (size < 0 or sample_rate < 0 or bits_per_sample < 0) {
+                return error.DatabaseOperationFailed;
+            }
 
             tracks.append(allocator, .{
                 .id = stmt.columnI64(0),
                 .path = path,
                 .size = @intCast(size),
                 .modified_ns = stmt.columnI64(3),
+                .title = title,
+                .track_artist = track_artist,
+                .album_artist = album_artist,
+                .album = album,
+                .track_number = try optionalCast(u16, stmt.columnOptionalI64(8)),
+                .disc_number = try optionalCast(u16, stmt.columnOptionalI64(9)),
+                .release_date = release_date,
+                .duration_ms = try optionalCast(u64, stmt.columnOptionalI64(11)),
+                .codec = codec,
+                .sample_rate = std.math.cast(u32, sample_rate) orelse
+                    return error.DatabaseOperationFailed,
+                .bits_per_sample = std.math.cast(u8, bits_per_sample) orelse
+                    return error.DatabaseOperationFailed,
+                .date_added = stmt.columnI64(15),
             }) catch return error.OutOfMemory;
         }
 
         const has_more = tracks.items.len > limit;
         if (has_more) {
-            const extra = tracks.pop().?;
-            allocator.free(extra.path);
+            var extra = tracks.pop().?;
+            extra.deinit(allocator);
         }
 
         return .{
@@ -302,6 +375,34 @@ const Statement = struct {
         if (result != c.SQLITE_OK) return mapError(result);
     }
 
+    fn bindOptionalText(
+        self: *Statement,
+        index: c_int,
+        value: ?[]const u8,
+    ) database.Error!void {
+        if (value) |text| {
+            return self.bindText(index, text);
+        }
+
+        if (c.sqlite3_bind_null(self.handle, index) != c.SQLITE_OK) {
+            return error.DatabaseOperationFailed;
+        }
+    }
+
+    fn bindOptionalI64(
+        self: *Statement,
+        index: c_int,
+        value: ?i64,
+    ) database.Error!void {
+        if (value) |number| {
+            return self.bindI64(index, number);
+        }
+
+        if (c.sqlite3_bind_null(self.handle, index) != c.SQLITE_OK) {
+            return error.DatabaseOperationFailed;
+        }
+    }
+
     fn step(self: *Statement) database.Error!Step {
         return switch (c.sqlite3_step(self.handle)) {
             c.SQLITE_ROW => .row,
@@ -321,18 +422,55 @@ const Statement = struct {
         return c.sqlite3_column_int64(self.handle, index);
     }
 
+    fn columnOptionalI64(self: Statement, index: c_int) ?i64 {
+        if (c.sqlite3_column_type(self.handle, index) == c.SQLITE_NULL) return null;
+
+        return self.columnI64(index);
+    }
+
     fn columnTextAlloc(
         self: Statement,
         allocator: std.mem.Allocator,
         index: c_int,
     ) database.Error![]u8 {
         const length = c.sqlite3_column_bytes(self.handle, index);
+
         if (length < 0) return error.DatabaseOperationFailed;
+
         const text = c.sqlite3_column_text(self.handle, index) orelse
             return error.DatabaseOperationFailed;
+
         return allocator.dupe(u8, text[0..@intCast(length)]) catch error.OutOfMemory;
     }
+
+    fn columnOptionalTextAlloc(
+        self: Statement,
+        allocator: std.mem.Allocator,
+        index: c_int,
+    ) database.Error!?[]u8 {
+        if (c.sqlite3_column_type(self.handle, index) == c.SQLITE_NULL) return null;
+
+        return try self.columnTextAlloc(allocator, index);
+    }
 };
+
+fn optionalInt(value: anytype) database.Error!?i64 {
+    return if (value) |number|
+        std.math.cast(i64, number) orelse error.DatabaseConstraint
+    else
+        null;
+}
+
+fn optionalCast(comptime T: type, value: ?i64) database.Error!?T {
+    return if (value) |number|
+        std.math.cast(T, number) orelse error.DatabaseOperationFailed
+    else
+        null;
+}
+
+fn freeOptional(allocator: std.mem.Allocator, value: ?[]u8) void {
+    if (value) |text| allocator.free(text);
+}
 
 const vtable: database.Database.VTable = .{
     .deinit = Sqlite.deinit,
@@ -383,6 +521,25 @@ fn mapError(result: c_int) database.Error {
     };
 }
 
+fn testFile(path: []const u8, size: u64, modified_ns: i64) database.ScannedFile {
+    return .{
+        .path = path,
+        .size = size,
+        .modified_ns = modified_ns,
+        .title = null,
+        .track_artist = null,
+        .album_artist = null,
+        .album = null,
+        .track_number = null,
+        .disc_number = null,
+        .release_date = null,
+        .duration_ms = null,
+        .codec = "flac",
+        .sample_rate = 44_100,
+        .bits_per_sample = 16,
+    };
+}
+
 test "SQLite scan lifecycle upserts files and removes stale rows" {
     var db = try open(std.testing.allocator, ":memory:", .{});
     defer db.deinit();
@@ -390,8 +547,8 @@ test "SQLite scan lifecycle upserts files and removes stale rows" {
 
     const first = try db.beginScan("/music");
     try db.upsertFiles(first, &.{
-        .{ .path = "/music/one.flac", .size = 100, .modified_ns = 10 },
-        .{ .path = "/music/two.flac", .size = 200, .modified_ns = 20 },
+        testFile("/music/one.flac", 100, 10),
+        testFile("/music/two.flac", 200, 20),
     });
     try db.finishScan(first);
 
@@ -399,7 +556,7 @@ test "SQLite scan lifecycle upserts files and removes stale rows" {
     const unchanged = (try db.findFile(second, "/music/one.flac")).?;
     try std.testing.expectEqual(@as(u64, 100), unchanged.size);
     try db.upsertFiles(second, &.{
-        .{ .path = "/music/one.flac", .size = 101, .modified_ns = 11 },
+        testFile("/music/one.flac", 101, 11),
     });
     try db.finishScan(second);
 
@@ -415,7 +572,7 @@ test "aborted scan does not remove unseen files" {
 
     const complete = try db.beginScan("/music");
     try db.upsertFiles(complete, &.{
-        .{ .path = "/music/one.flac", .size = 100, .modified_ns = 10 },
+        testFile("/music/one.flac", 100, 10),
     });
     try db.finishScan(complete);
 
@@ -432,9 +589,9 @@ test "lists tracks with stable keyset pagination" {
 
     const scan = try db.beginScan("/music");
     try db.upsertFiles(scan, &.{
-        .{ .path = "/music/one.flac", .size = 100, .modified_ns = 10 },
-        .{ .path = "/music/two.flac", .size = 200, .modified_ns = 20 },
-        .{ .path = "/music/three.flac", .size = 300, .modified_ns = 30 },
+        testFile("/music/one.flac", 100, 10),
+        testFile("/music/two.flac", 200, 20),
+        testFile("/music/three.flac", 300, 30),
     });
     try db.finishScan(scan);
 
@@ -450,4 +607,53 @@ test "lists tracks with stable keyset pagination" {
     try std.testing.expectEqual(@as(usize, 1), second.tracks.len);
     try std.testing.expect(!second.has_more);
     try std.testing.expectEqualStrings("/music/three.flac", second.tracks[0].path);
+}
+
+test "persists extracted metadata and preserves date added on update" {
+    var db = try open(std.testing.allocator, ":memory:", .{});
+    defer db.deinit();
+    try db.migrate();
+
+    var file = testFile("/music/song.flac", 123, 10);
+    file.title = "Song";
+    file.track_artist = "Track Artist";
+    file.album_artist = "Album Artist";
+    file.album = "Album";
+    file.track_number = 3;
+    file.disc_number = 2;
+    file.release_date = "2026-07-18";
+    file.duration_ms = 245_000;
+    file.sample_rate = 96_000;
+    file.bits_per_sample = 24;
+
+    const first_scan = try db.beginScan("/music");
+    try db.upsertFiles(first_scan, &.{file});
+    try db.finishScan(first_scan);
+
+    var first_page = try db.listTracks(std.testing.allocator, 0, 10);
+    const date_added = first_page.tracks[0].date_added;
+    try std.testing.expectEqualStrings("Song", first_page.tracks[0].title.?);
+    try std.testing.expectEqualStrings("Track Artist", first_page.tracks[0].track_artist.?);
+    try std.testing.expectEqualStrings("Album Artist", first_page.tracks[0].album_artist.?);
+    try std.testing.expectEqualStrings("Album", first_page.tracks[0].album.?);
+    try std.testing.expectEqual(@as(?u16, 3), first_page.tracks[0].track_number);
+    try std.testing.expectEqual(@as(?u16, 2), first_page.tracks[0].disc_number);
+    try std.testing.expectEqualStrings("2026-07-18", first_page.tracks[0].release_date.?);
+    try std.testing.expectEqual(@as(?u64, 245_000), first_page.tracks[0].duration_ms);
+    try std.testing.expectEqualStrings("flac", first_page.tracks[0].codec);
+    try std.testing.expectEqual(@as(u32, 96_000), first_page.tracks[0].sample_rate);
+    try std.testing.expectEqual(@as(u8, 24), first_page.tracks[0].bits_per_sample);
+    try std.testing.expect(date_added > 0);
+    first_page.deinit(std.testing.allocator);
+
+    file.title = "Updated Song";
+    file.modified_ns = 11;
+    const second_scan = try db.beginScan("/music");
+    try db.upsertFiles(second_scan, &.{file});
+    try db.finishScan(second_scan);
+
+    var second_page = try db.listTracks(std.testing.allocator, 0, 10);
+    defer second_page.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("Updated Song", second_page.tracks[0].title.?);
+    try std.testing.expectEqual(date_added, second_page.tracks[0].date_added);
 }

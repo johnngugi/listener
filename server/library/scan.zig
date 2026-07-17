@@ -1,6 +1,7 @@
 const std = @import("std");
 const database = @import("database.zig");
 const sqlite = @import("sqlite.zig");
+const track_info = @import("track_info.zig");
 
 pub fn scanLibrary(
     root_dir: []const u8,
@@ -25,7 +26,7 @@ pub fn scanLibrary(
 
     var flac_files = try std.ArrayList(database.ScannedFile).initCapacity(allocator, 500);
     defer {
-        freeFilePaths(allocator, flac_files.items);
+        freeScannedFiles(allocator, flac_files.items);
         flac_files.deinit(allocator);
     }
 
@@ -68,17 +69,33 @@ pub fn scanLibrary(
                         allocator.free(full_path);
                         return error.TimestampOutOfRange;
                     };
+                    const metadata = track_info.read(allocator, full_path) catch |err| {
+                        allocator.free(full_path);
+                        return err;
+                    };
 
                     const scanned_file = database.ScannedFile{
                         .path = full_path,
                         .size = size,
                         .modified_ns = modified_ns,
+                        .title = metadata.title,
+                        .track_artist = metadata.track_artist,
+                        .album_artist = metadata.album_artist,
+                        .album = metadata.album,
+                        .track_number = metadata.track_number,
+                        .disc_number = metadata.disc_number,
+                        .release_date = metadata.release_date,
+                        .duration_ms = metadata.duration_ms,
+                        .codec = metadata.codec,
+                        .sample_rate = metadata.sample_rate,
+                        .bits_per_sample = metadata.bits_per_sample,
                     };
+                    // The scan batch now owns the metadata's allocated strings.
                     flac_files.appendAssumeCapacity(scanned_file);
 
                     if (flac_files.items.len == 500) {
                         try db.upsertFiles(scan, flac_files.items);
-                        freeFilePaths(allocator, flac_files.items);
+                        freeScannedFiles(allocator, flac_files.items);
                         flac_files.clearRetainingCapacity();
                     }
                 } else continue;
@@ -88,15 +105,27 @@ pub fn scanLibrary(
 
     if (flac_files.items.len > 0) {
         try db.upsertFiles(scan, flac_files.items);
-        freeFilePaths(allocator, flac_files.items);
+        freeScannedFiles(allocator, flac_files.items);
         flac_files.clearRetainingCapacity();
     }
 
     try db.finishScan(scan);
 }
 
-fn freeFilePaths(allocator: std.mem.Allocator, files: []const database.ScannedFile) void {
-    for (files) |file| allocator.free(file.path);
+fn freeScannedFiles(allocator: std.mem.Allocator, files: []const database.ScannedFile) void {
+    for (files) |file| {
+        allocator.free(file.path);
+        freeOptional(allocator, file.title);
+        freeOptional(allocator, file.track_artist);
+        freeOptional(allocator, file.album_artist);
+        freeOptional(allocator, file.album);
+        freeOptional(allocator, file.release_date);
+        allocator.free(file.codec);
+    }
+}
+
+fn freeOptional(allocator: std.mem.Allocator, value: ?[]const u8) void {
+    if (value) |text| allocator.free(text);
 }
 
 test "scanner traverses nested directories and flushes a partial batch" {
@@ -107,8 +136,9 @@ test "scanner traverses nested directories and flushes a partial batch" {
     defer tmp.cleanup();
 
     try tmp.dir.createDirPath(io, "nested");
-    try tmp.dir.writeFile(io, .{ .sub_path = "one.FLAC", .data = "one" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "nested/two.flac", .data = "two-two" });
+    const fixture = @embedFile("../testdata/fixtures/strict-s16le-stereo.flac");
+    try tmp.dir.writeFile(io, .{ .sub_path = "one.FLAC", .data = fixture });
+    try tmp.dir.writeFile(io, .{ .sub_path = "nested/two.flac", .data = fixture });
     try tmp.dir.writeFile(io, .{ .sub_path = "ignored.txt", .data = "not audio" });
 
     var root_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
@@ -133,7 +163,14 @@ test "scanner traverses nested directories and flushes a partial batch" {
 
     const first = (try db.findFile(check_scan, first_path)).?;
     const second = (try db.findFile(check_scan, second_path)).?;
-    try std.testing.expectEqual(@as(u64, 3), first.size);
-    try std.testing.expectEqual(@as(u64, 7), second.size);
+    try std.testing.expectEqual(@as(u64, fixture.len), first.size);
+    try std.testing.expectEqual(@as(u64, fixture.len), second.size);
     try std.testing.expect((try db.findFile(check_scan, ignored_path)) == null);
+
+    var page = try db.listTracks(allocator, 0, 10);
+    defer page.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), page.tracks.len);
+    try std.testing.expectEqualStrings("flac", page.tracks[0].codec);
+    try std.testing.expectEqual(@as(u8, 16), page.tracks[0].bits_per_sample);
+    try std.testing.expect(page.tracks[0].duration_ms != null);
 }

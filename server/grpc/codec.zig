@@ -418,6 +418,18 @@ test "encodes list tracks response" {
         .path = @constCast("/music/a.flac"),
         .size = 123,
         .modified_ns = 456,
+        .title = null,
+        .track_artist = null,
+        .album_artist = null,
+        .album = null,
+        .track_number = null,
+        .disc_number = null,
+        .release_date = null,
+        .duration_ms = null,
+        .codec = @constCast("flac"),
+        .sample_rate = 44_100,
+        .bits_per_sample = 16,
+        .date_added = 0,
     }};
     const encoded = try encodeListTracksResponse(std.testing.allocator, .{
         .tracks = &tracks,
