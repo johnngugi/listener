@@ -12,27 +12,19 @@ const hardcodedMediaPath =
 const _controlCallTimeout = Duration(seconds: 5);
 
 class PlaybackCubit extends Cubit<PlaybackState> {
-  PlaybackCubit._(this._engine, this._channel, this._control)
+  PlaybackCubit._(this._engine, this._control)
     : super(PlaybackState.initial()) {
     _engineEvents = _engine.events.listen(_onEngineEvent);
   }
 
-  factory PlaybackCubit.connect(ListenerEngine engine) {
-    final channel = ClientChannel(
-      '127.0.0.1',
-      port: 5779,
-      options: const ChannelOptions(credentials: ChannelCredentials.insecure()),
-    );
-
-    return PlaybackCubit._(
-      engine,
-      channel,
-      control.ListenerControlClient(channel),
-    );
+  factory PlaybackCubit.connect(
+    ListenerEngine engine,
+    control.ListenerControlClient controlClient,
+  ) {
+    return PlaybackCubit._(engine, controlClient);
   }
 
   final ListenerEngine _engine;
-  final ClientChannel _channel;
   final control.ListenerControlClient _control;
   late final StreamSubscription<PlaybackEngineEvent> _engineEvents;
 
@@ -173,7 +165,6 @@ class PlaybackCubit extends Cubit<PlaybackState> {
       _engine.stop();
     }
     _engine.close();
-    await _channel.shutdown();
     return super.close();
   }
 

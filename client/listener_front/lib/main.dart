@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:listener_front/src/app.dart';
+import 'package:listener_front/src/services/listener_grpc.dart';
 import 'package:listener_front/src/services/playback_engine.dart';
+import 'package:listener_front/src/view_models/library_cubit.dart';
 import 'package:listener_front/src/view_models/playback_cubit.dart';
 
 void main() {
@@ -13,9 +15,22 @@ void main() {
     throw StateError('Failed to connect to playback engine: ${status.name}');
   }
 
+  final listenerGrpc = ListenerGrpc.connect();
+
+  final playbackCubit = BlocProvider<PlaybackCubit>(
+    create: (BuildContext context) {
+      return PlaybackCubit.connect(engine, listenerGrpc.controlClient);
+    },
+  );
+  final libraryCubit = BlocProvider<LibraryCubit>(
+    create: (BuildContext context) {
+      return LibraryCubit.connect(listenerGrpc.libraryClient);
+    },
+  );
+
   runApp(
-    BlocProvider(
-      create: (_) => PlaybackCubit.connect(engine),
+    MultiBlocProvider(
+      providers: [playbackCubit, libraryCubit],
       child: const MainApp(),
     ),
   );

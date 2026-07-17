@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:listener_front/src/models/library_state.dart';
 import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/theme.dart';
+import 'package:listener_front/src/view_models/library_cubit.dart';
 import 'package:listener_front/src/widgets/album_art.dart';
 
 // Shared column geometry so the header and every row line up exactly.
@@ -36,16 +39,168 @@ class TrackLibrary extends StatelessWidget {
           ),
           const SizedBox(height: 28),
           const TrackTableHeader(),
-          Expanded(
-            child: ListView.builder(
-              padding: EdgeInsets.zero,
-              itemCount: tracks.length,
-              itemBuilder: (context, index) {
-                return TrackRow(track: tracks[index]);
-              },
-            ),
-          ),
+          Expanded(child: LibraryList()),
         ],
+      ),
+    );
+  }
+}
+
+class LibraryList extends StatefulWidget {
+  const LibraryList({super.key});
+
+  @override
+  State<LibraryList> createState() => _LibraryListState();
+}
+
+class _LibraryListState extends State<LibraryList> {
+  final _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+    context.read<LibraryCubit>().listTracks();
+  }
+
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_onScroll)
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<LibraryCubit, LibraryState>(
+      builder: (BuildContext context, LibraryState state) {
+        switch (state.status) {
+          case LibraryStatus.initial:
+            return const Center(child: CircularProgressIndicator());
+
+          case LibraryStatus.loadingFirstPage:
+            return const Center(child: CircularProgressIndicator());
+
+          case LibraryStatus.loadingMore:
+          case LibraryStatus.failure:
+          case LibraryStatus.ready:
+            if (state.tracks.isEmpty) {
+              if (state.status == LibraryStatus.failure) {
+                return _LibraryError(
+                  message: state.errorMessage,
+                  onRetry: context.read<LibraryCubit>().retry,
+                );
+              }
+
+              return const Center(child: Text("Library empty"));
+            } else {
+              final showFooter =
+                  state.status == LibraryStatus.loadingMore ||
+                  state.status == LibraryStatus.failure;
+
+              return ListView.builder(
+                controller: _scrollController,
+                padding: EdgeInsets.zero,
+                itemCount: state.tracks.length + (showFooter ? 1 : 0),
+                itemBuilder: (context, index) {
+                  if (index == state.tracks.length) {
+                    if (state.status == LibraryStatus.loadingMore) {
+                      return const _LoadingMoreIndicator();
+                    }
+
+                    return _LoadMoreError(
+                      onRetry: context.read<LibraryCubit>().retry,
+                    );
+                  }
+
+                  return TrackRow(track: state.tracks[index]);
+                },
+              );
+            }
+        }
+      },
+    );
+  }
+
+  void _onScroll() {
+    if (_scrollController.hasClients &&
+        _scrollController.position.extentAfter < 400) {
+      context.read<LibraryCubit>().loadNextPage();
+    }
+  }
+}
+
+class _LoadingMoreIndicator extends StatelessWidget {
+  const _LoadingMoreIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: _rowHeight,
+      child: Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+    );
+  }
+}
+
+class _LibraryError extends StatelessWidget {
+  const _LibraryError({required this.message, required this.onRetry});
+
+  final String? message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Could not load your library',
+            style: TextStyle(color: textColor, fontWeight: FontWeight.w700),
+          ),
+          if (message != null) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                message!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: mutedColor),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          OutlinedButton(onPressed: onRetry, child: const Text('Try again')),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoadMoreError extends StatelessWidget {
+  const _LoadMoreError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: _rowHeight,
+      child: Center(
+        child: TextButton.icon(
+          onPressed: onRetry,
+          icon: const Icon(Icons.refresh, size: 18),
+          label: const Text('Could not load more — retry'),
+        ),
       ),
     );
   }
@@ -106,8 +261,8 @@ class LibraryTitle extends StatelessWidget {
             children: [
               Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
-                children: const [
-                  Text(
+                children: [
+                  const Text(
                     'My Tracks',
                     style: TextStyle(
                       color: textColor,
@@ -118,16 +273,19 @@ class LibraryTitle extends StatelessWidget {
                       letterSpacing: 0,
                     ),
                   ),
-                  SizedBox(width: 14),
+                  const SizedBox(width: 14),
                   Padding(
-                    padding: EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      '248 tracks',
-                      style: TextStyle(
-                        color: mutedColor,
-                        fontSize: 17,
-                        height: 1,
-                        fontWeight: FontWeight.w600,
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: BlocSelector<LibraryCubit, LibraryState, int>(
+                      selector: (state) => state.totalSize,
+                      builder: (context, totalSize) => Text(
+                        '$totalSize ${totalSize == 1 ? 'track' : 'tracks'}',
+                        style: const TextStyle(
+                          color: mutedColor,
+                          fontSize: 17,
+                          height: 1,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
