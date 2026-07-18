@@ -88,6 +88,96 @@ void main() {
 
       expect(fetchedIds, [1, 2, 3, 2]);
     });
+
+    test('does not exceed the concurrent request limit', () async {
+      final fetchedIds = <int>[];
+      final responses = <int, Completer<grpc.GetArtworkResponse>>{};
+      final repository = ArtworkRepository((request) {
+        final artworkId = request.artworkId.toInt();
+        fetchedIds.add(artworkId);
+        return (responses[artworkId] = Completer()).future;
+      }, maxConcurrentRequests: 2);
+
+      final first = repository.acquire(1);
+      final second = repository.acquire(2);
+      final third = repository.acquire(3);
+
+      expect(fetchedIds, [1, 2]);
+
+      responses[1]!.complete(_response(1));
+      await first.result;
+
+      expect(fetchedIds, [1, 2, 3]);
+
+      responses[2]!.complete(_response(2));
+      responses[3]!.complete(_response(3));
+      await Future.wait([second.result, third.result]);
+    });
+
+    test('removes an unobserved request before it starts', () async {
+      final fetchedIds = <int>[];
+      final firstResponse = Completer<grpc.GetArtworkResponse>();
+      final repository = ArtworkRepository((request) {
+        final artworkId = request.artworkId.toInt();
+        fetchedIds.add(artworkId);
+        if (artworkId == 1) return firstResponse.future;
+        return Future.value(_response(artworkId));
+      }, maxConcurrentRequests: 1);
+
+      final first = repository.acquire(1);
+      final queued = repository.acquire(2);
+      queued.release();
+
+      expect(await queued.result, isA<Error<ArtworkResponse>>());
+
+      firstResponse.complete(_response(1));
+      await first.result;
+
+      expect(fetchedIds, [1]);
+    });
+
+    test('keeps shared queued work until its last lease is released', () async {
+      final fetchedIds = <int>[];
+      final firstResponse = Completer<grpc.GetArtworkResponse>();
+      final repository = ArtworkRepository((request) {
+        final artworkId = request.artworkId.toInt();
+        fetchedIds.add(artworkId);
+        if (artworkId == 1) return firstResponse.future;
+        return Future.value(_response(artworkId));
+      }, maxConcurrentRequests: 1);
+
+      final first = repository.acquire(1);
+      final queuedA = repository.acquire(2);
+      final queuedB = repository.acquire(2);
+      queuedA.release();
+
+      firstResponse.complete(_response(1));
+      await first.result;
+
+      expect(await queuedB.result, isA<Ok<ArtworkResponse>>());
+      expect(fetchedIds, [1, 2]);
+    });
+
+    test(
+      'allows released running work to finish and enter the cache',
+      () async {
+        var callCount = 0;
+        final response = Completer<grpc.GetArtworkResponse>();
+        final repository = ArtworkRepository((request) {
+          callCount++;
+          return response.future;
+        }, maxConcurrentRequests: 1);
+
+        final running = repository.acquire(42);
+        running.release();
+        response.complete(_response(42));
+        await running.result;
+
+        final cached = repository.acquire(42);
+        expect(await cached.result, isA<Ok<ArtworkResponse>>());
+        expect(callCount, 1);
+      },
+    );
   });
 }
 

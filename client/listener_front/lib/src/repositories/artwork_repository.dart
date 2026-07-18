@@ -1,18 +1,25 @@
+import 'dart:async';
 import 'dart:collection';
 
 import 'package:fixnum/fixnum.dart';
 import 'package:flutter/foundation.dart';
 import 'package:listener_front/src/generated/listener/v1/listener.pbgrpc.dart'
     as grpc;
+import 'package:listener_front/src/repositories/artwork_lease.dart';
 import 'package:listener_front/src/utils/result.dart';
 
 typedef GetArtworkCall =
     Future<grpc.GetArtworkResponse> Function(grpc.GetArtworkRequest request);
 
 class ArtworkRepository {
-  ArtworkRepository(this._getArtwork, {int maxCacheBytes = 64 * 1024 * 1024})
-    : assert(maxCacheBytes >= 0),
-      _maxCacheBytes = maxCacheBytes;
+  ArtworkRepository(
+    this._getArtwork, {
+    int maxCacheBytes = 64 * 1024 * 1024,
+    int maxConcurrentRequests = 6,
+  }) : assert(maxCacheBytes >= 0),
+       assert(maxConcurrentRequests > 0),
+       _maxCacheBytes = maxCacheBytes,
+       _maxConcurrentRequests = maxConcurrentRequests;
 
   factory ArtworkRepository.connect(grpc.ListenerLibraryClient libraryClient) {
     return ArtworkRepository(libraryClient.getArtwork);
@@ -20,46 +27,53 @@ class ArtworkRepository {
 
   final GetArtworkCall _getArtwork;
   final int _maxCacheBytes;
+  final int _maxConcurrentRequests;
 
   final LinkedHashMap<int, ArtworkResponse> _cache = LinkedHashMap();
-  final Map<int, Future<Result<ArtworkResponse>>> _inFlight = {};
+  final Map<int, _ArtworkTask> _tasks = {};
+  final ListQueue<_ArtworkTask> _pending = ListQueue();
+
+  int _activeRequests = 0;
 
   int _cacheBytes = 0;
 
-  Future<Result<ArtworkResponse>> get(int artworkId) async {
+  ArtworkLease<ArtworkResponse> acquire(int artworkId) {
     final cached = _cache.remove(artworkId);
+
     if (cached != null) {
       // Reinsert it at the end: it is now most recently used.
       _cache[artworkId] = cached;
-      return Future.value(Result.ok(cached));
+      return ArtworkLease(
+        result: Future.value(Result.ok(cached)),
+        onRelease: () {},
+      );
     }
 
-    final existingRequest = _inFlight[artworkId];
-    if (existingRequest != null) {
-      return existingRequest;
+    var task = _tasks[artworkId];
+
+    if (task == null) {
+      task = _ArtworkTask(artworkId);
+      _tasks[artworkId] = task;
+      _pending.addLast(task);
     }
 
-    final request = _load(artworkId);
-    _inFlight[artworkId] = request;
+    task.subscribers += 1;
+    _pumpQueue();
+    final acquiredTask = task;
 
-    return request;
+    return ArtworkLease(
+      result: acquiredTask.completer.future,
+      onRelease: () => _release(acquiredTask),
+    );
   }
 
-  Future<Result<ArtworkResponse>> _load(int artworkId) async {
-    try {
-      final result = await _fetch(artworkId);
-
-      switch (result) {
-        case Ok<ArtworkResponse>():
-          _store(artworkId, result.value);
-        case Error<ArtworkResponse>():
-          break;
-      }
-
-      return result;
-    } finally {
-      _inFlight.remove(artworkId);
-    }
+  /// Compatibility wrapper for callers that do not yet manage a lease.
+  ///
+  /// New UI callers should use [acquire] so they can release queued work when
+  /// it is no longer visible.
+  Future<Result<ArtworkResponse>> get(int artworkId) {
+    final lease = acquire(artworkId);
+    return lease.result.whenComplete(lease.release);
   }
 
   Future<Result<ArtworkResponse>> _fetch(int artworkId) async {
@@ -102,6 +116,81 @@ class ArtworkRepository {
     _cache[artworkId] = artwork;
     _cacheBytes += size;
   }
+
+  void _pumpQueue() {
+    while (_activeRequests < _maxConcurrentRequests && _pending.isNotEmpty) {
+      final task = _pending.removeFirst();
+
+      if (task.subscribers == 0) {
+        continue;
+      }
+
+      task.started = true;
+      _activeRequests += 1;
+      unawaited(_run(task));
+    }
+  }
+
+  Future<void> _run(_ArtworkTask task) async {
+    Result<ArtworkResponse>? result;
+
+    try {
+      result = await _fetch(task.artworkId);
+
+      switch (result) {
+        case Ok<ArtworkResponse>():
+          _store(task.artworkId, result.value);
+        case Error<ArtworkResponse>():
+          break;
+      }
+    } on Exception catch (error) {
+      // Defensive: _fetch currently converts Exceptions into Result.error,
+      // but this also covers failures from surrounding repository logic.
+      result = Result.error(error);
+    } catch (error) {
+      // Result.error requires an Exception.
+      result = Result.error(Exception('Unexpected artwork error: $error'));
+    } finally {
+      task.completed = true;
+
+      // Avoid accidentally removing a newer task for the same ID.
+      if (identical(_tasks[task.artworkId], task)) {
+        _tasks.remove(task.artworkId);
+      }
+
+      _activeRequests--;
+
+      if (!task.completer.isCompleted) {
+        task.completer.complete(
+          result ??
+              Result.error(Exception('Artwork request ended without a result')),
+        );
+      }
+
+      _pumpQueue();
+    }
+  }
+
+  void _release(_ArtworkTask task) {
+    if (task.completed || task.subscribers == 0) return;
+
+    task.subscribers -= 1;
+
+    if (task.subscribers > 0 || task.started) {
+      return;
+    }
+
+    task.completed = true;
+
+    if (identical(_tasks[task.artworkId], task)) {
+      _tasks.remove(task.artworkId);
+    }
+    _pending.remove(task);
+
+    if (!task.completer.isCompleted) {
+      task.completer.complete(Result.error(ArtworkRequestCancelledException()));
+    }
+  }
 }
 
 class ArtworkResponse {
@@ -116,4 +205,17 @@ class ArtworkResponse {
   final int width;
   final int height;
   final Uint8List data;
+}
+
+class ArtworkRequestCancelledException implements Exception {}
+
+class _ArtworkTask {
+  _ArtworkTask(this.artworkId);
+
+  final int artworkId;
+  final completer = Completer<Result<ArtworkResponse>>();
+
+  int subscribers = 0;
+  bool started = false;
+  bool completed = false;
 }

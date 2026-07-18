@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:listener_front/src/models/track.dart';
+import 'package:listener_front/src/repositories/artwork_lease.dart';
 import 'package:listener_front/src/repositories/artwork_repository.dart';
 import 'package:listener_front/src/utils/result.dart';
 import 'package:listener_front/src/widgets/album_art.dart';
@@ -16,7 +17,7 @@ class ArtworkImage extends StatefulWidget {
 }
 
 class _ArtworkImageState extends State<ArtworkImage> {
-  Future<Result<ArtworkResponse>>? _artwork;
+  ArtworkLease<ArtworkResponse>? _artworkLease;
 
   @override
   void initState() {
@@ -29,25 +30,32 @@ class _ArtworkImageState extends State<ArtworkImage> {
     super.didUpdateWidget(oldWidget);
 
     if (oldWidget.artworkId != widget.artworkId) {
+      _artworkLease?.release();
       _loadArtwork();
     }
   }
 
+  @override
+  void dispose() {
+    _artworkLease?.release();
+    super.dispose();
+  }
+
   void _loadArtwork() {
     final artworkId = widget.artworkId;
-    _artwork = artworkId == null
+    _artworkLease = artworkId == null
         ? null
-        : context.read<ArtworkRepository>().get(artworkId);
+        : context.read<ArtworkRepository>().acquire(artworkId);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_artwork == null) {
+    if (_artworkLease == null) {
       return AlbumArt(style: CoverStyle.eclipse, size: widget.size);
     }
 
     return FutureBuilder<Result<ArtworkResponse>>(
-      future: _artwork,
+      future: _artworkLease!.result,
       builder: (context, snapshot) {
         final artwork = snapshot.data;
         if (artwork == null) {
