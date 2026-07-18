@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 enum CoverStyle {
@@ -24,9 +25,10 @@ class Track {
     required this.releaseDate,
     required this.dateAdded,
     required this.plays,
-    required this.cover,
     this.favorite = false,
     this.hasBadge = false,
+    this.artwork,
+    this.artworkId,
   });
 
   final String number;
@@ -37,115 +39,22 @@ class Track {
   final String releaseDate;
   final String dateAdded;
   final String plays;
-  final CoverStyle cover;
   final bool favorite;
   final bool hasBadge;
+  final Artwork? artwork;
+  final int? artworkId;
 }
 
-const tracks = [
-  Track(
-    number: '12',
-    title: 'Congratulations',
-    length: '4:54',
-    artist: 'Ada Ehi',
-    album: 'Born of God',
-    releaseDate: '2020',
-    dateAdded: '15 May 2026',
-    plays: '0',
-    cover: CoverStyle.sky,
-  ),
-  Track(
-    number: '1',
-    title:
-        'I Don\'t Want to Miss a Thing (From "Armageddon" Soundtrack) (Album',
-    length: '4:58',
-    artist: 'Aerosmith',
-    album: 'Armageddon - The Album',
-    releaseDate: '1 Apr 1998',
-    dateAdded: '15 May 2026',
-    plays: '0',
-    cover: CoverStyle.eclipse,
-  ),
-  Track(
-    number: '1',
-    title: 'Faded',
-    length: '3:32',
-    artist: 'Alan Walker',
-    album: 'Faded',
-    releaseDate: '4 Dec 2015',
-    dateAdded: '15 May 2026',
-    plays: '1',
-    cover: CoverStyle.mist,
-  ),
-  Track(
-    number: '2',
-    title: 'Force',
-    length: '4:00',
-    artist: 'Alan Walker',
-    album: 'Origins',
-    releaseDate: '1 Jul 2022',
-    dateAdded: '15 May 2026',
-    plays: '0',
-    cover: CoverStyle.monochrome,
-  ),
-  Track(
-    number: '5',
-    title: 'Fluorescent Adolescent',
-    length: '2:53',
-    artist: 'Arctic Monkeys',
-    album: 'Favourite Worst Nightmare',
-    releaseDate: '24 Apr 2007',
-    dateAdded: '15 May 2026',
-    plays: '0',
-    cover: CoverStyle.street,
-    hasBadge: true,
-  ),
-  Track(
-    number: '12',
-    title: '505',
-    length: '4:13',
-    artist: 'Arctic Monkeys',
-    album: 'Favourite Worst Nightmare',
-    releaseDate: '24 Apr 2007',
-    dateAdded: '15 May 2026',
-    plays: '0',
-    cover: CoverStyle.street,
-    hasBadge: true,
-  ),
-  Track(
-    number: '1',
-    title: 'Do I Wanna Know?',
-    length: '4:32',
-    artist: 'Arctic Monkeys',
-    album: 'AM',
-    releaseDate: '9 Sep 2013',
-    dateAdded: '15 May 2026',
-    plays: '0',
-    cover: CoverStyle.wave,
-    hasBadge: true,
-  ),
-  Track(
-    number: '2',
-    title: 'R U Mine?',
-    length: '3:21',
-    artist: 'Arctic Monkeys',
-    album: 'AM',
-    releaseDate: '9 Sep 2013',
-    dateAdded: '15 May 2026',
-    plays: '1',
-    cover: CoverStyle.wave,
-    hasBadge: true,
-  ),
-  Track(
-    number: '3',
-    title: 'One for the Road',
-    length: '3:26',
-    artist: 'Arctic Monkeys',
-    album: 'AM',
-    releaseDate: '9 Sep 2013',
-    dateAdded: '15 May 2026',
-    plays: '0',
-    cover: CoverStyle.wave,
-    hasBadge: true,
-  ),
-];
+class Artwork {
+  const Artwork({
+    required this.mimeType,
+    required this.width,
+    required this.height,
+    required this.data,
+  });
+
+  final String mimeType;
+  final int width;
+  final int height;
+  final Uint8List data;
+}

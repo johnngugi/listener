@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:listener_front/src/app.dart';
+import 'package:listener_front/src/repositories/artwork_repository.dart';
 import 'package:listener_front/src/services/listener_grpc.dart';
 import 'package:listener_front/src/services/playback_engine.dart';
 import 'package:listener_front/src/view_models/library_cubit.dart';
@@ -28,9 +29,15 @@ void main() {
     },
   );
 
+  final artworkProvider = RepositoryProvider<ArtworkRepository>(
+    create: (BuildContext context) {
+      return ArtworkRepository.connect(listenerGrpc.libraryClient);
+    },
+  );
+
   runApp(
     MultiBlocProvider(
-      providers: [playbackCubit, libraryCubit],
+      providers: [playbackCubit, libraryCubit, artworkProvider],
       child: const MainApp(),
     ),
   );

@@ -81,22 +81,22 @@ pub const Service = struct {
     ) Error!Artwork {
         if (request.artwork_id <= 0) return error.ArtworkNotFound;
 
-        var record = (try self.db.getArtwork(allocator, request.artwork_id)) orelse
+        var artworkResult = (try self.db.getArtwork(allocator, request.artwork_id)) orelse
             return error.ArtworkNotFound;
-        defer record.deinit(allocator);
+        defer artworkResult.deinit(allocator);
 
-        if (record.byte_length > max_artwork_bytes) return error.ArtworkFileInvalid;
-        if (std.fs.path.isAbsolute(record.storage_key) or
-            std.mem.eql(u8, record.storage_key, "..") or
-            std.mem.startsWith(u8, record.storage_key, "../") or
-            std.mem.indexOf(u8, record.storage_key, "/../") != null)
+        if (artworkResult.byte_length > max_artwork_bytes) return error.ArtworkFileInvalid;
+        if (std.fs.path.isAbsolute(artworkResult.storage_key) or
+            std.mem.eql(u8, artworkResult.storage_key, "..") or
+            std.mem.startsWith(u8, artworkResult.storage_key, "../") or
+            std.mem.indexOf(u8, artworkResult.storage_key, "/../") != null)
         {
             return error.ArtworkFileInvalid;
         }
 
         const absolute_path = std.fs.path.join(
             allocator,
-            &.{ self.artwork_dir, record.storage_key },
+            &.{ self.artwork_dir, artworkResult.storage_key },
         ) catch return error.OutOfMemory;
         defer allocator.free(absolute_path);
 
@@ -104,20 +104,22 @@ pub const Service = struct {
             self.io,
             absolute_path,
             allocator,
-            .limited(record.byte_length),
+            // The reader needs room for one additional byte to distinguish a
+            // file of exactly `byte_length` bytes from an oversized file.
+            .limited(artworkResult.byte_length + 1),
         ) catch |err| return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
             else => error.ArtworkFileInvalid,
         };
         errdefer allocator.free(data);
 
-        if (data.len != record.byte_length) return error.ArtworkFileInvalid;
+        if (data.len != artworkResult.byte_length) return error.ArtworkFileInvalid;
 
         return .{
-            .id = record.id,
-            .mime_type = allocator.dupe(u8, record.mime_type) catch return error.OutOfMemory,
-            .width = record.width,
-            .height = record.height,
+            .id = artworkResult.id,
+            .mime_type = allocator.dupe(u8, artworkResult.mime_type) catch return error.OutOfMemory,
+            .width = artworkResult.width,
+            .height = artworkResult.height,
             .data = data,
         };
     }

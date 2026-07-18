@@ -9,6 +9,24 @@ import 'package:listener_front/src/view_models/library_cubit.dart';
 
 void main() {
   group('LibraryCubit', () {
+    test('maps the optional artwork ID onto a track', () {
+      final response = grpc.ListTracksResponse(
+        tracks: [
+          grpc.Track(
+            id: Int64(7),
+            path: '/music/track-7.flac',
+            artworkId: Int64(42),
+          ),
+          grpc.Track(id: Int64(8), path: '/music/track-8.flac'),
+        ],
+      );
+
+      final tracks = mapTracks(response.tracks);
+
+      expect(tracks[0].artworkId, 42);
+      expect(tracks[1].artworkId, isNull);
+    });
+
     test('loads the first page and exposes the server total', () async {
       late grpc.ListTracksRequest request;
       final cubit = LibraryCubit((value) async {

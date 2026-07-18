@@ -100,7 +100,7 @@ List<model_track.Track> mapTracks(pb.PbList<grpc.Track> tracks) {
       releaseDate: formatReleaseDate(value.releaseDate),
       dateAdded: '15 May 2026',
       plays: '0',
-      cover: model_track.CoverStyle.sky,
+      artworkId: value.hasArtworkId() ? value.artworkId.toInt() : null,
     );
 
     store.add(track);

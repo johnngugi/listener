@@ -4,7 +4,7 @@ import 'package:listener_front/src/models/library_state.dart';
 import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/theme.dart';
 import 'package:listener_front/src/view_models/library_cubit.dart';
-import 'package:listener_front/src/widgets/album_art.dart';
+import 'package:listener_front/src/widgets/artwork_image.dart';
 
 // Shared column geometry so the header and every row line up exactly.
 const _hPad = 32.0;
@@ -511,7 +511,7 @@ class TrackRow extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 child: Row(
                   children: [
-                    AlbumArt(style: track.cover, size: 56),
+                    ArtworkImage(artworkId: track.artworkId, size: 56),
                     const SizedBox(width: 14),
                     Expanded(
                       child: Text(
