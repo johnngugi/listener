@@ -38,6 +38,36 @@ final $typed_data.Uint8List playbackStateDescriptor = $convert.base64Decode(
     'NLX1NUQVRFX1NUT1BQRUQQBRIYChRQTEFZQkFDS19TVEFURV9FTkRFRBAGEhgKFFBMQVlCQUNL'
     'X1NUQVRFX0VSUk9SEAc=');
 
+@$core.Deprecated('Use getArtworkRequestDescriptor instead')
+const GetArtworkRequest$json = {
+  '1': 'GetArtworkRequest',
+  '2': [
+    {'1': 'artwork_id', '3': 1, '4': 1, '5': 3, '10': 'artworkId'},
+  ],
+};
+
+/// Descriptor for `GetArtworkRequest`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List getArtworkRequestDescriptor = $convert.base64Decode(
+    'ChFHZXRBcnR3b3JrUmVxdWVzdBIdCgphcnR3b3JrX2lkGAEgASgDUglhcnR3b3JrSWQ=');
+
+@$core.Deprecated('Use getArtworkResponseDescriptor instead')
+const GetArtworkResponse$json = {
+  '1': 'GetArtworkResponse',
+  '2': [
+    {'1': 'artwork_id', '3': 1, '4': 1, '5': 3, '10': 'artworkId'},
+    {'1': 'mime_type', '3': 2, '4': 1, '5': 9, '10': 'mimeType'},
+    {'1': 'width', '3': 3, '4': 1, '5': 13, '10': 'width'},
+    {'1': 'height', '3': 4, '4': 1, '5': 13, '10': 'height'},
+    {'1': 'data', '3': 5, '4': 1, '5': 12, '10': 'data'},
+  ],
+};
+
+/// Descriptor for `GetArtworkResponse`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List getArtworkResponseDescriptor = $convert.base64Decode(
+    'ChJHZXRBcnR3b3JrUmVzcG9uc2USHQoKYXJ0d29ya19pZBgBIAEoA1IJYXJ0d29ya0lkEhsKCW'
+    '1pbWVfdHlwZRgCIAEoCVIIbWltZVR5cGUSFAoFd2lkdGgYAyABKA1SBXdpZHRoEhYKBmhlaWdo'
+    'dBgEIAEoDVIGaGVpZ2h0EhIKBGRhdGEYBSABKAxSBGRhdGE=');
+
 @$core.Deprecated('Use listTracksRequestDescriptor instead')
 const ListTracksRequest$json = {
   '1': 'ListTracksRequest',
@@ -155,6 +185,15 @@ const Track$json = {
       '5': 3,
       '10': 'dateAddedUnixSeconds'
     },
+    {
+      '1': 'artwork_id',
+      '3': 17,
+      '4': 1,
+      '5': 3,
+      '9': 8,
+      '10': 'artworkId',
+      '17': true
+    },
   ],
   '8': [
     {'1': '_title'},
@@ -165,6 +204,7 @@ const Track$json = {
     {'1': '_disc_number'},
     {'1': '_release_date'},
     {'1': '_duration_ms'},
+    {'1': '_artwork_id'},
   ],
 };
 
@@ -180,9 +220,10 @@ final $typed_data.Uint8List trackDescriptor = $convert.base64Decode(
     'MYDCABKARIB1IKZHVyYXRpb25Nc4gBARIUCgVjb2RlYxgNIAEoCVIFY29kZWMSHwoLc2FtcGxl'
     'X3JhdGUYDiABKA1SCnNhbXBsZVJhdGUSJgoPYml0c19wZXJfc2FtcGxlGA8gASgNUg1iaXRzUG'
     'VyU2FtcGxlEjUKF2RhdGVfYWRkZWRfdW5peF9zZWNvbmRzGBAgASgDUhRkYXRlQWRkZWRVbml4'
-    'U2Vjb25kc0IICgZfdGl0bGVCDwoNX3RyYWNrX2FydGlzdEIPCg1fYWxidW1fYXJ0aXN0QggKBl'
-    '9hbGJ1bUIPCg1fdHJhY2tfbnVtYmVyQg4KDF9kaXNjX251bWJlckIPCg1fcmVsZWFzZV9kYXRl'
-    'Qg4KDF9kdXJhdGlvbl9tcw==');
+    'U2Vjb25kcxIiCgphcnR3b3JrX2lkGBEgASgDSAhSCWFydHdvcmtJZIgBAUIICgZfdGl0bGVCDw'
+    'oNX3RyYWNrX2FydGlzdEIPCg1fYWxidW1fYXJ0aXN0QggKBl9hbGJ1bUIPCg1fdHJhY2tfbnVt'
+    'YmVyQg4KDF9kaXNjX251bWJlckIPCg1fcmVsZWFzZV9kYXRlQg4KDF9kdXJhdGlvbl9tc0INCg'
+    'tfYXJ0d29ya19pZA==');
 
 @$core.Deprecated('Use startRequestDescriptor instead')
 const StartRequest$json = {

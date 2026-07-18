@@ -240,6 +240,43 @@ const Sqlite = struct {
         return artwork_id;
     }
 
+    fn getArtwork(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        artwork_id: i64,
+    ) database.Error!?database.Artwork {
+        const self = fromContext(context);
+        var stmt = try self.prepare(
+            "SELECT id, mime_type, width, height, byte_length, storage_key " ++
+                "FROM artworks WHERE id=?1",
+        );
+        defer stmt.deinit();
+
+        try stmt.bindI64(1, artwork_id);
+        if (try stmt.step() == .done) return null;
+
+        const mime_type = try stmt.columnTextAlloc(allocator, 1);
+        errdefer allocator.free(mime_type);
+        const storage_key = try stmt.columnTextAlloc(allocator, 5);
+        errdefer allocator.free(storage_key);
+
+        const width = stmt.columnI64(2);
+        const height = stmt.columnI64(3);
+        const byte_length = stmt.columnI64(4);
+        if (width <= 0 or height <= 0 or byte_length <= 0) {
+            return error.DatabaseOperationFailed;
+        }
+
+        return .{
+            .id = stmt.columnI64(0),
+            .mime_type = mime_type,
+            .width = std.math.cast(u32, width) orelse return error.DatabaseOperationFailed,
+            .height = std.math.cast(u32, height) orelse return error.DatabaseOperationFailed,
+            .byte_length = std.math.cast(u64, byte_length) orelse return error.DatabaseOperationFailed,
+            .storage_key = storage_key,
+        };
+    }
+
     fn finishScan(context: *anyopaque, scan: database.Scan) database.Error!void {
         const self = fromContext(context);
 
@@ -554,6 +591,7 @@ const vtable: database.Database.VTable = .{
     .find_file = Sqlite.findFile,
     .upsert_files = Sqlite.upsertFiles,
     .upsert_artwork = Sqlite.upsertArtwork,
+    .get_artwork = Sqlite.getArtwork,
     .finish_scan = Sqlite.finishScan,
     .abort_scan = Sqlite.abortScan,
     .list_tracks = Sqlite.listTracks,
@@ -659,6 +697,16 @@ test "artwork is deduplicated by digest and linked to tracks" {
     const first_id = try db.upsertArtwork(scan, artwork);
     const duplicate_id = try db.upsertArtwork(scan, artwork);
     try std.testing.expectEqual(first_id, duplicate_id);
+
+    var stored_artwork = (try db.getArtwork(std.testing.allocator, first_id)).?;
+    defer stored_artwork.deinit(std.testing.allocator);
+    try std.testing.expectEqual(first_id, stored_artwork.id);
+    try std.testing.expectEqualStrings("image/jpeg", stored_artwork.mime_type);
+    try std.testing.expectEqual(@as(u32, 1_000), stored_artwork.width);
+    try std.testing.expectEqual(@as(u32, 1_000), stored_artwork.height);
+    try std.testing.expectEqual(@as(u64, 123_456), stored_artwork.byte_length);
+    try std.testing.expectEqualStrings("ab/ab/abababab.jpg", stored_artwork.storage_key);
+    try std.testing.expect((try db.getArtwork(std.testing.allocator, first_id + 1)) == null);
 
     var file = testFile("/music/song.flac", 100, 10);
     file.artwork_id = first_id;

@@ -24,6 +24,21 @@ pub const ScannedArtwork = struct {
     storage_key: []const u8,
 };
 
+pub const Artwork = struct {
+    id: i64,
+    mime_type: []u8,
+    width: u32,
+    height: u32,
+    byte_length: u64,
+    storage_key: []u8,
+
+    pub fn deinit(self: *Artwork, allocator: std.mem.Allocator) void {
+        allocator.free(self.mime_type);
+        allocator.free(self.storage_key);
+        self.* = undefined;
+    }
+};
+
 /// The filesystem facts needed to identify a new or changed library file.
 /// All slices are borrowed for the duration of a database call.
 pub const ScannedFile = struct {
@@ -112,6 +127,11 @@ pub const Database = struct {
         find_file: *const fn (context: *anyopaque, scan: Scan, path: []const u8) Error!?FileState,
         upsert_files: *const fn (context: *anyopaque, scan: Scan, files: []const ScannedFile) Error!void,
         upsert_artwork: *const fn (context: *anyopaque, scan: Scan, artwork: ScannedArtwork) Error!i64,
+        get_artwork: *const fn (
+            context: *anyopaque,
+            allocator: std.mem.Allocator,
+            artwork_id: i64,
+        ) Error!?Artwork,
         finish_scan: *const fn (context: *anyopaque, scan: Scan) Error!void,
         abort_scan: *const fn (context: *anyopaque, scan: Scan) void,
         list_tracks: *const fn (
@@ -145,6 +165,14 @@ pub const Database = struct {
 
     pub fn upsertArtwork(self: Database, scan: Scan, artwork: ScannedArtwork) Error!i64 {
         return self.vtable.upsert_artwork(self.context, scan, artwork);
+    }
+
+    pub fn getArtwork(
+        self: Database,
+        allocator: std.mem.Allocator,
+        artwork_id: i64,
+    ) Error!?Artwork {
+        return self.vtable.get_artwork(self.context, allocator, artwork_id);
     }
 
     /// Completes a successful scan and removes rows under this root that were

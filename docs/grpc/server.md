@@ -105,6 +105,11 @@ The gRPC schema models player control, not the LSTN media protocol:
 | Query state | `Status(StatusRequest)` |
 | Observe changes | `Watch(WatchRequest)` |
 | Browse scanned tracks | `ListTracks(ListTracksRequest)` |
+| Fetch stored album artwork | `GetArtwork(GetArtworkRequest)` |
+
+`ListTracks` exposes an optional `artwork_id` on each track. Clients can pass
+that identifier to `GetArtwork` to receive the original image bytes together
+with their MIME type and pixel dimensions.
 
 Transport-level and control-command failures should become gRPC statuses. LSTN
 protocol errors remain on the TCP media/data connection.

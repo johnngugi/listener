@@ -22,6 +22,7 @@ pub const Request = union(enum) {
     command: control.Command,
     watch: control.Target,
     list_tracks: library.ListTracksRequest,
+    get_artwork: library.GetArtworkRequest,
 };
 
 pub fn encodeResponse(
@@ -95,6 +96,9 @@ pub fn encodeListTracksResponse(
         try appendUint64(&encoded_track, allocator, 14, track.sample_rate);
         try appendUint64(&encoded_track, allocator, 15, track.bits_per_sample);
         try appendInt64(&encoded_track, allocator, 16, track.date_added);
+        if (track.artwork_id) |value| {
+            try appendInt64(&encoded_track, allocator, 17, value);
+        }
         try appendMessage(&out, allocator, 1, encoded_track.items);
     }
 
@@ -112,9 +116,28 @@ pub fn encodeListTracksResponse(
     return out.toOwnedSlice(allocator);
 }
 
+pub fn encodeGetArtworkResponse(
+    allocator: std.mem.Allocator,
+    artwork: library.Artwork,
+) std.mem.Allocator.Error![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    try appendInt64(&out, allocator, 1, artwork.id);
+    try appendString(&out, allocator, 2, artwork.mime_type);
+    try appendUint64(&out, allocator, 3, artwork.width);
+    try appendUint64(&out, allocator, 4, artwork.height);
+    try appendString(&out, allocator, 5, artwork.data);
+
+    return out.toOwnedSlice(allocator);
+}
+
 pub fn decodeRequest(method: []const u8, message: []const u8) DecodeError!Request {
     if (std.mem.eql(u8, method, library.Method.list_tracks.fullName())) {
         return .{ .list_tracks = try decodeListTracks(message) };
+    }
+    if (std.mem.eql(u8, method, library.Method.get_artwork.fullName())) {
+        return .{ .get_artwork = try decodeGetArtwork(message) };
     }
     if (std.mem.eql(u8, method, control.Method.start.fullName())) {
         return .{ .command = .{ .start = try decodeStart(message) } };
@@ -296,6 +319,20 @@ fn decodeListTracks(message: []const u8) DecodeError!library.ListTracksRequest {
     return out;
 }
 
+fn decodeGetArtwork(message: []const u8) DecodeError!library.GetArtworkRequest {
+    var out = library.GetArtworkRequest{};
+
+    var reader = ProtoReader.init(message);
+    while (try reader.next()) |field| {
+        switch (field.number) {
+            1 => out.artwork_id = @bitCast(try field.uint64()),
+            else => try field.skip(),
+        }
+    }
+
+    return out;
+}
+
 fn validateRequiredString(value: []const u8) DecodeError!void {
     if (value.len == 0) return error.EmptyRequiredString;
 }
@@ -440,6 +477,36 @@ test "decodes list tracks request" {
     try std.testing.expectEqualStrings("42", request.list_tracks.page_token);
 }
 
+test "decodes get artwork request" {
+    const request = try decodeRequest(
+        library.Method.get_artwork.fullName(),
+        "\x08\x2a",
+    );
+
+    try std.testing.expect(request == .get_artwork);
+    try std.testing.expectEqual(@as(i64, 42), request.get_artwork.artwork_id);
+}
+
+test "encodes get artwork response" {
+    const encoded = try encodeGetArtworkResponse(std.testing.allocator, .{
+        .id = 42,
+        .mime_type = @constCast("image/png"),
+        .width = 640,
+        .height = 480,
+        .data = @constCast("png"),
+    });
+    defer std.testing.allocator.free(encoded);
+
+    try std.testing.expectEqualStrings(
+        "\x08\x2a" ++
+            "\x12\x09image/png" ++
+            "\x18\x80\x05" ++
+            "\x20\xe0\x03" ++
+            "\x2a\x03png",
+        encoded,
+    );
+}
+
 test "encodes list tracks response" {
     var tracks = [_]database.Track{.{
         .id = 7,
@@ -458,6 +525,7 @@ test "encodes list tracks response" {
         .sample_rate = 5,
         .bits_per_sample = 16,
         .date_added = 6,
+        .artwork_id = 11,
     }};
     const encoded = try encodeListTracksResponse(std.testing.allocator, .{
         .tracks = &tracks,
@@ -467,7 +535,7 @@ test "encodes list tracks response" {
     defer std.testing.allocator.free(encoded);
 
     try std.testing.expectEqualStrings(
-        "\x0a\x42" ++
+        "\x0a\x45" ++
             "\x08\x07" ++
             "\x12\x0d/music/a.flac" ++
             "\x18\x7b" ++
@@ -482,6 +550,7 @@ test "encodes list tracks response" {
             "\x70\x05" ++
             "\x78\x10" ++
             "\x80\x01\x06" ++
+            "\x88\x01\x0b" ++
             "\x12\x01\x37" ++
             "\x18\x09",
         encoded,

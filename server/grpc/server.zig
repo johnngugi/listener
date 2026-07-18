@@ -219,6 +219,35 @@ pub const Server = struct {
                     "ok",
                 );
             },
+            .get_artwork => |artwork_request| {
+                var artwork = library_service.getArtwork(
+                    allocator,
+                    artwork_request,
+                ) catch |err| {
+                    const mapped = mapLibraryError(err);
+                    return self.sendStatus(call, mapped.status, mapped.detail);
+                };
+                defer artwork.deinit(allocator);
+
+                const response_payload = codec.encodeGetArtworkResponse(
+                    allocator,
+                    artwork,
+                ) catch {
+                    return self.sendStatus(
+                        call,
+                        c.GRPC_STATUS_RESOURCE_EXHAUSTED,
+                        "response allocation failed",
+                    );
+                };
+                defer allocator.free(response_payload);
+
+                return self.sendMessage(
+                    call,
+                    response_payload,
+                    c.GRPC_STATUS_OK,
+                    "ok",
+                );
+            },
         };
 
         const response = controller.execute(command) catch |err| {
@@ -489,6 +518,10 @@ fn mapExecuteError(
 
 fn mapLibraryError(err: library.Error) MappedStatus {
     return switch (err) {
+        error.ArtworkNotFound => .{
+            .status = c.GRPC_STATUS_NOT_FOUND,
+            .detail = "artwork not found",
+        },
         error.InvalidPageSize, error.InvalidPageToken => .{
             .status = c.GRPC_STATUS_INVALID_ARGUMENT,
             .detail = "invalid library page request",
@@ -505,6 +538,7 @@ fn mapLibraryError(err: library.Error) MappedStatus {
         error.DatabaseOpenFailed,
         error.DatabaseOperationFailed,
         error.InvalidScan,
+        error.ArtworkFileInvalid,
         => .{
             .status = c.GRPC_STATUS_INTERNAL,
             .detail = "library database operation failed",
@@ -543,6 +577,10 @@ test "maps malformed control requests to grpc statuses inside the adapter" {
 }
 
 test "maps library errors to grpc statuses inside the adapter" {
+    try std.testing.expectEqual(
+        @as(c.grpc_status_code, @intCast(c.GRPC_STATUS_NOT_FOUND)),
+        mapLibraryError(error.ArtworkNotFound).status,
+    );
     try std.testing.expectEqual(
         @as(c.grpc_status_code, @intCast(c.GRPC_STATUS_INVALID_ARGUMENT)),
         mapLibraryError(error.InvalidPageToken).status,

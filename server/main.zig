@@ -63,7 +63,7 @@ pub fn main(init: std.process.Init) !void {
     try library_db.migrate();
     try library_scan.scanLibrary(library_root, init.io, init.gpa, library_db, artwork_dir);
 
-    var library_api = library_service.Service.init(library_db);
+    var library_api = library_service.Service.init(library_db, init.io, artwork_dir);
 
     var controller = playback.Controller.init(init.gpa);
 

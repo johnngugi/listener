@@ -14,6 +14,19 @@ service ListenerControl {
 
 service ListenerLibrary {
   rpc ListTracks(ListTracksRequest) returns (ListTracksResponse);
+  rpc GetArtwork(GetArtworkRequest) returns (GetArtworkResponse);
+}
+
+message GetArtworkRequest {
+  int64 artwork_id = 1;
+}
+
+message GetArtworkResponse {
+  int64 artwork_id = 1;
+  string mime_type = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  bytes data = 5;
 }
 
 message ListTracksRequest {
@@ -44,6 +57,7 @@ message Track {
   uint32 sample_rate = 14;
   uint32 bits_per_sample = 15;
   int64 date_added_unix_seconds = 16;
+  optional int64 artwork_id = 17;
 }
 
 message StartRequest {

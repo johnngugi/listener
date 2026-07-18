@@ -21,6 +21,165 @@ export 'package:protobuf/protobuf.dart' show GeneratedMessageGenericExtensions;
 
 export 'listener.pbenum.dart';
 
+class GetArtworkRequest extends $pb.GeneratedMessage {
+  factory GetArtworkRequest({
+    $fixnum.Int64? artworkId,
+  }) {
+    final result = create();
+    if (artworkId != null) result.artworkId = artworkId;
+    return result;
+  }
+
+  GetArtworkRequest._();
+
+  factory GetArtworkRequest.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      create()..mergeFromBuffer(data, registry);
+  factory GetArtworkRequest.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      create()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'GetArtworkRequest',
+      package:
+          const $pb.PackageName(_omitMessageNames ? '' : 'listener.control.v1'),
+      createEmptyInstance: create)
+    ..aInt64(1, _omitFieldNames ? '' : 'artworkId')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  GetArtworkRequest clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  GetArtworkRequest copyWith(void Function(GetArtworkRequest) updates) =>
+      super.copyWith((message) => updates(message as GetArtworkRequest))
+          as GetArtworkRequest;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  static GetArtworkRequest create() => GetArtworkRequest._();
+  @$core.override
+  GetArtworkRequest createEmptyInstance() => create();
+  @$core.pragma('dart2js:noInline')
+  static GetArtworkRequest getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<GetArtworkRequest>(create);
+  static GetArtworkRequest? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $fixnum.Int64 get artworkId => $_getI64(0);
+  @$pb.TagNumber(1)
+  set artworkId($fixnum.Int64 value) => $_setInt64(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasArtworkId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearArtworkId() => $_clearField(1);
+}
+
+class GetArtworkResponse extends $pb.GeneratedMessage {
+  factory GetArtworkResponse({
+    $fixnum.Int64? artworkId,
+    $core.String? mimeType,
+    $core.int? width,
+    $core.int? height,
+    $core.List<$core.int>? data,
+  }) {
+    final result = create();
+    if (artworkId != null) result.artworkId = artworkId;
+    if (mimeType != null) result.mimeType = mimeType;
+    if (width != null) result.width = width;
+    if (height != null) result.height = height;
+    if (data != null) result.data = data;
+    return result;
+  }
+
+  GetArtworkResponse._();
+
+  factory GetArtworkResponse.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      create()..mergeFromBuffer(data, registry);
+  factory GetArtworkResponse.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      create()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'GetArtworkResponse',
+      package:
+          const $pb.PackageName(_omitMessageNames ? '' : 'listener.control.v1'),
+      createEmptyInstance: create)
+    ..aInt64(1, _omitFieldNames ? '' : 'artworkId')
+    ..aOS(2, _omitFieldNames ? '' : 'mimeType')
+    ..aI(3, _omitFieldNames ? '' : 'width', fieldType: $pb.PbFieldType.OU3)
+    ..aI(4, _omitFieldNames ? '' : 'height', fieldType: $pb.PbFieldType.OU3)
+    ..a<$core.List<$core.int>>(
+        5, _omitFieldNames ? '' : 'data', $pb.PbFieldType.OY)
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  GetArtworkResponse clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  GetArtworkResponse copyWith(void Function(GetArtworkResponse) updates) =>
+      super.copyWith((message) => updates(message as GetArtworkResponse))
+          as GetArtworkResponse;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  static GetArtworkResponse create() => GetArtworkResponse._();
+  @$core.override
+  GetArtworkResponse createEmptyInstance() => create();
+  @$core.pragma('dart2js:noInline')
+  static GetArtworkResponse getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<GetArtworkResponse>(create);
+  static GetArtworkResponse? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $fixnum.Int64 get artworkId => $_getI64(0);
+  @$pb.TagNumber(1)
+  set artworkId($fixnum.Int64 value) => $_setInt64(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasArtworkId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearArtworkId() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get mimeType => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set mimeType($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasMimeType() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearMimeType() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $core.int get width => $_getIZ(2);
+  @$pb.TagNumber(3)
+  set width($core.int value) => $_setUnsignedInt32(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasWidth() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearWidth() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $core.int get height => $_getIZ(3);
+  @$pb.TagNumber(4)
+  set height($core.int value) => $_setUnsignedInt32(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasHeight() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearHeight() => $_clearField(4);
+
+  @$pb.TagNumber(5)
+  $core.List<$core.int> get data => $_getN(4);
+  @$pb.TagNumber(5)
+  set data($core.List<$core.int> value) => $_setBytes(4, value);
+  @$pb.TagNumber(5)
+  $core.bool hasData() => $_has(4);
+  @$pb.TagNumber(5)
+  void clearData() => $_clearField(5);
+}
+
 class ListTracksRequest extends $pb.GeneratedMessage {
   factory ListTracksRequest({
     $core.int? pageSize,
@@ -181,6 +340,7 @@ class Track extends $pb.GeneratedMessage {
     $core.int? sampleRate,
     $core.int? bitsPerSample,
     $fixnum.Int64? dateAddedUnixSeconds,
+    $fixnum.Int64? artworkId,
   }) {
     final result = create();
     if (id != null) result.id = id;
@@ -200,6 +360,7 @@ class Track extends $pb.GeneratedMessage {
     if (bitsPerSample != null) result.bitsPerSample = bitsPerSample;
     if (dateAddedUnixSeconds != null)
       result.dateAddedUnixSeconds = dateAddedUnixSeconds;
+    if (artworkId != null) result.artworkId = artworkId;
     return result;
   }
 
@@ -241,6 +402,7 @@ class Track extends $pb.GeneratedMessage {
     ..aI(15, _omitFieldNames ? '' : 'bitsPerSample',
         fieldType: $pb.PbFieldType.OU3)
     ..aInt64(16, _omitFieldNames ? '' : 'dateAddedUnixSeconds')
+    ..aInt64(17, _omitFieldNames ? '' : 'artworkId')
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -404,6 +566,15 @@ class Track extends $pb.GeneratedMessage {
   $core.bool hasDateAddedUnixSeconds() => $_has(15);
   @$pb.TagNumber(16)
   void clearDateAddedUnixSeconds() => $_clearField(16);
+
+  @$pb.TagNumber(17)
+  $fixnum.Int64 get artworkId => $_getI64(16);
+  @$pb.TagNumber(17)
+  set artworkId($fixnum.Int64 value) => $_setInt64(16, value);
+  @$pb.TagNumber(17)
+  $core.bool hasArtworkId() => $_has(16);
+  @$pb.TagNumber(17)
+  void clearArtworkId() => $_clearField(17);
 }
 
 class StartRequest extends $pb.GeneratedMessage {

@@ -249,6 +249,13 @@ class ListenerLibraryClient extends $grpc.Client {
     return $createUnaryCall(_$listTracks, request, options: options);
   }
 
+  $grpc.ResponseFuture<$0.GetArtworkResponse> getArtwork(
+    $0.GetArtworkRequest request, {
+    $grpc.CallOptions? options,
+  }) {
+    return $createUnaryCall(_$getArtwork, request, options: options);
+  }
+
   // method descriptors
 
   static final _$listTracks =
@@ -256,6 +263,11 @@ class ListenerLibraryClient extends $grpc.Client {
           '/listener.control.v1.ListenerLibrary/ListTracks',
           ($0.ListTracksRequest value) => value.writeToBuffer(),
           $0.ListTracksResponse.fromBuffer);
+  static final _$getArtwork =
+      $grpc.ClientMethod<$0.GetArtworkRequest, $0.GetArtworkResponse>(
+          '/listener.control.v1.ListenerLibrary/GetArtwork',
+          ($0.GetArtworkRequest value) => value.writeToBuffer(),
+          $0.GetArtworkResponse.fromBuffer);
 }
 
 @$pb.GrpcServiceName('listener.control.v1.ListenerLibrary')
@@ -270,6 +282,13 @@ abstract class ListenerLibraryServiceBase extends $grpc.Service {
         false,
         ($core.List<$core.int> value) => $0.ListTracksRequest.fromBuffer(value),
         ($0.ListTracksResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.GetArtworkRequest, $0.GetArtworkResponse>(
+        'GetArtwork',
+        getArtwork_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.GetArtworkRequest.fromBuffer(value),
+        ($0.GetArtworkResponse value) => value.writeToBuffer()));
   }
 
   $async.Future<$0.ListTracksResponse> listTracks_Pre($grpc.ServiceCall $call,
@@ -279,4 +298,12 @@ abstract class ListenerLibraryServiceBase extends $grpc.Service {
 
   $async.Future<$0.ListTracksResponse> listTracks(
       $grpc.ServiceCall call, $0.ListTracksRequest request);
+
+  $async.Future<$0.GetArtworkResponse> getArtwork_Pre($grpc.ServiceCall $call,
+      $async.Future<$0.GetArtworkRequest> $request) async {
+    return getArtwork($call, await $request);
+  }
+
+  $async.Future<$0.GetArtworkResponse> getArtwork(
+      $grpc.ServiceCall call, $0.GetArtworkRequest request);
 }
