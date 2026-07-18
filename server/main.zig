@@ -12,20 +12,56 @@ const Config = struct {
     lstn_host: []const u8 = "127.0.0.1",
     lstn_port: u16 = 5778,
     grpc_address: [:0]const u8 = "127.0.0.1:5779",
-    library_database_path: [:0]const u8 = "listener.db",
+    data_dir: ?[]const u8 = null,
 };
 
 pub fn main(init: std.process.Init) !void {
     const config = Config{};
 
-    const home = init.environ_map.get("HOME") orelse return error.HomeNotSet;
-    const library_root = try std.fs.path.join(init.gpa, &.{ home, "Music" });
+    const home_dir = init.environ_map.get("HOME") orelse return error.HomeNotSet;
+    const library_root = try std.fs.path.join(init.gpa, &.{ home_dir, "Music" });
     defer init.gpa.free(library_root);
 
-    var library_db = try sqlite.open(init.gpa, config.library_database_path, .{});
+    const configured_data_dir = config.data_dir orelse init.environ_map.get("LISTENER_DATA_DIR");
+
+    const data_dir = if (configured_data_dir) |path|
+        try init.gpa.dupe(u8, path)
+    else blk: {
+        break :blk try std.fs.path.join(init.gpa, &.{
+            home_dir,
+            "Library",
+            "Application Support",
+            "Listener",
+        });
+    };
+    defer init.gpa.free(data_dir);
+
+    if (!std.fs.path.isAbsolute(data_dir)) {
+        return error.DataDirMustBeAbsolute;
+    }
+
+    try std.Io.Dir.cwd().createDirPath(init.io, data_dir);
+
+    const database_path = try std.fs.path.joinZ(init.gpa, &.{
+        data_dir,
+        "listener.db",
+    });
+    defer init.gpa.free(database_path);
+
+    const artwork_dir = try std.fs.path.join(init.gpa, &.{
+        data_dir,
+        "artwork",
+        "original",
+    });
+    defer init.gpa.free(artwork_dir);
+
+    try std.Io.Dir.cwd().createDirPath(init.io, artwork_dir);
+
+    var library_db = try sqlite.open(init.gpa, database_path, .{});
     defer library_db.deinit();
+
     try library_db.migrate();
-    try library_scan.scanLibrary(library_root, init.io, init.gpa, library_db);
+    try library_scan.scanLibrary(library_root, init.io, init.gpa, library_db, artwork_dir);
 
     var library_api = library_service.Service.init(library_db);
 

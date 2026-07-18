@@ -15,6 +15,15 @@ pub const Scan = struct {
     root_id: i64,
 };
 
+pub const ScannedArtwork = struct {
+    sha256: [32]u8,
+    mime_type: []const u8,
+    width: u32,
+    height: u32,
+    byte_length: u64,
+    storage_key: []const u8,
+};
+
 /// The filesystem facts needed to identify a new or changed library file.
 /// All slices are borrowed for the duration of a database call.
 pub const ScannedFile = struct {
@@ -32,6 +41,7 @@ pub const ScannedFile = struct {
     codec: []const u8,
     sample_rate: u32,
     bits_per_sample: u8,
+    artwork_id: ?i64 = null,
 };
 
 pub const FileState = struct {
@@ -56,6 +66,7 @@ pub const Track = struct {
     sample_rate: u32,
     bits_per_sample: u8,
     date_added: i64,
+    artwork_id: ?i64 = null,
 
     pub fn deinit(self: *Track, allocator: std.mem.Allocator) void {
         allocator.free(self.path);
@@ -100,6 +111,7 @@ pub const Database = struct {
         begin_scan: *const fn (context: *anyopaque, root_path: []const u8) Error!Scan,
         find_file: *const fn (context: *anyopaque, scan: Scan, path: []const u8) Error!?FileState,
         upsert_files: *const fn (context: *anyopaque, scan: Scan, files: []const ScannedFile) Error!void,
+        upsert_artwork: *const fn (context: *anyopaque, scan: Scan, artwork: ScannedArtwork) Error!i64,
         finish_scan: *const fn (context: *anyopaque, scan: Scan) Error!void,
         abort_scan: *const fn (context: *anyopaque, scan: Scan) void,
         list_tracks: *const fn (
@@ -129,6 +141,10 @@ pub const Database = struct {
 
     pub fn upsertFiles(self: Database, scan: Scan, files: []const ScannedFile) Error!void {
         return self.vtable.upsert_files(self.context, scan, files);
+    }
+
+    pub fn upsertArtwork(self: Database, scan: Scan, artwork: ScannedArtwork) Error!i64 {
+        return self.vtable.upsert_artwork(self.context, scan, artwork);
     }
 
     /// Completes a successful scan and removes rows under this root that were

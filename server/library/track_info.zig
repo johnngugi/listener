@@ -4,7 +4,13 @@ const c = @cImport({
     @cInclude("libavcodec/avcodec.h");
     @cInclude("libavformat/avformat.h");
     @cInclude("libavutil/dict.h");
+    @cInclude("libavutil/imgutils.h");
 });
+
+pub const max_artwork_bytes = 10 * 1024 * 1024;
+pub const max_artwork_width = 6_000;
+pub const max_artwork_height = 6_000;
+pub const max_artwork_pixels = 25_000_000;
 
 /// Metadata owned by the caller. All strings remain valid after FFmpeg closes
 /// the input and must be released with `deinit`.
@@ -20,6 +26,7 @@ pub const TrackMetadata = struct {
     codec: []u8,
     sample_rate: u32,
     bits_per_sample: u8,
+    artwork: ?Artwork = null,
 
     pub fn deinit(self: *TrackMetadata, allocator: std.mem.Allocator) void {
         freeOptional(allocator, self.title);
@@ -27,7 +34,42 @@ pub const TrackMetadata = struct {
         freeOptional(allocator, self.album_artist);
         freeOptional(allocator, self.album);
         freeOptional(allocator, self.release_date);
+        if (self.artwork) |*artwork| artwork.deinit(allocator);
         allocator.free(self.codec);
+        self.* = undefined;
+    }
+};
+
+pub const ArtworkFormat = enum {
+    jpeg,
+    png,
+    webp,
+
+    pub fn mimeType(self: ArtworkFormat) []const u8 {
+        return switch (self) {
+            .jpeg => "image/jpeg",
+            .png => "image/png",
+            .webp => "image/webp",
+        };
+    }
+
+    pub fn extension(self: ArtworkFormat) []const u8 {
+        return switch (self) {
+            .jpeg => "jpg",
+            .png => "png",
+            .webp => "webp",
+        };
+    }
+};
+
+pub const Artwork = struct {
+    format: ArtworkFormat,
+    bytes: []u8,
+    width: u32,
+    height: u32,
+
+    pub fn deinit(self: *Artwork, allocator: std.mem.Allocator) void {
+        allocator.free(self.bytes);
         self.* = undefined;
     }
 };
@@ -110,9 +152,11 @@ pub fn read(allocator: std.mem.Allocator, media_path: []const u8) !TrackMetadata
         .track_number = track_number,
         .disc_number = disc_number,
         .duration_ms = durationMs(format_ctx, audio_stream),
+        .artwork = null,
     };
     errdefer result.deinit(allocator);
 
+    result.artwork = try readArtwork(allocator, format_ctx);
     result.title = try dupeOptional(allocator, title);
     result.track_artist = try dupeOptional(allocator, track_artist);
     result.album_artist = try dupeOptional(allocator, album_artist);
@@ -120,6 +164,102 @@ pub fn read(allocator: std.mem.Allocator, media_path: []const u8) !TrackMetadata
     result.release_date = try dupeOptional(allocator, release_date);
 
     return result;
+}
+
+/// Returns the first supported, decodable attached picture. Invalid or
+/// oversized artwork is ignored so it cannot prevent the track from scanning.
+fn readArtwork(
+    allocator: std.mem.Allocator,
+    format_ctx: [*c]c.AVFormatContext,
+) std.mem.Allocator.Error!?Artwork {
+    var index: usize = 0;
+    while (index < format_ctx.*.nb_streams) : (index += 1) {
+        const stream = format_ctx.*.streams[index];
+        if ((stream.*.disposition & c.AV_DISPOSITION_ATTACHED_PIC) == 0) continue;
+
+        const format = artworkFormat(stream.*.codecpar.*.codec_id) orelse continue;
+        const picture = &stream.*.attached_pic;
+        const dimensions = validateArtwork(stream.*.codecpar, picture) orelse continue;
+        const byte_len = std.math.cast(usize, picture.*.size) orelse continue;
+
+        return .{
+            .format = format,
+            .bytes = try allocator.dupe(u8, picture.*.data[0..byte_len]),
+            .width = dimensions.width,
+            .height = dimensions.height,
+        };
+    }
+
+    return null;
+}
+
+const ArtworkDimensions = struct {
+    width: u32,
+    height: u32,
+};
+
+fn artworkFormat(codec_id: c.enum_AVCodecID) ?ArtworkFormat {
+    return switch (codec_id) {
+        c.AV_CODEC_ID_MJPEG => .jpeg,
+        c.AV_CODEC_ID_PNG => .png,
+        c.AV_CODEC_ID_WEBP => .webp,
+        else => null,
+    };
+}
+
+/// Performs every resource check before the caller copies the compressed data.
+/// Decoding one frame verifies both the claimed format and actual dimensions.
+fn validateArtwork(
+    codec_parameters: [*c]const c.AVCodecParameters,
+    picture: [*c]const c.AVPacket,
+) ?ArtworkDimensions {
+    if (picture.*.data == null or picture.*.size <= 0) return null;
+
+    if (picture.*.size > max_artwork_bytes) return null;
+
+    if (artworkFormat(codec_parameters.*.codec_id) == null) return null;
+
+    if (codec_parameters.*.width > 0 and codec_parameters.*.height > 0 and
+        !dimensionsAllowed(codec_parameters.*.width, codec_parameters.*.height))
+    {
+        return null;
+    }
+
+    const decoder = c.avcodec_find_decoder(codec_parameters.*.codec_id) orelse return null;
+
+    var decoder_ctx = c.avcodec_alloc_context3(decoder) orelse return null;
+    defer c.avcodec_free_context(&decoder_ctx);
+
+    if (c.avcodec_parameters_to_context(decoder_ctx, codec_parameters) < 0) return null;
+
+    decoder_ctx.*.max_pixels = max_artwork_pixels;
+    if (c.avcodec_open2(decoder_ctx, decoder, null) < 0) return null;
+
+    const frame = c.av_frame_alloc() orelse return null;
+    defer c.av_frame_free(@constCast(&frame));
+
+    if (c.avcodec_send_packet(decoder_ctx, picture) < 0) return null;
+    if (c.avcodec_receive_frame(decoder_ctx, frame) < 0) return null;
+    if (!dimensionsAllowed(frame.*.width, frame.*.height)) return null;
+
+    return .{
+        .width = @intCast(frame.*.width),
+        .height = @intCast(frame.*.height),
+    };
+}
+
+fn dimensionsAllowed(width: c_int, height: c_int) bool {
+    if (width <= 0 or height <= 0) return false;
+
+    if (width > max_artwork_width or height > max_artwork_height) return false;
+
+    const width_u32: u32 = @intCast(width);
+    const height_u32: u32 = @intCast(height);
+    const pixels = @as(u64, width_u32) * @as(u64, height_u32);
+
+    if (pixels > max_artwork_pixels) return false;
+
+    return c.av_image_check_size(width_u32, height_u32, 0, null) >= 0;
 }
 
 fn durationMs(
@@ -194,6 +334,36 @@ test "parses track and disc numbers with optional totals" {
     try std.testing.expectEqual(@as(?u16, null), parseNumber(null));
 }
 
+test "artwork dimension policy rejects oversized and pathological images" {
+    try std.testing.expect(dimensionsAllowed(5_000, 5_000));
+    try std.testing.expect(!dimensionsAllowed(0, 1_000));
+    try std.testing.expect(!dimensionsAllowed(6_001, 1_000));
+    try std.testing.expect(!dimensionsAllowed(6_000, 6_000));
+}
+
+test "validates a supported image by decoding one frame" {
+    const png =
+        "\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52" ++
+        "\x00\x00\x00\x01\x00\x00\x00\x01\x08\x04\x00\x00\x00\xb5\x1c\x0c\x02" ++
+        "\x00\x00\x00\x0b\x49\x44\x41\x54\x78\xda\x63\x64\xf8\x0f\x00\x01\x05\x01" ++
+        "\x01\x27\x18\xe3\x66\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82";
+
+    var codec_parameters = c.avcodec_parameters_alloc() orelse return error.OutOfMemory;
+    defer c.avcodec_parameters_free(&codec_parameters);
+    codec_parameters.*.codec_type = c.AVMEDIA_TYPE_VIDEO;
+    codec_parameters.*.codec_id = c.AV_CODEC_ID_PNG;
+
+    var packet = c.av_packet_alloc() orelse return error.OutOfMemory;
+    defer c.av_packet_free(&packet);
+    if (c.av_new_packet(packet, @intCast(png.len)) < 0) return error.OutOfMemory;
+    @memcpy(packet.*.data[0..png.len], png);
+
+    const dimensions = validateArtwork(codec_parameters, packet) orelse
+        return error.ArtworkRejected;
+    try std.testing.expectEqual(@as(u32, 1), dimensions.width);
+    try std.testing.expectEqual(@as(u32, 1), dimensions.height);
+}
+
 test "reads technical information from a FLAC file" {
     const fixture = @embedFile("../testdata/fixtures/strict-s16le-stereo.flac");
     var tmp = std.testing.tmpDir(.{});
@@ -215,4 +385,5 @@ test "reads technical information from a FLAC file" {
     try std.testing.expect(metadata.sample_rate > 0);
     try std.testing.expectEqual(@as(u8, 16), metadata.bits_per_sample);
     try std.testing.expect(metadata.duration_ms != null);
+    try std.testing.expect(metadata.artwork == null);
 }

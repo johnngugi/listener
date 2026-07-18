@@ -22,6 +22,15 @@ const schema =
     \\    started_at INTEGER NOT NULL DEFAULT (unixepoch()),
     \\    completed_at INTEGER
     \\);
+    \\CREATE TABLE IF NOT EXISTS artworks (
+    \\    id INTEGER PRIMARY KEY,
+    \\    sha256 BLOB NOT NULL UNIQUE CHECK (length(sha256) = 32),
+    \\    mime_type TEXT NOT NULL,
+    \\    width INTEGER NOT NULL CHECK (width > 0),
+    \\    height INTEGER NOT NULL CHECK (height > 0),
+    \\    byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+    \\    storage_key TEXT NOT NULL UNIQUE
+    \\);
     \\CREATE TABLE IF NOT EXISTS tracks (
     \\    id INTEGER PRIMARY KEY,
     \\    root_id INTEGER NOT NULL REFERENCES library_roots(id) ON DELETE CASCADE,
@@ -39,12 +48,15 @@ const schema =
     \\    codec TEXT NOT NULL,
     \\    sample_rate INTEGER NOT NULL CHECK (sample_rate >= 0),
     \\    bits_per_sample INTEGER NOT NULL CHECK (bits_per_sample >= 0),
+    \\    artwork_id INTEGER REFERENCES artworks(id) ON DELETE SET NULL,
     \\    date_added INTEGER NOT NULL DEFAULT (unixepoch()),
     \\    last_seen_scan_id INTEGER NOT NULL,
     \\    UNIQUE (root_id, path)
     \\);
     \\CREATE INDEX IF NOT EXISTS tracks_last_seen_idx
     \\    ON tracks(root_id, last_seen_scan_id);
+    \\CREATE INDEX IF NOT EXISTS tracks_artwork_idx
+    \\    ON tracks(artwork_id);
 ;
 
 const Sqlite = struct {
@@ -139,9 +151,10 @@ const Sqlite = struct {
             "INSERT INTO tracks(" ++
                 "root_id, path, size, modified_ns, title, track_artist, " ++
                 "album_artist, album, track_number, disc_number, release_date, " ++
-                "duration_ms, codec, sample_rate, bits_per_sample, last_seen_scan_id" ++
+                "duration_ms, codec, sample_rate, bits_per_sample, artwork_id, " ++
+                "last_seen_scan_id" ++
                 ") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, " ++
-                "?12, ?13, ?14, ?15, ?16) " ++
+                "?12, ?13, ?14, ?15, ?16, ?17) " ++
                 "ON CONFLICT(root_id, path) DO UPDATE SET " ++
                 "size=excluded.size, modified_ns=excluded.modified_ns, " ++
                 "title=excluded.title, track_artist=excluded.track_artist, " ++
@@ -150,6 +163,7 @@ const Sqlite = struct {
                 "release_date=excluded.release_date, duration_ms=excluded.duration_ms, " ++
                 "codec=excluded.codec, sample_rate=excluded.sample_rate, " ++
                 "bits_per_sample=excluded.bits_per_sample, " ++
+                "artwork_id=excluded.artwork_id, " ++
                 "last_seen_scan_id=excluded.last_seen_scan_id",
         );
         defer stmt.deinit();
@@ -170,13 +184,60 @@ const Sqlite = struct {
             try stmt.bindText(13, file.codec);
             try stmt.bindI64(14, file.sample_rate);
             try stmt.bindI64(15, file.bits_per_sample);
-            try stmt.bindI64(16, scan.id);
+            try stmt.bindOptionalI64(16, file.artwork_id);
+            try stmt.bindI64(17, scan.id);
 
             if (try stmt.step() != .done) return error.DatabaseOperationFailed;
             try stmt.reset();
         }
 
         try self.exec("COMMIT");
+    }
+
+    fn upsertArtwork(
+        context: *anyopaque,
+        scan: database.Scan,
+        artwork: database.ScannedArtwork,
+    ) database.Error!i64 {
+        const self = fromContext(context);
+
+        try self.requireOpenScan(scan);
+        try self.exec("BEGIN IMMEDIATE");
+        errdefer self.rollback();
+
+        var insert_stmt = try self.prepare(
+            "INSERT INTO artworks(" ++
+                "sha256, mime_type, width, height, byte_length, storage_key" ++
+                ") VALUES (?1, ?2, ?3, ?4, ?5, ?6) " ++
+                "ON CONFLICT(sha256) DO NOTHING",
+        );
+        defer insert_stmt.deinit();
+
+        try insert_stmt.bindBlob(1, &artwork.sha256);
+        try insert_stmt.bindText(2, artwork.mime_type);
+        try insert_stmt.bindI64(3, artwork.width);
+        try insert_stmt.bindI64(4, artwork.height);
+        try insert_stmt.bindI64(
+            5,
+            std.math.cast(i64, artwork.byte_length) orelse return error.DatabaseConstraint,
+        );
+        try insert_stmt.bindText(6, artwork.storage_key);
+
+        if (try insert_stmt.step() != .done) return error.DatabaseOperationFailed;
+
+        var find_stmt = try self.prepare(
+            "SELECT id FROM artworks WHERE sha256=?1",
+        );
+        defer find_stmt.deinit();
+
+        try find_stmt.bindBlob(1, &artwork.sha256);
+        if (try find_stmt.step() != .row) return error.DatabaseOperationFailed;
+
+        const artwork_id = find_stmt.columnI64(0);
+        if (try find_stmt.step() != .done) return error.DatabaseOperationFailed;
+
+        try self.exec("COMMIT");
+        return artwork_id;
     }
 
     fn finishScan(context: *anyopaque, scan: database.Scan) database.Error!void {
@@ -195,6 +256,12 @@ const Sqlite = struct {
         try delete_stmt.bindI64(1, scan.root_id);
         try delete_stmt.bindI64(2, scan.id);
         if (try delete_stmt.step() != .done) return error.DatabaseOperationFailed;
+
+        try self.exec(
+            "DELETE FROM artworks WHERE NOT EXISTS (" ++
+                "SELECT 1 FROM tracks WHERE tracks.artwork_id=artworks.id" ++
+                ")",
+        );
 
         var finish_stmt = try self.prepare(
             "UPDATE library_scans SET completed_at=unixepoch() " ++
@@ -239,7 +306,8 @@ const Sqlite = struct {
         var stmt = try self.prepare(
             "SELECT id, path, size, modified_ns, title, track_artist, " ++
                 "album_artist, album, track_number, disc_number, release_date, " ++
-                "duration_ms, codec, sample_rate, bits_per_sample, date_added " ++
+                "duration_ms, codec, sample_rate, bits_per_sample, date_added, " ++
+                "artwork_id " ++
                 "FROM tracks " ++
                 "WHERE id>?1 ORDER BY id LIMIT ?2",
         );
@@ -303,6 +371,7 @@ const Sqlite = struct {
                 .bits_per_sample = std.math.cast(u8, bits_per_sample) orelse
                     return error.DatabaseOperationFailed,
                 .date_added = stmt.columnI64(15),
+                .artwork_id = stmt.columnOptionalI64(16),
             }) catch return error.OutOfMemory;
         }
 
@@ -372,6 +441,12 @@ const Statement = struct {
         // which Zig correctly rejects as a potentially misaligned function
         // pointer on ARM.
         const result = c.sqlite3_bind_text(self.handle, index, value.ptr, length, null);
+        if (result != c.SQLITE_OK) return mapError(result);
+    }
+
+    fn bindBlob(self: *Statement, index: c_int, value: []const u8) database.Error!void {
+        const length = std.math.cast(c_int, value.len) orelse return error.DatabaseConstraint;
+        const result = c.sqlite3_bind_blob(self.handle, index, value.ptr, length, null);
         if (result != c.SQLITE_OK) return mapError(result);
     }
 
@@ -478,6 +553,7 @@ const vtable: database.Database.VTable = .{
     .begin_scan = Sqlite.beginScan,
     .find_file = Sqlite.findFile,
     .upsert_files = Sqlite.upsertFiles,
+    .upsert_artwork = Sqlite.upsertArtwork,
     .finish_scan = Sqlite.finishScan,
     .abort_scan = Sqlite.abortScan,
     .list_tracks = Sqlite.listTracks,
@@ -563,6 +639,36 @@ test "SQLite scan lifecycle upserts files and removes stale rows" {
     try std.testing.expect((try db.findFile(second, "/music/two.flac")) == null);
     const updated = (try db.findFile(second, "/music/one.flac")).?;
     try std.testing.expectEqual(@as(u64, 101), updated.size);
+}
+
+test "artwork is deduplicated by digest and linked to tracks" {
+    var db = try open(std.testing.allocator, ":memory:", .{});
+    defer db.deinit();
+    try db.migrate();
+
+    const scan = try db.beginScan("/music");
+    const artwork = database.ScannedArtwork{
+        .sha256 = @splat(0xab),
+        .mime_type = "image/jpeg",
+        .width = 1_000,
+        .height = 1_000,
+        .byte_length = 123_456,
+        .storage_key = "ab/ab/abababab.jpg",
+    };
+
+    const first_id = try db.upsertArtwork(scan, artwork);
+    const duplicate_id = try db.upsertArtwork(scan, artwork);
+    try std.testing.expectEqual(first_id, duplicate_id);
+
+    var file = testFile("/music/song.flac", 100, 10);
+    file.artwork_id = first_id;
+    try db.upsertFiles(scan, &.{file});
+    try db.finishScan(scan);
+
+    var page = try db.listTracks(std.testing.allocator, 0, 10);
+    defer page.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), page.tracks.len);
+    try std.testing.expectEqual(first_id, page.tracks[0].artwork_id.?);
 }
 
 test "aborted scan does not remove unseen files" {
