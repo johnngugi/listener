@@ -69,16 +69,24 @@ pub fn scanLibrary(
                         allocator.free(full_path);
                         return error.TimestampOutOfRange;
                     };
-                    const metadata = track_info.read(allocator, full_path) catch |err| {
+                    var metadata = track_info.read(allocator, full_path) catch |err| {
                         allocator.free(full_path);
                         return err;
                     };
 
+                    const final_title = metadata.title orelse allocator.dupe(
+                        u8,
+                        std.fs.path.stem(file_name),
+                    ) catch |err| {
+                        allocator.free(full_path);
+                        metadata.deinit(allocator);
+                        return err;
+                    };
                     const scanned_file = database.ScannedFile{
                         .path = full_path,
                         .size = size,
                         .modified_ns = modified_ns,
-                        .title = metadata.title,
+                        .title = final_title,
                         .track_artist = metadata.track_artist,
                         .album_artist = metadata.album_artist,
                         .album = metadata.album,

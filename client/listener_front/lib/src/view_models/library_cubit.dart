@@ -1,4 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:intl/intl.dart';
 import 'package:listener_front/src/generated/listener/v1/listener.pbgrpc.dart'
     as grpc;
 import 'package:listener_front/src/models/library_state.dart';
@@ -89,12 +90,14 @@ List<model_track.Track> mapTracks(pb.PbList<grpc.Track> tracks) {
 
   for (final value in tracks) {
     final track = model_track.Track(
-      number: value.id.toString(),
-      title: value.path,
-      length: '4:54',
-      artist: 'Ada Ehi',
-      album: 'Born of God',
-      releaseDate: '2020',
+      number: value.hasTrackNumber()
+          ? value.trackNumber.toString()
+          : value.id.toString(),
+      title: value.title,
+      length: formatMilliseconds(value.durationMs.toInt()),
+      artist: value.albumArtist,
+      album: value.album,
+      releaseDate: formatReleaseDate(value.releaseDate),
       dateAdded: '15 May 2026',
       plays: '0',
       cover: model_track.CoverStyle.sky,
@@ -104,4 +107,27 @@ List<model_track.Track> mapTracks(pb.PbList<grpc.Track> tracks) {
   }
 
   return store;
+}
+
+String formatReleaseDate(String releaseDate) {
+  final date = DateTime.tryParse(releaseDate);
+
+  if (date != null) {
+    return DateFormat('d MMM yyyy').format(date);
+  }
+
+  final year = int.tryParse(releaseDate);
+  if (year != null) {
+    return year.toString();
+  }
+
+  return "";
+}
+
+String formatMilliseconds(int milliseconds) {
+  int totalSeconds = milliseconds ~/ 1000;
+  int minutes = totalSeconds ~/ 60;
+  int seconds = totalSeconds % 60;
+
+  return "${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}";
 }

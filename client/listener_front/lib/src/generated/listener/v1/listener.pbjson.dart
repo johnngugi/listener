@@ -89,6 +89,82 @@ const Track$json = {
       '5': 3,
       '10': 'modifiedUnixNanos'
     },
+    {'1': 'title', '3': 5, '4': 1, '5': 9, '9': 0, '10': 'title', '17': true},
+    {
+      '1': 'track_artist',
+      '3': 6,
+      '4': 1,
+      '5': 9,
+      '9': 1,
+      '10': 'trackArtist',
+      '17': true
+    },
+    {
+      '1': 'album_artist',
+      '3': 7,
+      '4': 1,
+      '5': 9,
+      '9': 2,
+      '10': 'albumArtist',
+      '17': true
+    },
+    {'1': 'album', '3': 8, '4': 1, '5': 9, '9': 3, '10': 'album', '17': true},
+    {
+      '1': 'track_number',
+      '3': 9,
+      '4': 1,
+      '5': 13,
+      '9': 4,
+      '10': 'trackNumber',
+      '17': true
+    },
+    {
+      '1': 'disc_number',
+      '3': 10,
+      '4': 1,
+      '5': 13,
+      '9': 5,
+      '10': 'discNumber',
+      '17': true
+    },
+    {
+      '1': 'release_date',
+      '3': 11,
+      '4': 1,
+      '5': 9,
+      '9': 6,
+      '10': 'releaseDate',
+      '17': true
+    },
+    {
+      '1': 'duration_ms',
+      '3': 12,
+      '4': 1,
+      '5': 4,
+      '9': 7,
+      '10': 'durationMs',
+      '17': true
+    },
+    {'1': 'codec', '3': 13, '4': 1, '5': 9, '10': 'codec'},
+    {'1': 'sample_rate', '3': 14, '4': 1, '5': 13, '10': 'sampleRate'},
+    {'1': 'bits_per_sample', '3': 15, '4': 1, '5': 13, '10': 'bitsPerSample'},
+    {
+      '1': 'date_added_unix_seconds',
+      '3': 16,
+      '4': 1,
+      '5': 3,
+      '10': 'dateAddedUnixSeconds'
+    },
+  ],
+  '8': [
+    {'1': '_title'},
+    {'1': '_track_artist'},
+    {'1': '_album_artist'},
+    {'1': '_album'},
+    {'1': '_track_number'},
+    {'1': '_disc_number'},
+    {'1': '_release_date'},
+    {'1': '_duration_ms'},
   ],
 };
 
@@ -96,7 +172,17 @@ const Track$json = {
 final $typed_data.Uint8List trackDescriptor = $convert.base64Decode(
     'CgVUcmFjaxIOCgJpZBgBIAEoA1ICaWQSEgoEcGF0aBgCIAEoCVIEcGF0aBIdCgpzaXplX2J5dG'
     'VzGAMgASgEUglzaXplQnl0ZXMSLgoTbW9kaWZpZWRfdW5peF9uYW5vcxgEIAEoA1IRbW9kaWZp'
-    'ZWRVbml4TmFub3M=');
+    'ZWRVbml4TmFub3MSGQoFdGl0bGUYBSABKAlIAFIFdGl0bGWIAQESJgoMdHJhY2tfYXJ0aXN0GA'
+    'YgASgJSAFSC3RyYWNrQXJ0aXN0iAEBEiYKDGFsYnVtX2FydGlzdBgHIAEoCUgCUgthbGJ1bUFy'
+    'dGlzdIgBARIZCgVhbGJ1bRgIIAEoCUgDUgVhbGJ1bYgBARImCgx0cmFja19udW1iZXIYCSABKA'
+    '1IBFILdHJhY2tOdW1iZXKIAQESJAoLZGlzY19udW1iZXIYCiABKA1IBVIKZGlzY051bWJlcogB'
+    'ARImCgxyZWxlYXNlX2RhdGUYCyABKAlIBlILcmVsZWFzZURhdGWIAQESJAoLZHVyYXRpb25fbX'
+    'MYDCABKARIB1IKZHVyYXRpb25Nc4gBARIUCgVjb2RlYxgNIAEoCVIFY29kZWMSHwoLc2FtcGxl'
+    'X3JhdGUYDiABKA1SCnNhbXBsZVJhdGUSJgoPYml0c19wZXJfc2FtcGxlGA8gASgNUg1iaXRzUG'
+    'VyU2FtcGxlEjUKF2RhdGVfYWRkZWRfdW5peF9zZWNvbmRzGBAgASgDUhRkYXRlQWRkZWRVbml4'
+    'U2Vjb25kc0IICgZfdGl0bGVCDwoNX3RyYWNrX2FydGlzdEIPCg1fYWxidW1fYXJ0aXN0QggKBl'
+    '9hbGJ1bUIPCg1fdHJhY2tfbnVtYmVyQg4KDF9kaXNjX251bWJlckIPCg1fcmVsZWFzZV9kYXRl'
+    'Qg4KDF9kdXJhdGlvbl9tcw==');
 
 @$core.Deprecated('Use startRequestDescriptor instead')
 const StartRequest$json = {

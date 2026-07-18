@@ -32,6 +32,18 @@ message Track {
   string path = 2;
   uint64 size_bytes = 3;
   int64 modified_unix_nanos = 4;
+  optional string title = 5;
+  optional string track_artist = 6;
+  optional string album_artist = 7;
+  optional string album = 8;
+  optional uint32 track_number = 9;
+  optional uint32 disc_number = 10;
+  optional string release_date = 11;
+  optional uint64 duration_ms = 12;
+  string codec = 13;
+  uint32 sample_rate = 14;
+  uint32 bits_per_sample = 15;
+  int64 date_added_unix_seconds = 16;
 }
 
 message StartRequest {

@@ -67,6 +67,34 @@ pub fn encodeListTracksResponse(
         try appendString(&encoded_track, allocator, 2, track.path);
         try appendUint64(&encoded_track, allocator, 3, track.size);
         try appendInt64(&encoded_track, allocator, 4, track.modified_ns);
+        if (track.title) |value| {
+            try appendString(&encoded_track, allocator, 5, value);
+        }
+        if (track.track_artist) |value| {
+            try appendString(&encoded_track, allocator, 6, value);
+        }
+        if (track.album_artist) |value| {
+            try appendString(&encoded_track, allocator, 7, value);
+        }
+        if (track.album) |value| {
+            try appendString(&encoded_track, allocator, 8, value);
+        }
+        if (track.track_number) |value| {
+            try appendUint64(&encoded_track, allocator, 9, value);
+        }
+        if (track.disc_number) |value| {
+            try appendUint64(&encoded_track, allocator, 10, value);
+        }
+        if (track.release_date) |value| {
+            try appendString(&encoded_track, allocator, 11, value);
+        }
+        if (track.duration_ms) |value| {
+            try appendUint64(&encoded_track, allocator, 12, value);
+        }
+        try appendString(&encoded_track, allocator, 13, track.codec);
+        try appendUint64(&encoded_track, allocator, 14, track.sample_rate);
+        try appendUint64(&encoded_track, allocator, 15, track.bits_per_sample);
+        try appendInt64(&encoded_track, allocator, 16, track.date_added);
         try appendMessage(&out, allocator, 1, encoded_track.items);
     }
 
@@ -418,18 +446,18 @@ test "encodes list tracks response" {
         .path = @constCast("/music/a.flac"),
         .size = 123,
         .modified_ns = 456,
-        .title = null,
-        .track_artist = null,
+        .title = @constCast("Song"),
+        .track_artist = @constCast("Artist"),
         .album_artist = null,
-        .album = null,
-        .track_number = null,
+        .album = @constCast("Album"),
+        .track_number = 3,
         .disc_number = null,
-        .release_date = null,
-        .duration_ms = null,
+        .release_date = @constCast("2026"),
+        .duration_ms = 42,
         .codec = @constCast("flac"),
-        .sample_rate = 44_100,
+        .sample_rate = 5,
         .bits_per_sample = 16,
-        .date_added = 0,
+        .date_added = 6,
     }};
     const encoded = try encodeListTracksResponse(std.testing.allocator, .{
         .tracks = &tracks,
@@ -439,11 +467,21 @@ test "encodes list tracks response" {
     defer std.testing.allocator.free(encoded);
 
     try std.testing.expectEqualStrings(
-        "\x0a\x16" ++
+        "\x0a\x42" ++
             "\x08\x07" ++
             "\x12\x0d/music/a.flac" ++
             "\x18\x7b" ++
             "\x20\xc8\x03" ++
+            "\x2a\x04Song" ++
+            "\x32\x06Artist" ++
+            "\x42\x05Album" ++
+            "\x48\x03" ++
+            "\x5a\x04\x32\x30\x32\x36" ++
+            "\x60\x2a" ++
+            "\x6a\x04flac" ++
+            "\x70\x05" ++
+            "\x78\x10" ++
+            "\x80\x01\x06" ++
             "\x12\x01\x37" ++
             "\x18\x09",
         encoded,
