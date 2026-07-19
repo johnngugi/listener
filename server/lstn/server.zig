@@ -25,6 +25,7 @@ pub fn run(
     var listener = try address.listen(io, .{
         .mode = Socket.Mode.stream,
         .protocol = Protocol.tcp,
+        .reuse_address = true,
     });
     defer listener.deinit(io);
 

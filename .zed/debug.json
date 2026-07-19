@@ -1,0 +1,15 @@
+[
+  {
+    "label": "Debug listener server",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "zig",
+      "args": ["build", "-Doptimize=Debug"],
+      "cwd": "$ZED_WORKTREE_ROOT/server"
+    },
+    "program": "$ZED_WORKTREE_ROOT/server/zig-out/bin/listener",
+    "cwd": "$ZED_WORKTREE_ROOT/server",
+    "sourceLanguages": ["zig"]
+  }
+]
