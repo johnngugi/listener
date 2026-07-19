@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const control = @import("../control.zig");
+const database = @import("../library/database.zig");
 const library = @import("../library/service.zig");
 const playback = @import("../playback.zig");
 const codec = @import("codec.zig");
@@ -183,7 +184,7 @@ pub const Server = struct {
             return self.sendStatus(call, status, decodeErrorDetail(err));
         };
 
-        const command = switch (request) {
+        var command = switch (request) {
             .command => |command| command,
             .watch => return self.sendStatus(
                 call,
@@ -249,6 +250,23 @@ pub const Server = struct {
                 );
             },
         };
+
+        var source: ?database.TrackSource = null;
+        defer if (source) |*resolved| resolved.deinit(allocator);
+
+        switch (command) {
+            .start => |*start| {
+                source = library_service.resolveTrack(
+                    allocator,
+                    start.track_id,
+                ) catch |err| {
+                    const mapped = mapLibraryError(err);
+                    return self.sendStatus(call, mapped.status, mapped.detail);
+                };
+                start.media_path = source.?.path;
+            },
+            else => {},
+        }
 
         const response = controller.execute(command) catch |err| {
             const mapped = mapExecuteError(err);
@@ -518,6 +536,10 @@ fn mapExecuteError(
 
 fn mapLibraryError(err: library.Error) MappedStatus {
     return switch (err) {
+        error.TrackNotFound => .{
+            .status = c.GRPC_STATUS_NOT_FOUND,
+            .detail = "track not found",
+        },
         error.ArtworkNotFound => .{
             .status = c.GRPC_STATUS_NOT_FOUND,
             .detail = "artwork not found",
@@ -577,6 +599,10 @@ test "maps malformed control requests to grpc statuses inside the adapter" {
 }
 
 test "maps library errors to grpc statuses inside the adapter" {
+    try std.testing.expectEqual(
+        @as(c.grpc_status_code, @intCast(c.GRPC_STATUS_NOT_FOUND)),
+        mapLibraryError(error.TrackNotFound).status,
+    );
     try std.testing.expectEqual(
         @as(c.grpc_status_code, @intCast(c.GRPC_STATUS_NOT_FOUND)),
         mapLibraryError(error.ArtworkNotFound).status,

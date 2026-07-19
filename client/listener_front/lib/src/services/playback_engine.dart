@@ -36,18 +36,9 @@ typedef _StartStreamNative =
       ffi.Uint64,
       ffi.Pointer<ffi.Uint8>,
       ffi.Size,
-      ffi.Pointer<ffi.Uint8>,
-      ffi.Size,
     );
 typedef _StartStreamDart =
-    int Function(
-      ffi.Pointer<Engine>,
-      int,
-      ffi.Pointer<ffi.Uint8>,
-      int,
-      ffi.Pointer<ffi.Uint8>,
-      int,
-    );
+    int Function(ffi.Pointer<Engine>, int, ffi.Pointer<ffi.Uint8>, int);
 
 typedef _StopNative = ffi.Uint32 Function(ffi.Pointer<Engine>);
 typedef _StopDart = int Function(ffi.Pointer<Engine>);
@@ -216,7 +207,6 @@ final class ListenerEngine {
 
   ListenerStatus startStream({
     required String playbackId,
-    required String mediaPath,
     int requestedStartFrame = 0,
   }) {
     if (_closed) {
@@ -233,29 +223,22 @@ final class ListenerEngine {
     }
 
     final playbackIdBytes = utf8.encode(playbackId);
-    final mediaPathBytes = utf8.encode(mediaPath);
     final playbackIdPtr = malloc<ffi.Uint8>(playbackIdBytes.length);
-    final mediaPathPtr = malloc<ffi.Uint8>(mediaPathBytes.length);
 
     try {
       playbackIdPtr
           .asTypedList(playbackIdBytes.length)
           .setAll(0, playbackIdBytes);
-      mediaPathPtr.asTypedList(mediaPathBytes.length).setAll(0, mediaPathBytes);
-
       final code = _startStream(
         _engine,
         requestedStartFrame,
         playbackIdPtr,
         playbackIdBytes.length,
-        mediaPathPtr,
-        mediaPathBytes.length,
       );
 
       return ListenerStatus.fromCode(code);
     } finally {
       malloc.free(playbackIdPtr);
-      malloc.free(mediaPathPtr);
     }
   }
 

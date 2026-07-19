@@ -44,7 +44,7 @@ pub fn encodeResponse(
         .status => |status| {
             try appendString(&out, allocator, 1, status.playback_id);
             try appendEnum(&out, allocator, 2, status.state);
-            try appendString(&out, allocator, 3, status.media_path);
+            try appendString(&out, allocator, 3, status.track_id);
             try appendUint64(&out, allocator, 4, status.current_frame);
             try appendUint64(&out, allocator, 5, status.generation_id);
         },
@@ -64,40 +64,39 @@ pub fn encodeListTracksResponse(
         var encoded_track: std.ArrayList(u8) = .empty;
         defer encoded_track.deinit(allocator);
 
-        try appendInt64(&encoded_track, allocator, 1, track.id);
-        try appendString(&encoded_track, allocator, 2, track.path);
-        try appendUint64(&encoded_track, allocator, 3, track.size);
-        try appendInt64(&encoded_track, allocator, 4, track.modified_ns);
+        try appendString(&encoded_track, allocator, 1, track.id);
+        try appendUint64(&encoded_track, allocator, 2, track.size);
+        try appendInt64(&encoded_track, allocator, 3, track.modified_ns);
         if (track.title) |value| {
-            try appendString(&encoded_track, allocator, 5, value);
+            try appendString(&encoded_track, allocator, 4, value);
         }
         if (track.track_artist) |value| {
-            try appendString(&encoded_track, allocator, 6, value);
+            try appendString(&encoded_track, allocator, 5, value);
         }
         if (track.album_artist) |value| {
-            try appendString(&encoded_track, allocator, 7, value);
+            try appendString(&encoded_track, allocator, 6, value);
         }
         if (track.album) |value| {
-            try appendString(&encoded_track, allocator, 8, value);
+            try appendString(&encoded_track, allocator, 7, value);
         }
         if (track.track_number) |value| {
-            try appendUint64(&encoded_track, allocator, 9, value);
+            try appendUint64(&encoded_track, allocator, 8, value);
         }
         if (track.disc_number) |value| {
-            try appendUint64(&encoded_track, allocator, 10, value);
+            try appendUint64(&encoded_track, allocator, 9, value);
         }
         if (track.release_date) |value| {
-            try appendString(&encoded_track, allocator, 11, value);
+            try appendString(&encoded_track, allocator, 10, value);
         }
         if (track.duration_ms) |value| {
-            try appendUint64(&encoded_track, allocator, 12, value);
+            try appendUint64(&encoded_track, allocator, 11, value);
         }
-        try appendString(&encoded_track, allocator, 13, track.codec);
-        try appendUint64(&encoded_track, allocator, 14, track.sample_rate);
-        try appendUint64(&encoded_track, allocator, 15, track.bits_per_sample);
-        try appendInt64(&encoded_track, allocator, 16, track.date_added);
+        try appendString(&encoded_track, allocator, 12, track.codec);
+        try appendUint64(&encoded_track, allocator, 13, track.sample_rate);
+        try appendUint64(&encoded_track, allocator, 14, track.bits_per_sample);
+        try appendInt64(&encoded_track, allocator, 15, track.date_added);
         if (track.artwork_id) |value| {
-            try appendInt64(&encoded_track, allocator, 17, value);
+            try appendInt64(&encoded_track, allocator, 16, value);
         }
         try appendMessage(&out, allocator, 1, encoded_track.items);
     }
@@ -106,7 +105,7 @@ pub fn encodeListTracksResponse(
         const token = try std.fmt.allocPrint(
             allocator,
             "{d}",
-            .{page.tracks[page.tracks.len - 1].id},
+            .{page.tracks[page.tracks.len - 1].cursor},
         );
         defer allocator.free(token);
         try appendString(&out, allocator, 2, token);
@@ -252,6 +251,7 @@ fn playbackStateValue(state: control.PlaybackState) u64 {
 
 fn decodeStart(message: []const u8) DecodeError!control.Start {
     var out = control.Start{
+        .track_id = "",
         .media_path = "",
         .start_frame = 0,
     };
@@ -259,13 +259,13 @@ fn decodeStart(message: []const u8) DecodeError!control.Start {
     var reader = ProtoReader.init(message);
     while (try reader.next()) |field| {
         switch (field.number) {
-            1 => out.media_path = try field.string(),
+            1 => out.track_id = try field.string(),
             2 => out.start_frame = try field.uint64(),
             else => try field.skip(),
         }
     }
 
-    try validateRequiredString(out.media_path);
+    try validateRequiredString(out.track_id);
     return out;
 }
 
@@ -452,7 +452,7 @@ fn decodeWireType(value: u3) DecodeError!WireType {
 
 test "decodes start request" {
     const message =
-        "\x0a\x11/tmp/example.flac" ++
+        "\x0a\x24d9428888-122b-4e3f-8f74-8f7e6b3f5c21" ++
         "\x10\x96\x01";
 
     const request = try decodeRequest(control.Method.start.fullName(), message);
@@ -460,8 +460,8 @@ test "decodes start request" {
     try std.testing.expect(request == .command);
     try std.testing.expect(request.command == .start);
     try std.testing.expectEqualStrings(
-        "/tmp/example.flac",
-        request.command.start.media_path,
+        "d9428888-122b-4e3f-8f74-8f7e6b3f5c21",
+        request.command.start.track_id,
     );
     try std.testing.expectEqual(@as(u64, 150), request.command.start.start_frame);
 }
@@ -509,7 +509,8 @@ test "encodes get artwork response" {
 
 test "encodes list tracks response" {
     var tracks = [_]database.Track{.{
-        .id = 7,
+        .id = @constCast("d9428888-122b-4e3f-8f74-8f7e6b3f5c21"),
+        .cursor = 7,
         .path = @constCast("/music/a.flac"),
         .size = 123,
         .modified_ns = 456,
@@ -535,22 +536,21 @@ test "encodes list tracks response" {
     defer std.testing.allocator.free(encoded);
 
     try std.testing.expectEqualStrings(
-        "\x0a\x45" ++
-            "\x08\x07" ++
-            "\x12\x0d/music/a.flac" ++
-            "\x18\x7b" ++
-            "\x20\xc8\x03" ++
-            "\x2a\x04Song" ++
-            "\x32\x06Artist" ++
-            "\x42\x05Album" ++
-            "\x48\x03" ++
-            "\x5a\x04\x32\x30\x32\x36" ++
-            "\x60\x2a" ++
-            "\x6a\x04flac" ++
-            "\x70\x05" ++
-            "\x78\x10" ++
-            "\x80\x01\x06" ++
-            "\x88\x01\x0b" ++
+        "\x0a\x59" ++
+            "\x0a\x24d9428888-122b-4e3f-8f74-8f7e6b3f5c21" ++
+            "\x10\x7b" ++
+            "\x18\xc8\x03" ++
+            "\x22\x04Song" ++
+            "\x2a\x06Artist" ++
+            "\x3a\x05Album" ++
+            "\x40\x03" ++
+            "\x52\x04\x32\x30\x32\x36" ++
+            "\x58\x2a" ++
+            "\x62\x04flac" ++
+            "\x68\x05" ++
+            "\x70\x10" ++
+            "\x78\x06" ++
+            "\x80\x01\x0b" ++
             "\x12\x01\x37" ++
             "\x18\x09",
         encoded,
@@ -594,7 +594,7 @@ test "encodes status response" {
         .status = .{
             .playback_id = "playback-1",
             .state = .playing,
-            .media_path = "/tmp/song.flac",
+            .track_id = "d9428888-122b-4e3f-8f74-8f7e6b3f5c21",
             .current_frame = 4096,
             .generation_id = 2,
         },
@@ -604,7 +604,7 @@ test "encodes status response" {
     try std.testing.expectEqualStrings(
         "\x0a\x0aplayback-1" ++
             "\x10\x03" ++
-            "\x1a\x0e/tmp/song.flac" ++
+            "\x1a\x24d9428888-122b-4e3f-8f74-8f7e6b3f5c21" ++
             "\x20\x80\x20" ++
             "\x28\x02",
         encoded,

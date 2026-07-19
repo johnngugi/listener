@@ -33,6 +33,7 @@ const schema =
     \\);
     \\CREATE TABLE IF NOT EXISTS tracks (
     \\    id INTEGER PRIMARY KEY,
+    \\    uuid TEXT NOT NULL UNIQUE CHECK (length(uuid) = 36),
     \\    root_id INTEGER NOT NULL REFERENCES library_roots(id) ON DELETE CASCADE,
     \\    path TEXT NOT NULL,
     \\    size INTEGER NOT NULL CHECK (size >= 0),
@@ -152,9 +153,9 @@ const Sqlite = struct {
                 "root_id, path, size, modified_ns, title, track_artist, " ++
                 "album_artist, album, track_number, disc_number, release_date, " ++
                 "duration_ms, codec, sample_rate, bits_per_sample, artwork_id, " ++
-                "last_seen_scan_id" ++
+                "last_seen_scan_id, uuid" ++
                 ") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, " ++
-                "?12, ?13, ?14, ?15, ?16, ?17) " ++
+                "?12, ?13, ?14, ?15, ?16, ?17, ?18) " ++
                 "ON CONFLICT(root_id, path) DO UPDATE SET " ++
                 "size=excluded.size, modified_ns=excluded.modified_ns, " ++
                 "title=excluded.title, track_artist=excluded.track_artist, " ++
@@ -186,6 +187,7 @@ const Sqlite = struct {
             try stmt.bindI64(15, file.bits_per_sample);
             try stmt.bindOptionalI64(16, file.artwork_id);
             try stmt.bindI64(17, scan.id);
+            try stmt.bindText(18, &file.track_id);
 
             if (try stmt.step() != .done) return error.DatabaseOperationFailed;
             try stmt.reset();
@@ -344,7 +346,7 @@ const Sqlite = struct {
             "SELECT id, path, size, modified_ns, title, track_artist, " ++
                 "album_artist, album, track_number, disc_number, release_date, " ++
                 "duration_ms, codec, sample_rate, bits_per_sample, date_added, " ++
-                "artwork_id " ++
+                "artwork_id, uuid " ++
                 "FROM tracks " ++
                 "WHERE id>?1 ORDER BY id LIMIT ?2",
         );
@@ -360,6 +362,9 @@ const Sqlite = struct {
         }
 
         while (try stmt.step() == .row) {
+            const id = try stmt.columnTextAlloc(allocator, 17);
+            errdefer allocator.free(id);
+
             const path = try stmt.columnTextAlloc(allocator, 1);
             errdefer allocator.free(path);
 
@@ -390,7 +395,8 @@ const Sqlite = struct {
             }
 
             tracks.append(allocator, .{
-                .id = stmt.columnI64(0),
+                .id = id,
+                .cursor = stmt.columnI64(0),
                 .path = path,
                 .size = @intCast(size),
                 .modified_ns = stmt.columnI64(3),
@@ -423,6 +429,22 @@ const Sqlite = struct {
             .total_size = @intCast(total_count),
             .has_more = has_more,
         };
+    }
+
+    fn getTrackSource(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        track_id: []const u8,
+    ) database.Error!?database.TrackSource {
+        const self = fromContext(context);
+
+        var stmt = try self.prepare("SELECT path FROM tracks WHERE uuid=?1");
+        defer stmt.deinit();
+
+        try stmt.bindText(1, track_id);
+        if (try stmt.step() == .done) return null;
+
+        return .{ .path = try stmt.columnTextAlloc(allocator, 0) };
     }
 
     fn requireOpenScan(self: *Sqlite, scan: database.Scan) database.Error!void {
@@ -595,6 +617,7 @@ const vtable: database.Database.VTable = .{
     .finish_scan = Sqlite.finishScan,
     .abort_scan = Sqlite.abortScan,
     .list_tracks = Sqlite.listTracks,
+    .get_track_source = Sqlite.getTrackSource,
 };
 
 pub fn open(
@@ -636,7 +659,11 @@ fn mapError(result: c_int) database.Error {
 }
 
 fn testFile(path: []const u8, size: u64, modified_ns: i64) database.ScannedFile {
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(path, &digest, .{});
+
     return .{
+        .track_id = database.trackIdFromBytes(digest[0..16].*),
         .path = path,
         .size = size,
         .modified_ns = modified_ns,
@@ -756,7 +783,7 @@ test "lists tracks with stable keyset pagination" {
     try std.testing.expect(first.has_more);
     try std.testing.expectEqualStrings("/music/one.flac", first.tracks[0].path);
 
-    var second = try db.listTracks(std.testing.allocator, first.tracks[1].id, 2);
+    var second = try db.listTracks(std.testing.allocator, first.tracks[1].cursor, 2);
     defer second.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), second.tracks.len);
     try std.testing.expect(!second.has_more);
@@ -786,6 +813,11 @@ test "persists extracted metadata and preserves date added on update" {
 
     var first_page = try db.listTracks(std.testing.allocator, 0, 10);
     const date_added = first_page.tracks[0].date_added;
+
+    var track_id: [36]u8 = undefined;
+    @memcpy(&track_id, first_page.tracks[0].id);
+
+    try std.testing.expect(database.isTrackId(&track_id));
     try std.testing.expectEqualStrings("Song", first_page.tracks[0].title.?);
     try std.testing.expectEqualStrings("Track Artist", first_page.tracks[0].track_artist.?);
     try std.testing.expectEqualStrings("Album Artist", first_page.tracks[0].album_artist.?);
@@ -810,4 +842,9 @@ test "persists extracted metadata and preserves date added on update" {
     defer second_page.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("Updated Song", second_page.tracks[0].title.?);
     try std.testing.expectEqual(date_added, second_page.tracks[0].date_added);
+    try std.testing.expectEqualStrings(&track_id, second_page.tracks[0].id);
+
+    var source = (try db.getTrackSource(std.testing.allocator, &track_id)).?;
+    defer source.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("/music/song.flac", source.path);
 }

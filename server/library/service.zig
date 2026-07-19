@@ -47,6 +47,7 @@ pub const Error = database.Error || error{
     ArtworkNotFound,
     InvalidPageSize,
     InvalidPageToken,
+    TrackNotFound,
 };
 
 pub const Service = struct {
@@ -122,6 +123,16 @@ pub const Service = struct {
             .height = artworkResult.height,
             .data = data,
         };
+    }
+
+    pub fn resolveTrack(
+        self: Service,
+        allocator: std.mem.Allocator,
+        track_id: []const u8,
+    ) Error!database.TrackSource {
+        if (!database.isTrackId(track_id)) return error.TrackNotFound;
+        return (try self.db.getTrackSource(allocator, track_id)) orelse
+            error.TrackNotFound;
     }
 };
 

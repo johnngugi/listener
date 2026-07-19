@@ -324,8 +324,7 @@ class ListTracksResponse extends $pb.GeneratedMessage {
 
 class Track extends $pb.GeneratedMessage {
   factory Track({
-    $fixnum.Int64? id,
-    $core.String? path,
+    $core.String? id,
     $fixnum.Int64? sizeBytes,
     $fixnum.Int64? modifiedUnixNanos,
     $core.String? title,
@@ -344,7 +343,6 @@ class Track extends $pb.GeneratedMessage {
   }) {
     final result = create();
     if (id != null) result.id = id;
-    if (path != null) result.path = path;
     if (sizeBytes != null) result.sizeBytes = sizeBytes;
     if (modifiedUnixNanos != null) result.modifiedUnixNanos = modifiedUnixNanos;
     if (title != null) result.title = title;
@@ -378,31 +376,29 @@ class Track extends $pb.GeneratedMessage {
       package:
           const $pb.PackageName(_omitMessageNames ? '' : 'listener.control.v1'),
       createEmptyInstance: create)
-    ..aInt64(1, _omitFieldNames ? '' : 'id')
-    ..aOS(2, _omitFieldNames ? '' : 'path')
+    ..aOS(1, _omitFieldNames ? '' : 'id')
     ..a<$fixnum.Int64>(
-        3, _omitFieldNames ? '' : 'sizeBytes', $pb.PbFieldType.OU6,
+        2, _omitFieldNames ? '' : 'sizeBytes', $pb.PbFieldType.OU6,
         defaultOrMaker: $fixnum.Int64.ZERO)
-    ..aInt64(4, _omitFieldNames ? '' : 'modifiedUnixNanos')
-    ..aOS(5, _omitFieldNames ? '' : 'title')
-    ..aOS(6, _omitFieldNames ? '' : 'trackArtist')
-    ..aOS(7, _omitFieldNames ? '' : 'albumArtist')
-    ..aOS(8, _omitFieldNames ? '' : 'album')
-    ..aI(9, _omitFieldNames ? '' : 'trackNumber',
+    ..aInt64(3, _omitFieldNames ? '' : 'modifiedUnixNanos')
+    ..aOS(4, _omitFieldNames ? '' : 'title')
+    ..aOS(5, _omitFieldNames ? '' : 'trackArtist')
+    ..aOS(6, _omitFieldNames ? '' : 'albumArtist')
+    ..aOS(7, _omitFieldNames ? '' : 'album')
+    ..aI(8, _omitFieldNames ? '' : 'trackNumber',
         fieldType: $pb.PbFieldType.OU3)
-    ..aI(10, _omitFieldNames ? '' : 'discNumber',
-        fieldType: $pb.PbFieldType.OU3)
-    ..aOS(11, _omitFieldNames ? '' : 'releaseDate')
+    ..aI(9, _omitFieldNames ? '' : 'discNumber', fieldType: $pb.PbFieldType.OU3)
+    ..aOS(10, _omitFieldNames ? '' : 'releaseDate')
     ..a<$fixnum.Int64>(
-        12, _omitFieldNames ? '' : 'durationMs', $pb.PbFieldType.OU6,
+        11, _omitFieldNames ? '' : 'durationMs', $pb.PbFieldType.OU6,
         defaultOrMaker: $fixnum.Int64.ZERO)
-    ..aOS(13, _omitFieldNames ? '' : 'codec')
-    ..aI(14, _omitFieldNames ? '' : 'sampleRate',
+    ..aOS(12, _omitFieldNames ? '' : 'codec')
+    ..aI(13, _omitFieldNames ? '' : 'sampleRate',
         fieldType: $pb.PbFieldType.OU3)
-    ..aI(15, _omitFieldNames ? '' : 'bitsPerSample',
+    ..aI(14, _omitFieldNames ? '' : 'bitsPerSample',
         fieldType: $pb.PbFieldType.OU3)
-    ..aInt64(16, _omitFieldNames ? '' : 'dateAddedUnixSeconds')
-    ..aInt64(17, _omitFieldNames ? '' : 'artworkId')
+    ..aInt64(15, _omitFieldNames ? '' : 'dateAddedUnixSeconds')
+    ..aInt64(16, _omitFieldNames ? '' : 'artworkId')
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -424,166 +420,157 @@ class Track extends $pb.GeneratedMessage {
   static Track? _defaultInstance;
 
   @$pb.TagNumber(1)
-  $fixnum.Int64 get id => $_getI64(0);
+  $core.String get id => $_getSZ(0);
   @$pb.TagNumber(1)
-  set id($fixnum.Int64 value) => $_setInt64(0, value);
+  set id($core.String value) => $_setString(0, value);
   @$pb.TagNumber(1)
   $core.bool hasId() => $_has(0);
   @$pb.TagNumber(1)
   void clearId() => $_clearField(1);
 
   @$pb.TagNumber(2)
-  $core.String get path => $_getSZ(1);
+  $fixnum.Int64 get sizeBytes => $_getI64(1);
   @$pb.TagNumber(2)
-  set path($core.String value) => $_setString(1, value);
+  set sizeBytes($fixnum.Int64 value) => $_setInt64(1, value);
   @$pb.TagNumber(2)
-  $core.bool hasPath() => $_has(1);
+  $core.bool hasSizeBytes() => $_has(1);
   @$pb.TagNumber(2)
-  void clearPath() => $_clearField(2);
+  void clearSizeBytes() => $_clearField(2);
 
   @$pb.TagNumber(3)
-  $fixnum.Int64 get sizeBytes => $_getI64(2);
+  $fixnum.Int64 get modifiedUnixNanos => $_getI64(2);
   @$pb.TagNumber(3)
-  set sizeBytes($fixnum.Int64 value) => $_setInt64(2, value);
+  set modifiedUnixNanos($fixnum.Int64 value) => $_setInt64(2, value);
   @$pb.TagNumber(3)
-  $core.bool hasSizeBytes() => $_has(2);
+  $core.bool hasModifiedUnixNanos() => $_has(2);
   @$pb.TagNumber(3)
-  void clearSizeBytes() => $_clearField(3);
+  void clearModifiedUnixNanos() => $_clearField(3);
 
   @$pb.TagNumber(4)
-  $fixnum.Int64 get modifiedUnixNanos => $_getI64(3);
+  $core.String get title => $_getSZ(3);
   @$pb.TagNumber(4)
-  set modifiedUnixNanos($fixnum.Int64 value) => $_setInt64(3, value);
+  set title($core.String value) => $_setString(3, value);
   @$pb.TagNumber(4)
-  $core.bool hasModifiedUnixNanos() => $_has(3);
+  $core.bool hasTitle() => $_has(3);
   @$pb.TagNumber(4)
-  void clearModifiedUnixNanos() => $_clearField(4);
+  void clearTitle() => $_clearField(4);
 
   @$pb.TagNumber(5)
-  $core.String get title => $_getSZ(4);
+  $core.String get trackArtist => $_getSZ(4);
   @$pb.TagNumber(5)
-  set title($core.String value) => $_setString(4, value);
+  set trackArtist($core.String value) => $_setString(4, value);
   @$pb.TagNumber(5)
-  $core.bool hasTitle() => $_has(4);
+  $core.bool hasTrackArtist() => $_has(4);
   @$pb.TagNumber(5)
-  void clearTitle() => $_clearField(5);
+  void clearTrackArtist() => $_clearField(5);
 
   @$pb.TagNumber(6)
-  $core.String get trackArtist => $_getSZ(5);
+  $core.String get albumArtist => $_getSZ(5);
   @$pb.TagNumber(6)
-  set trackArtist($core.String value) => $_setString(5, value);
+  set albumArtist($core.String value) => $_setString(5, value);
   @$pb.TagNumber(6)
-  $core.bool hasTrackArtist() => $_has(5);
+  $core.bool hasAlbumArtist() => $_has(5);
   @$pb.TagNumber(6)
-  void clearTrackArtist() => $_clearField(6);
+  void clearAlbumArtist() => $_clearField(6);
 
   @$pb.TagNumber(7)
-  $core.String get albumArtist => $_getSZ(6);
+  $core.String get album => $_getSZ(6);
   @$pb.TagNumber(7)
-  set albumArtist($core.String value) => $_setString(6, value);
+  set album($core.String value) => $_setString(6, value);
   @$pb.TagNumber(7)
-  $core.bool hasAlbumArtist() => $_has(6);
+  $core.bool hasAlbum() => $_has(6);
   @$pb.TagNumber(7)
-  void clearAlbumArtist() => $_clearField(7);
+  void clearAlbum() => $_clearField(7);
 
   @$pb.TagNumber(8)
-  $core.String get album => $_getSZ(7);
+  $core.int get trackNumber => $_getIZ(7);
   @$pb.TagNumber(8)
-  set album($core.String value) => $_setString(7, value);
+  set trackNumber($core.int value) => $_setUnsignedInt32(7, value);
   @$pb.TagNumber(8)
-  $core.bool hasAlbum() => $_has(7);
+  $core.bool hasTrackNumber() => $_has(7);
   @$pb.TagNumber(8)
-  void clearAlbum() => $_clearField(8);
+  void clearTrackNumber() => $_clearField(8);
 
   @$pb.TagNumber(9)
-  $core.int get trackNumber => $_getIZ(8);
+  $core.int get discNumber => $_getIZ(8);
   @$pb.TagNumber(9)
-  set trackNumber($core.int value) => $_setUnsignedInt32(8, value);
+  set discNumber($core.int value) => $_setUnsignedInt32(8, value);
   @$pb.TagNumber(9)
-  $core.bool hasTrackNumber() => $_has(8);
+  $core.bool hasDiscNumber() => $_has(8);
   @$pb.TagNumber(9)
-  void clearTrackNumber() => $_clearField(9);
+  void clearDiscNumber() => $_clearField(9);
 
   @$pb.TagNumber(10)
-  $core.int get discNumber => $_getIZ(9);
+  $core.String get releaseDate => $_getSZ(9);
   @$pb.TagNumber(10)
-  set discNumber($core.int value) => $_setUnsignedInt32(9, value);
+  set releaseDate($core.String value) => $_setString(9, value);
   @$pb.TagNumber(10)
-  $core.bool hasDiscNumber() => $_has(9);
+  $core.bool hasReleaseDate() => $_has(9);
   @$pb.TagNumber(10)
-  void clearDiscNumber() => $_clearField(10);
+  void clearReleaseDate() => $_clearField(10);
 
   @$pb.TagNumber(11)
-  $core.String get releaseDate => $_getSZ(10);
+  $fixnum.Int64 get durationMs => $_getI64(10);
   @$pb.TagNumber(11)
-  set releaseDate($core.String value) => $_setString(10, value);
+  set durationMs($fixnum.Int64 value) => $_setInt64(10, value);
   @$pb.TagNumber(11)
-  $core.bool hasReleaseDate() => $_has(10);
+  $core.bool hasDurationMs() => $_has(10);
   @$pb.TagNumber(11)
-  void clearReleaseDate() => $_clearField(11);
+  void clearDurationMs() => $_clearField(11);
 
   @$pb.TagNumber(12)
-  $fixnum.Int64 get durationMs => $_getI64(11);
+  $core.String get codec => $_getSZ(11);
   @$pb.TagNumber(12)
-  set durationMs($fixnum.Int64 value) => $_setInt64(11, value);
+  set codec($core.String value) => $_setString(11, value);
   @$pb.TagNumber(12)
-  $core.bool hasDurationMs() => $_has(11);
+  $core.bool hasCodec() => $_has(11);
   @$pb.TagNumber(12)
-  void clearDurationMs() => $_clearField(12);
+  void clearCodec() => $_clearField(12);
 
   @$pb.TagNumber(13)
-  $core.String get codec => $_getSZ(12);
+  $core.int get sampleRate => $_getIZ(12);
   @$pb.TagNumber(13)
-  set codec($core.String value) => $_setString(12, value);
+  set sampleRate($core.int value) => $_setUnsignedInt32(12, value);
   @$pb.TagNumber(13)
-  $core.bool hasCodec() => $_has(12);
+  $core.bool hasSampleRate() => $_has(12);
   @$pb.TagNumber(13)
-  void clearCodec() => $_clearField(13);
+  void clearSampleRate() => $_clearField(13);
 
   @$pb.TagNumber(14)
-  $core.int get sampleRate => $_getIZ(13);
+  $core.int get bitsPerSample => $_getIZ(13);
   @$pb.TagNumber(14)
-  set sampleRate($core.int value) => $_setUnsignedInt32(13, value);
+  set bitsPerSample($core.int value) => $_setUnsignedInt32(13, value);
   @$pb.TagNumber(14)
-  $core.bool hasSampleRate() => $_has(13);
+  $core.bool hasBitsPerSample() => $_has(13);
   @$pb.TagNumber(14)
-  void clearSampleRate() => $_clearField(14);
+  void clearBitsPerSample() => $_clearField(14);
 
   @$pb.TagNumber(15)
-  $core.int get bitsPerSample => $_getIZ(14);
+  $fixnum.Int64 get dateAddedUnixSeconds => $_getI64(14);
   @$pb.TagNumber(15)
-  set bitsPerSample($core.int value) => $_setUnsignedInt32(14, value);
+  set dateAddedUnixSeconds($fixnum.Int64 value) => $_setInt64(14, value);
   @$pb.TagNumber(15)
-  $core.bool hasBitsPerSample() => $_has(14);
+  $core.bool hasDateAddedUnixSeconds() => $_has(14);
   @$pb.TagNumber(15)
-  void clearBitsPerSample() => $_clearField(15);
+  void clearDateAddedUnixSeconds() => $_clearField(15);
 
   @$pb.TagNumber(16)
-  $fixnum.Int64 get dateAddedUnixSeconds => $_getI64(15);
+  $fixnum.Int64 get artworkId => $_getI64(15);
   @$pb.TagNumber(16)
-  set dateAddedUnixSeconds($fixnum.Int64 value) => $_setInt64(15, value);
+  set artworkId($fixnum.Int64 value) => $_setInt64(15, value);
   @$pb.TagNumber(16)
-  $core.bool hasDateAddedUnixSeconds() => $_has(15);
+  $core.bool hasArtworkId() => $_has(15);
   @$pb.TagNumber(16)
-  void clearDateAddedUnixSeconds() => $_clearField(16);
-
-  @$pb.TagNumber(17)
-  $fixnum.Int64 get artworkId => $_getI64(16);
-  @$pb.TagNumber(17)
-  set artworkId($fixnum.Int64 value) => $_setInt64(16, value);
-  @$pb.TagNumber(17)
-  $core.bool hasArtworkId() => $_has(16);
-  @$pb.TagNumber(17)
-  void clearArtworkId() => $_clearField(17);
+  void clearArtworkId() => $_clearField(16);
 }
 
 class StartRequest extends $pb.GeneratedMessage {
   factory StartRequest({
-    $core.String? mediaPath,
+    $core.String? trackId,
     $fixnum.Int64? startFrame,
   }) {
     final result = create();
-    if (mediaPath != null) result.mediaPath = mediaPath;
+    if (trackId != null) result.trackId = trackId;
     if (startFrame != null) result.startFrame = startFrame;
     return result;
   }
@@ -602,7 +589,7 @@ class StartRequest extends $pb.GeneratedMessage {
       package:
           const $pb.PackageName(_omitMessageNames ? '' : 'listener.control.v1'),
       createEmptyInstance: create)
-    ..aOS(1, _omitFieldNames ? '' : 'mediaPath')
+    ..aOS(1, _omitFieldNames ? '' : 'trackId')
     ..a<$fixnum.Int64>(
         2, _omitFieldNames ? '' : 'startFrame', $pb.PbFieldType.OU6,
         defaultOrMaker: $fixnum.Int64.ZERO)
@@ -628,13 +615,13 @@ class StartRequest extends $pb.GeneratedMessage {
   static StartRequest? _defaultInstance;
 
   @$pb.TagNumber(1)
-  $core.String get mediaPath => $_getSZ(0);
+  $core.String get trackId => $_getSZ(0);
   @$pb.TagNumber(1)
-  set mediaPath($core.String value) => $_setString(0, value);
+  set trackId($core.String value) => $_setString(0, value);
   @$pb.TagNumber(1)
-  $core.bool hasMediaPath() => $_has(0);
+  $core.bool hasTrackId() => $_has(0);
   @$pb.TagNumber(1)
-  void clearMediaPath() => $_clearField(1);
+  void clearTrackId() => $_clearField(1);
 
   @$pb.TagNumber(2)
   $fixnum.Int64 get startFrame => $_getI64(1);
@@ -1129,14 +1116,14 @@ class StatusResponse extends $pb.GeneratedMessage {
   factory StatusResponse({
     $core.String? playbackId,
     PlaybackState? state,
-    $core.String? mediaPath,
+    $core.String? trackId,
     $fixnum.Int64? currentFrame,
     $fixnum.Int64? generationId,
   }) {
     final result = create();
     if (playbackId != null) result.playbackId = playbackId;
     if (state != null) result.state = state;
-    if (mediaPath != null) result.mediaPath = mediaPath;
+    if (trackId != null) result.trackId = trackId;
     if (currentFrame != null) result.currentFrame = currentFrame;
     if (generationId != null) result.generationId = generationId;
     return result;
@@ -1159,7 +1146,7 @@ class StatusResponse extends $pb.GeneratedMessage {
     ..aOS(1, _omitFieldNames ? '' : 'playbackId')
     ..aE<PlaybackState>(2, _omitFieldNames ? '' : 'state',
         enumValues: PlaybackState.values)
-    ..aOS(3, _omitFieldNames ? '' : 'mediaPath')
+    ..aOS(3, _omitFieldNames ? '' : 'trackId')
     ..a<$fixnum.Int64>(
         4, _omitFieldNames ? '' : 'currentFrame', $pb.PbFieldType.OU6,
         defaultOrMaker: $fixnum.Int64.ZERO)
@@ -1206,13 +1193,13 @@ class StatusResponse extends $pb.GeneratedMessage {
   void clearState() => $_clearField(2);
 
   @$pb.TagNumber(3)
-  $core.String get mediaPath => $_getSZ(2);
+  $core.String get trackId => $_getSZ(2);
   @$pb.TagNumber(3)
-  set mediaPath($core.String value) => $_setString(2, value);
+  set trackId($core.String value) => $_setString(2, value);
   @$pb.TagNumber(3)
-  $core.bool hasMediaPath() => $_has(2);
+  $core.bool hasTrackId() => $_has(2);
   @$pb.TagNumber(3)
-  void clearMediaPath() => $_clearField(3);
+  void clearTrackId() => $_clearField(3);
 
   @$pb.TagNumber(4)
   $fixnum.Int64 get currentFrame => $_getI64(3);

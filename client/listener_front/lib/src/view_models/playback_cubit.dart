@@ -5,10 +5,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:listener_front/src/generated/listener/v1/listener.pbgrpc.dart'
     as control;
 import 'package:listener_front/src/models/playback_state.dart';
+import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/services/playback_engine.dart';
 
-const hardcodedMediaPath =
-    '/Users/johnngugi/Music/Library/Sauti Sol/Midnight Train [44_1kHz · 24bit]/01 - Intro.flac';
 const _controlCallTimeout = Duration(seconds: 5);
 
 class PlaybackCubit extends Cubit<PlaybackState> {
@@ -30,32 +29,41 @@ class PlaybackCubit extends Cubit<PlaybackState> {
 
   String? _playbackId;
 
-  Future<void> play() async {
+  Future<void> play([Track? selectedTrack]) async {
     if (state.status == PlaybackStatus.starting ||
         state.status == PlaybackStatus.playing) {
       return;
     }
 
-    emit(PlaybackState(track: state.track, status: PlaybackStatus.starting));
+    final track = selectedTrack ?? state.track;
+    if (track == null) {
+      emit(
+        const PlaybackState(
+          track: null,
+          status: PlaybackStatus.error,
+          errorMessage: 'Select a track to play',
+        ),
+      );
+      return;
+    }
+
+    emit(PlaybackState(track: track, status: PlaybackStatus.starting));
 
     String? playbackId;
     try {
       final response = await _control.start(
-        control.StartRequest(mediaPath: hardcodedMediaPath),
+        control.StartRequest(trackId: track.id),
         options: CallOptions(timeout: _controlCallTimeout),
       );
       playbackId = response.playbackId;
 
-      final status = _engine.startStream(
-        playbackId: playbackId,
-        mediaPath: hardcodedMediaPath,
-      );
+      final status = _engine.startStream(playbackId: playbackId);
       if (status != ListenerStatus.ok) {
         throw StateError('Engine start failed: ${status.name}');
       }
 
       _playbackId = playbackId;
-      emit(PlaybackState(track: state.track, status: PlaybackStatus.playing));
+      emit(PlaybackState(track: track, status: PlaybackStatus.playing));
     } catch (error) {
       if (playbackId != null && playbackId.isNotEmpty) {
         try {

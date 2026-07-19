@@ -7,7 +7,7 @@ const selected_output = @import("selected_output");
 const stdout = @import("stdout");
 
 pub export fn listener_engine_abi_version() u32 {
-    return 1;
+    return 2;
 }
 
 pub export fn listener_engine_create() ?*Engine {
@@ -52,17 +52,13 @@ pub export fn listener_engine_start_stream(
     requested_start_frame: u64,
     playback_id_ptr: ?[*]const u8,
     playback_id_len: usize,
-    media_path_ptr: ?[*]const u8,
-    media_path_len: usize,
 ) ListenerStatus {
     const engine = engine_ptr orelse return .null_engine;
     const playback_id_base = playback_id_ptr orelse return .invalid_argument;
-    const media_path_base = media_path_ptr orelse return .invalid_argument;
 
     const start_stream = protocol.StartStream{
         .requested_start_frame = requested_start_frame,
         .playback_id = playback_id_base[0..playback_id_len],
-        .media_path = media_path_base[0..media_path_len],
     };
 
     start_stream.validate() catch |err| return status_from_error(err);
@@ -424,9 +420,7 @@ const FlowControlState = struct {
 fn status_from_error(err: anyerror) ListenerStatus {
     return switch (err) {
         error.AlreadyConnected => .already_connected,
-        error.InvalidPlaybackId,
-        error.InvalidMediaPath,
-        => .invalid_argument,
+        error.InvalidPlaybackId => .invalid_argument,
 
         error.InvalidEnd,
         error.InvalidCharacter,
@@ -524,7 +518,6 @@ test "pause advertises zero credit and resume restores stream credit" {
     try engine.startStream(.{
         .requested_start_frame = 0,
         .playback_id = "pause-resume-test",
-        .media_path = "silence.flac",
     });
 
     try waitForAtomicBool(&server.initial_status_received, 100_000);
@@ -565,7 +558,6 @@ test "stopped receiver consumes stream end before the next start" {
     const first_stream = try connection.startStream(.{
         .requested_start_frame = 0,
         .playback_id = "playback-1",
-        .media_path = "first.flac",
     });
     const output_format = backend.OutputFormat{
         .sample_format = first_stream.info.format,
@@ -596,7 +588,6 @@ test "stopped receiver consumes stream end before the next start" {
     _ = try connection.startStream(.{
         .requested_start_frame = 0,
         .playback_id = "playback-2",
-        .media_path = "second.flac",
     });
 
     server_thread.join();
@@ -655,7 +646,6 @@ fn expectEngineStreamsNetworkAudio(audio_delivery: AudioDelivery) !void {
     try engine.startStream(.{
         .requested_start_frame = 0,
         .playback_id = "client-test",
-        .media_path = "strict-s24le-stereo.flac",
     });
 
     try selected_output.waitForCapturedBytes(expected_audio.len, 100_000);
@@ -876,7 +866,6 @@ const FakeLstnServer = struct {
         try std.testing.expectEqual(protocol.MessageType.start_stream, start.header.message_type);
         const start_stream = try protocol.StartStream.decode(start.body);
         try std.testing.expectEqualStrings("client-test", start_stream.playback_id);
-        try std.testing.expectEqualStrings("strict-s24le-stereo.flac", start_stream.media_path);
 
         const stream_id = start.header.stream_id;
         const generation_id = start.header.generation_id;

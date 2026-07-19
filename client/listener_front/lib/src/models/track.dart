@@ -17,6 +17,7 @@ enum CoverStyle {
 
 class Track {
   const Track({
+    required this.id,
     required this.number,
     required this.title,
     required this.length,
@@ -31,6 +32,7 @@ class Track {
     this.artworkId,
   });
 
+  final String id;
   final String number;
   final String title;
   final String length;

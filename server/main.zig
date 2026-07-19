@@ -93,12 +93,22 @@ pub fn main(init: std.process.Init) !void {
 
     try lstn_server.run(init.io, init.gpa, .{
         .context = &controller,
+        .resolve_media_path = resolveLstnMediaPath,
         .on_start_stream = onLstnStartStream,
         .on_buffer_status = onLstnBufferStatus,
     }, .{
         .host = config.lstn_host,
         .port = config.lstn_port,
     });
+}
+
+fn resolveLstnMediaPath(
+    context: ?*anyopaque,
+    event: lstn_server.StartStreamEvent,
+) anyerror![]const u8 {
+    const controller: *playback.Controller = @ptrCast(@alignCast(context.?));
+    return controller.resolveMediaPath(event.playback_id) catch
+        error.StartStreamRejected;
 }
 
 fn onLstnStartStream(
@@ -108,7 +118,6 @@ fn onLstnStartStream(
     const controller: *playback.Controller = @ptrCast(@alignCast(context.?));
     _ = controller.bindStream(.{
         .playback_id = event.playback_id,
-        .media_path = event.media_path,
         .stream_id = event.stream_id,
         .generation_id = event.generation_id,
         .start_frame = event.start_frame,

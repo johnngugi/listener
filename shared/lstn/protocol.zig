@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub const magic = "LSTN".*;
-pub const protocol_version: u16 = 1;
+pub const protocol_version: u16 = 2;
 pub const header_wire_len: u16 = 40;
 pub const max_body_len: u32 = 1024 * 1024;
 
@@ -13,7 +13,6 @@ pub const ProtocolError = error{
     InvalidBodyLength,
     InvalidPlaybackId,
     InvalidMessageType,
-    InvalidMediaPath,
     InvalidProtocolErrorCode,
     InvalidProtocolErrorDetail,
     UnsupportedSampleFormat,
@@ -182,33 +181,24 @@ pub const StreamInfo = struct {
 // Wire layout:
 //   requested_start_frame  u64
 //   playback_id_len        u16
-//   path_len               u16
 //   playback_id            u8[playback_id_len]
-//   media_path             u8[path_len]
 pub const StartStream = struct {
-    pub const fixed_wire_len: u32 = 12;
+    pub const fixed_wire_len: u32 = 10;
     pub const max_playback_id_len: u16 = 256;
-    pub const max_path_len: u16 = 4096;
-    pub const max_wire_len = fixed_wire_len + max_playback_id_len + max_path_len;
+    pub const max_wire_len = fixed_wire_len + max_playback_id_len;
 
     requested_start_frame: u64,
     playback_id: []const u8,
-    media_path: []const u8,
 
     pub fn encode(self: StartStream, out: []u8) ![]u8 {
         try self.validate();
 
-        const encoded_len = fixed_wire_len + self.playback_id.len + self.media_path.len;
+        const encoded_len = fixed_wire_len + self.playback_id.len;
         if (encoded_len > out.len) return error.BufferTooSmall;
 
         std.mem.writeInt(u64, out[0..8], self.requested_start_frame, .big);
         std.mem.writeInt(u16, out[8..10], @intCast(self.playback_id.len), .big);
-        std.mem.writeInt(u16, out[10..12], @intCast(self.media_path.len), .big);
-
-        const playback_id_start = fixed_wire_len;
-        const path_start = playback_id_start + self.playback_id.len;
-        @memcpy(out[playback_id_start..path_start], self.playback_id);
-        @memcpy(out[path_start..encoded_len], self.media_path);
+        @memcpy(out[fixed_wire_len..encoded_len], self.playback_id);
 
         return out[0..encoded_len];
     }
@@ -219,30 +209,23 @@ pub const StartStream = struct {
         }
 
         const playback_id_len = std.mem.readInt(u16, bytes[8..10], .big);
-        const path_len = std.mem.readInt(u16, bytes[10..12], .big);
 
-        if (bytes.len != fixed_wire_len + playback_id_len + path_len) {
+        if (bytes.len != fixed_wire_len + playback_id_len) {
             return error.InvalidBodyLength;
         }
 
-        const playback_id_start = fixed_wire_len;
-        const path_start = playback_id_start + playback_id_len;
-        const playback_id = bytes[playback_id_start..path_start];
-        const media_path = bytes[path_start..];
+        const playback_id = bytes[fixed_wire_len..];
 
         try validatePlaybackId(playback_id);
-        try validateMediaPath(media_path);
 
         return .{
             .requested_start_frame = std.mem.readInt(u64, bytes[0..8], .big),
             .playback_id = playback_id,
-            .media_path = media_path,
         };
     }
 
     pub fn validate(self: StartStream) ProtocolError!void {
         try validatePlaybackId(self.playback_id);
-        try validateMediaPath(self.media_path);
     }
 
     fn validatePlaybackId(playback_id: []const u8) ProtocolError!void {
@@ -259,19 +242,6 @@ pub const StartStream = struct {
         }
     }
 
-    fn validateMediaPath(path: []const u8) ProtocolError!void {
-        if (path.len == 0 or path.len > max_path_len) {
-            return error.InvalidMediaPath;
-        }
-
-        if (!std.unicode.utf8ValidateSlice(path)) {
-            return error.InvalidMediaPath;
-        }
-
-        if (std.mem.indexOfScalar(u8, path, 0) != null) {
-            return error.InvalidMediaPath;
-        }
-    }
 };
 
 // Wire layout:
@@ -601,14 +571,13 @@ test "start stream encodes expected wire representation" {
     const start = StartStream{
         .requested_start_frame = 48_000,
         .playback_id = "playback-1",
-        .media_path = "/music/song.flac",
     };
 
     var storage: [StartStream.max_wire_len]u8 = undefined;
     const encoded = try start.encode(&storage);
 
     try std.testing.expectEqual(
-        StartStream.fixed_wire_len + start.playback_id.len + start.media_path.len,
+        StartStream.fixed_wire_len + start.playback_id.len,
         encoded.len,
     );
     try std.testing.expectEqual(
@@ -619,66 +588,23 @@ test "start stream encodes expected wire representation" {
         start.playback_id.len,
         std.mem.readInt(u16, encoded[8..10], .big),
     );
-    try std.testing.expectEqual(
-        start.media_path.len,
-        std.mem.readInt(u16, encoded[10..12], .big),
-    );
     try std.testing.expectEqualSlices(
         u8,
         start.playback_id,
         encoded[StartStream.fixed_wire_len .. StartStream.fixed_wire_len + start.playback_id.len],
     );
-    try std.testing.expectEqualSlices(
-        u8,
-        start.media_path,
-        encoded[StartStream.fixed_wire_len + start.playback_id.len ..],
-    );
-}
-
-test "start stream decode rejects invalid media paths" {
-    var empty_path: [StartStream.fixed_wire_len + 10]u8 = @splat(0);
-    std.mem.writeInt(u16, empty_path[8..10], 10, .big);
-    @memcpy(empty_path[StartStream.fixed_wire_len..], "playback-1");
-    try std.testing.expectError(
-        error.InvalidMediaPath,
-        StartStream.decode(&empty_path),
-    );
-
-    var nul_path: [StartStream.fixed_wire_len + 13]u8 = @splat(0);
-    std.mem.writeInt(u16, nul_path[8..10], 10, .big);
-    std.mem.writeInt(u16, nul_path[10..12], 3, .big);
-    @memcpy(nul_path[StartStream.fixed_wire_len .. StartStream.fixed_wire_len + 10], "playback-1");
-    @memcpy(nul_path[StartStream.fixed_wire_len + 10 ..], "a\x00b");
-    try std.testing.expectError(
-        error.InvalidMediaPath,
-        StartStream.decode(&nul_path),
-    );
-
-    var invalid_utf8: [StartStream.fixed_wire_len + 11]u8 = @splat(0);
-    std.mem.writeInt(u16, invalid_utf8[8..10], 10, .big);
-    std.mem.writeInt(u16, invalid_utf8[10..12], 1, .big);
-    @memcpy(invalid_utf8[StartStream.fixed_wire_len .. StartStream.fixed_wire_len + 10], "playback-1");
-    invalid_utf8[StartStream.fixed_wire_len + 10] = 0xff;
-    try std.testing.expectError(
-        error.InvalidMediaPath,
-        StartStream.decode(&invalid_utf8),
-    );
 }
 
 test "start stream decode rejects invalid playback ids" {
-    var empty_playback_id: [StartStream.fixed_wire_len + 16]u8 = @splat(0);
-    std.mem.writeInt(u16, empty_playback_id[10..12], 16, .big);
-    @memcpy(empty_playback_id[StartStream.fixed_wire_len..], "/music/song.flac");
+    var empty_playback_id: [StartStream.fixed_wire_len]u8 = @splat(0);
     try std.testing.expectError(
         error.InvalidPlaybackId,
         StartStream.decode(&empty_playback_id),
     );
 
-    var nul_playback_id: [StartStream.fixed_wire_len + 3 + 16]u8 = @splat(0);
+    var nul_playback_id: [StartStream.fixed_wire_len + 3]u8 = @splat(0);
     std.mem.writeInt(u16, nul_playback_id[8..10], 3, .big);
-    std.mem.writeInt(u16, nul_playback_id[10..12], 16, .big);
     @memcpy(nul_playback_id[StartStream.fixed_wire_len .. StartStream.fixed_wire_len + 3], "a\x00b");
-    @memcpy(nul_playback_id[StartStream.fixed_wire_len + 3 ..], "/music/song.flac");
     try std.testing.expectError(
         error.InvalidPlaybackId,
         StartStream.decode(&nul_playback_id),

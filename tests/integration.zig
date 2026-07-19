@@ -23,6 +23,13 @@ test "client engine streams PCM from the real server implementation" {
     );
     defer allocator.free(expected_pcm);
 
+    const media_path = try cwd.realPathFileAlloc(
+        server_io,
+        "server/testdata/fixtures/strict-s16le-stereo.flac",
+        allocator,
+    );
+    defer allocator.free(media_path);
+
     const listen_address = std.Io.net.IpAddress{ .ip4 = .loopback(0) };
     var listener = try listen_address.listen(server_io, .{
         .mode = .stream,
@@ -36,6 +43,7 @@ test "client engine streams PCM from the real server implementation" {
         .io = server_io,
         .listener = &listener,
         .allocator = allocator,
+        .media_path = media_path,
     };
     const server_thread = try std.Thread.spawn(.{}, TestServer.acceptOne, .{&test_server});
     var server_thread_joined = false;
@@ -58,20 +66,11 @@ test "client engine streams PCM from the real server implementation" {
         listener.socket.address.getPort(),
     ));
 
-    const media_path = try cwd.realPathFileAlloc(
-        server_io,
-        "server/testdata/fixtures/strict-s16le-stereo.flac",
-        allocator,
-    );
-    defer allocator.free(media_path);
-
     try expectStatusOk(client_engine.listener_engine_start_stream(
         engine,
         0,
         "integration-playback".ptr,
         "integration-playback".len,
-        media_path.ptr,
-        media_path.len,
     ));
 
     try selected_output.waitForCapturedBytes(expected_pcm.len, 1_000_000);
@@ -94,6 +93,7 @@ const TestServer = struct {
     io: std.Io,
     listener: *std.Io.net.Server,
     allocator: std.mem.Allocator,
+    media_path: []const u8,
     result: anyerror!void = {},
 
     fn acceptOne(self: *TestServer) void {
@@ -102,7 +102,19 @@ const TestServer = struct {
 
     fn acceptOneImpl(self: *TestServer) !void {
         const stream = try self.listener.accept(self.io);
-        try server.connection.handle(self.io, stream, self.allocator, .{});
+        try server.connection.handle(self.io, stream, self.allocator, .{
+            .context = self,
+            .resolve_media_path = resolveMediaPath,
+        });
+    }
+
+    fn resolveMediaPath(
+        context: ?*anyopaque,
+        event: server.connection.StartStreamEvent,
+    ) anyerror![]const u8 {
+        _ = event;
+        const self: *TestServer = @ptrCast(@alignCast(context.?));
+        return self.media_path;
     }
 };
 

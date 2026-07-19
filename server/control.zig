@@ -51,6 +51,7 @@ pub const ControlError = error{
 };
 
 pub const Start = struct {
+    track_id: []const u8,
     media_path: []const u8,
     start_frame: u64 = 0,
 };
@@ -77,7 +78,7 @@ pub const CommandResult = struct {
 pub const Status = struct {
     playback_id: []const u8,
     state: PlaybackState,
-    media_path: []const u8,
+    track_id: []const u8,
     current_frame: u64,
     generation_id: u64,
 };

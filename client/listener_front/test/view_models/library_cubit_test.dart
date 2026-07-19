@@ -13,11 +13,10 @@ void main() {
       final response = grpc.ListTracksResponse(
         tracks: [
           grpc.Track(
-            id: Int64(7),
-            path: '/music/track-7.flac',
+            id: '00000000-0000-4000-8000-000000000007',
             artworkId: Int64(42),
           ),
-          grpc.Track(id: Int64(8), path: '/music/track-8.flac'),
+          grpc.Track(id: '00000000-0000-4000-8000-000000000008'),
         ],
       );
 
@@ -118,7 +117,10 @@ grpc.ListTracksResponse _response({
   return grpc.ListTracksResponse(
     tracks: [
       for (final id in ids)
-        grpc.Track(id: Int64(id), path: '/music/track-$id.flac'),
+        grpc.Track(
+          id: '00000000-0000-4000-8000-${id.toString().padLeft(12, '0')}',
+          trackNumber: id,
+        ),
     ],
     nextPageToken: nextPageToken,
     totalSize: Int64(totalSize),

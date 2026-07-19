@@ -109,20 +109,19 @@ final $typed_data.Uint8List listTracksResponseDescriptor = $convert.base64Decode
 const Track$json = {
   '1': 'Track',
   '2': [
-    {'1': 'id', '3': 1, '4': 1, '5': 3, '10': 'id'},
-    {'1': 'path', '3': 2, '4': 1, '5': 9, '10': 'path'},
-    {'1': 'size_bytes', '3': 3, '4': 1, '5': 4, '10': 'sizeBytes'},
+    {'1': 'id', '3': 1, '4': 1, '5': 9, '10': 'id'},
+    {'1': 'size_bytes', '3': 2, '4': 1, '5': 4, '10': 'sizeBytes'},
     {
       '1': 'modified_unix_nanos',
-      '3': 4,
+      '3': 3,
       '4': 1,
       '5': 3,
       '10': 'modifiedUnixNanos'
     },
-    {'1': 'title', '3': 5, '4': 1, '5': 9, '9': 0, '10': 'title', '17': true},
+    {'1': 'title', '3': 4, '4': 1, '5': 9, '9': 0, '10': 'title', '17': true},
     {
       '1': 'track_artist',
-      '3': 6,
+      '3': 5,
       '4': 1,
       '5': 9,
       '9': 1,
@@ -131,17 +130,17 @@ const Track$json = {
     },
     {
       '1': 'album_artist',
-      '3': 7,
+      '3': 6,
       '4': 1,
       '5': 9,
       '9': 2,
       '10': 'albumArtist',
       '17': true
     },
-    {'1': 'album', '3': 8, '4': 1, '5': 9, '9': 3, '10': 'album', '17': true},
+    {'1': 'album', '3': 7, '4': 1, '5': 9, '9': 3, '10': 'album', '17': true},
     {
       '1': 'track_number',
-      '3': 9,
+      '3': 8,
       '4': 1,
       '5': 13,
       '9': 4,
@@ -150,7 +149,7 @@ const Track$json = {
     },
     {
       '1': 'disc_number',
-      '3': 10,
+      '3': 9,
       '4': 1,
       '5': 13,
       '9': 5,
@@ -159,7 +158,7 @@ const Track$json = {
     },
     {
       '1': 'release_date',
-      '3': 11,
+      '3': 10,
       '4': 1,
       '5': 9,
       '9': 6,
@@ -168,26 +167,26 @@ const Track$json = {
     },
     {
       '1': 'duration_ms',
-      '3': 12,
+      '3': 11,
       '4': 1,
       '5': 4,
       '9': 7,
       '10': 'durationMs',
       '17': true
     },
-    {'1': 'codec', '3': 13, '4': 1, '5': 9, '10': 'codec'},
-    {'1': 'sample_rate', '3': 14, '4': 1, '5': 13, '10': 'sampleRate'},
-    {'1': 'bits_per_sample', '3': 15, '4': 1, '5': 13, '10': 'bitsPerSample'},
+    {'1': 'codec', '3': 12, '4': 1, '5': 9, '10': 'codec'},
+    {'1': 'sample_rate', '3': 13, '4': 1, '5': 13, '10': 'sampleRate'},
+    {'1': 'bits_per_sample', '3': 14, '4': 1, '5': 13, '10': 'bitsPerSample'},
     {
       '1': 'date_added_unix_seconds',
-      '3': 16,
+      '3': 15,
       '4': 1,
       '5': 3,
       '10': 'dateAddedUnixSeconds'
     },
     {
       '1': 'artwork_id',
-      '3': 17,
+      '3': 16,
       '4': 1,
       '5': 3,
       '9': 8,
@@ -210,34 +209,33 @@ const Track$json = {
 
 /// Descriptor for `Track`. Decode as a `google.protobuf.DescriptorProto`.
 final $typed_data.Uint8List trackDescriptor = $convert.base64Decode(
-    'CgVUcmFjaxIOCgJpZBgBIAEoA1ICaWQSEgoEcGF0aBgCIAEoCVIEcGF0aBIdCgpzaXplX2J5dG'
-    'VzGAMgASgEUglzaXplQnl0ZXMSLgoTbW9kaWZpZWRfdW5peF9uYW5vcxgEIAEoA1IRbW9kaWZp'
-    'ZWRVbml4TmFub3MSGQoFdGl0bGUYBSABKAlIAFIFdGl0bGWIAQESJgoMdHJhY2tfYXJ0aXN0GA'
-    'YgASgJSAFSC3RyYWNrQXJ0aXN0iAEBEiYKDGFsYnVtX2FydGlzdBgHIAEoCUgCUgthbGJ1bUFy'
-    'dGlzdIgBARIZCgVhbGJ1bRgIIAEoCUgDUgVhbGJ1bYgBARImCgx0cmFja19udW1iZXIYCSABKA'
-    '1IBFILdHJhY2tOdW1iZXKIAQESJAoLZGlzY19udW1iZXIYCiABKA1IBVIKZGlzY051bWJlcogB'
-    'ARImCgxyZWxlYXNlX2RhdGUYCyABKAlIBlILcmVsZWFzZURhdGWIAQESJAoLZHVyYXRpb25fbX'
-    'MYDCABKARIB1IKZHVyYXRpb25Nc4gBARIUCgVjb2RlYxgNIAEoCVIFY29kZWMSHwoLc2FtcGxl'
-    'X3JhdGUYDiABKA1SCnNhbXBsZVJhdGUSJgoPYml0c19wZXJfc2FtcGxlGA8gASgNUg1iaXRzUG'
-    'VyU2FtcGxlEjUKF2RhdGVfYWRkZWRfdW5peF9zZWNvbmRzGBAgASgDUhRkYXRlQWRkZWRVbml4'
-    'U2Vjb25kcxIiCgphcnR3b3JrX2lkGBEgASgDSAhSCWFydHdvcmtJZIgBAUIICgZfdGl0bGVCDw'
-    'oNX3RyYWNrX2FydGlzdEIPCg1fYWxidW1fYXJ0aXN0QggKBl9hbGJ1bUIPCg1fdHJhY2tfbnVt'
-    'YmVyQg4KDF9kaXNjX251bWJlckIPCg1fcmVsZWFzZV9kYXRlQg4KDF9kdXJhdGlvbl9tc0INCg'
-    'tfYXJ0d29ya19pZA==');
+    'CgVUcmFjaxIOCgJpZBgBIAEoCVICaWQSHQoKc2l6ZV9ieXRlcxgCIAEoBFIJc2l6ZUJ5dGVzEi'
+    '4KE21vZGlmaWVkX3VuaXhfbmFub3MYAyABKANSEW1vZGlmaWVkVW5peE5hbm9zEhkKBXRpdGxl'
+    'GAQgASgJSABSBXRpdGxliAEBEiYKDHRyYWNrX2FydGlzdBgFIAEoCUgBUgt0cmFja0FydGlzdI'
+    'gBARImCgxhbGJ1bV9hcnRpc3QYBiABKAlIAlILYWxidW1BcnRpc3SIAQESGQoFYWxidW0YByAB'
+    'KAlIA1IFYWxidW2IAQESJgoMdHJhY2tfbnVtYmVyGAggASgNSARSC3RyYWNrTnVtYmVyiAEBEi'
+    'QKC2Rpc2NfbnVtYmVyGAkgASgNSAVSCmRpc2NOdW1iZXKIAQESJgoMcmVsZWFzZV9kYXRlGAog'
+    'ASgJSAZSC3JlbGVhc2VEYXRliAEBEiQKC2R1cmF0aW9uX21zGAsgASgESAdSCmR1cmF0aW9uTX'
+    'OIAQESFAoFY29kZWMYDCABKAlSBWNvZGVjEh8KC3NhbXBsZV9yYXRlGA0gASgNUgpzYW1wbGVS'
+    'YXRlEiYKD2JpdHNfcGVyX3NhbXBsZRgOIAEoDVINYml0c1BlclNhbXBsZRI1ChdkYXRlX2FkZG'
+    'VkX3VuaXhfc2Vjb25kcxgPIAEoA1IUZGF0ZUFkZGVkVW5peFNlY29uZHMSIgoKYXJ0d29ya19p'
+    'ZBgQIAEoA0gIUglhcnR3b3JrSWSIAQFCCAoGX3RpdGxlQg8KDV90cmFja19hcnRpc3RCDwoNX2'
+    'FsYnVtX2FydGlzdEIICgZfYWxidW1CDwoNX3RyYWNrX251bWJlckIOCgxfZGlzY19udW1iZXJC'
+    'DwoNX3JlbGVhc2VfZGF0ZUIOCgxfZHVyYXRpb25fbXNCDQoLX2FydHdvcmtfaWQ=');
 
 @$core.Deprecated('Use startRequestDescriptor instead')
 const StartRequest$json = {
   '1': 'StartRequest',
   '2': [
-    {'1': 'media_path', '3': 1, '4': 1, '5': 9, '10': 'mediaPath'},
+    {'1': 'track_id', '3': 1, '4': 1, '5': 9, '10': 'trackId'},
     {'1': 'start_frame', '3': 2, '4': 1, '5': 4, '10': 'startFrame'},
   ],
 };
 
 /// Descriptor for `StartRequest`. Decode as a `google.protobuf.DescriptorProto`.
 final $typed_data.Uint8List startRequestDescriptor = $convert.base64Decode(
-    'CgxTdGFydFJlcXVlc3QSHQoKbWVkaWFfcGF0aBgBIAEoCVIJbWVkaWFQYXRoEh8KC3N0YXJ0X2'
-    'ZyYW1lGAIgASgEUgpzdGFydEZyYW1l');
+    'CgxTdGFydFJlcXVlc3QSGQoIdHJhY2tfaWQYASABKAlSB3RyYWNrSWQSHwoLc3RhcnRfZnJhbW'
+    'UYAiABKARSCnN0YXJ0RnJhbWU=');
 
 @$core.Deprecated('Use startResponseDescriptor instead')
 const StartResponse$json = {
@@ -368,7 +366,7 @@ const StatusResponse$json = {
       '6': '.listener.control.v1.PlaybackState',
       '10': 'state'
     },
-    {'1': 'media_path', '3': 3, '4': 1, '5': 9, '10': 'mediaPath'},
+    {'1': 'track_id', '3': 3, '4': 1, '5': 9, '10': 'trackId'},
     {'1': 'current_frame', '3': 4, '4': 1, '5': 4, '10': 'currentFrame'},
     {'1': 'generation_id', '3': 5, '4': 1, '5': 4, '10': 'generationId'},
   ],
@@ -377,9 +375,9 @@ const StatusResponse$json = {
 /// Descriptor for `StatusResponse`. Decode as a `google.protobuf.DescriptorProto`.
 final $typed_data.Uint8List statusResponseDescriptor = $convert.base64Decode(
     'Cg5TdGF0dXNSZXNwb25zZRIfCgtwbGF5YmFja19pZBgBIAEoCVIKcGxheWJhY2tJZBI4CgVzdG'
-    'F0ZRgCIAEoDjIiLmxpc3RlbmVyLmNvbnRyb2wudjEuUGxheWJhY2tTdGF0ZVIFc3RhdGUSHQoK'
-    'bWVkaWFfcGF0aBgDIAEoCVIJbWVkaWFQYXRoEiMKDWN1cnJlbnRfZnJhbWUYBCABKARSDGN1cn'
-    'JlbnRGcmFtZRIjCg1nZW5lcmF0aW9uX2lkGAUgASgEUgxnZW5lcmF0aW9uSWQ=');
+    'F0ZRgCIAEoDjIiLmxpc3RlbmVyLmNvbnRyb2wudjEuUGxheWJhY2tTdGF0ZVIFc3RhdGUSGQoI'
+    'dHJhY2tfaWQYAyABKAlSB3RyYWNrSWQSIwoNY3VycmVudF9mcmFtZRgEIAEoBFIMY3VycmVudE'
+    'ZyYW1lEiMKDWdlbmVyYXRpb25faWQYBSABKARSDGdlbmVyYXRpb25JZA==');
 
 @$core.Deprecated('Use playbackEventDescriptor instead')
 const PlaybackEvent$json = {

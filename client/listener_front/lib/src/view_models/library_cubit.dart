@@ -90,6 +90,7 @@ List<model_track.Track> mapTracks(pb.PbList<grpc.Track> tracks) {
 
   for (final value in tracks) {
     final track = model_track.Track(
+      id: value.id,
       number: value.hasTrackNumber()
           ? value.trackNumber.toString()
           : value.id.toString(),

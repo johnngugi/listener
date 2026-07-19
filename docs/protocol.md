@@ -2,7 +2,7 @@
 
 ## Status
 
-This document describes version 1 of the Listener media protocol as currently
+This document describes version 2 of the Listener media protocol as currently
 implemented in `shared/lstn/protocol.zig`.
 
 The protocol is still under development. The common header and the
@@ -156,33 +156,30 @@ A **PCM frame** contains one sample for every channel. At 48 kHz,
 
 ## `START_STREAM`
 
-`START_STREAM` asks the server to open a media file and begin a playback
-generation for an existing control-plane playback. Its body consists of a
-12-byte fixed portion followed by variable-length UTF-8 playback ID and file
-path fields.
+`START_STREAM` asks the server to begin a media generation for an existing
+control-plane playback. The server resolves the private media source associated
+with `playback_id`; filesystem paths never cross the client boundary. Its body
+consists of a 10-byte fixed portion followed by a variable-length UTF-8
+playback ID.
 
 | Offset | Size | Type | Field | Description |
 |---:|---:|---|---|---|
 | 0 | 8 | `u64` | `requested_start_frame` | Source PCM frame at which playback should begin; use `0` to start at the beginning |
 | 8 | 2 | `u16` | `playback_id_len` | Number of bytes in `playback_id` |
-| 10 | 2 | `u16` | `path_len` | Number of bytes in `media_path` |
-| 12 | `playback_id_len` | bytes | `playback_id` | UTF-8 playback ID assigned by the control plane |
-| `12 + playback_id_len` | `path_len` | bytes | `media_path` | UTF-8 path of the media file accessible to the server |
+| 10 | `playback_id_len` | bytes | `playback_id` | UTF-8 playback ID assigned by the control plane |
 
 The body length is:
 
 ```text
-body_len = 12 + playback_id_len + path_len
+body_len = 10 + playback_id_len
 ```
 
-`playback_id` and `media_path` are not NUL-terminated. `playback_id` must be
-valid UTF-8, contain no NUL bytes, and contain between 1 and 256 bytes.
-`media_path` must be valid UTF-8, contain no NUL bytes, and contain between 1
-and 4,096 bytes.
+`playback_id` is not NUL-terminated. It must be valid UTF-8, contain no NUL
+bytes, and contain between 1 and 256 bytes.
 
 The server binds the header's `stream_id` and `generation_id` to the named
-`playback_id` after validating that the playback exists and its control-plane
-media path matches `media_path`. A `BUFFER_STATUS` for the active bound stream
+`playback_id` after validating that the playback exists and resolving its
+server-owned media source. A `BUFFER_STATUS` for the active bound stream
 advances the playback session's `current_frame` using `next_render_frame`.
 
 The current server supports only `requested_start_frame = 0`. Other values are

@@ -6,7 +6,6 @@ const request = @import("request.zig");
 
 pub const StartStreamEvent = struct {
     playback_id: []const u8,
-    media_path: []const u8,
     stream_id: u64,
     generation_id: u64,
     start_frame: u64,
@@ -25,6 +24,10 @@ pub const HookError = error{
 
 pub const Hooks = struct {
     context: ?*anyopaque = null,
+    resolve_media_path: ?*const fn (
+        context: ?*anyopaque,
+        event: StartStreamEvent,
+    ) anyerror![]const u8 = null,
     on_start_stream: ?*const fn (
         context: ?*anyopaque,
         event: StartStreamEvent,
@@ -310,9 +313,21 @@ const Session = struct {
         const playback_id = try self.allocator.dupe(u8, start_stream.playback_id);
         errdefer self.allocator.free(playback_id);
 
+        const event = StartStreamEvent{
+            .playback_id = start_stream.playback_id,
+            .stream_id = request_obj.stream_id,
+            .generation_id = request_obj.generation_id,
+            .start_frame = start_stream.requested_start_frame,
+        };
+
+        const media_path = if (self.hooks.resolve_media_path) |resolve|
+            try resolve(self.hooks.context, event)
+        else
+            return error.StartStreamRejected;
+
         const path = try self.allocator.dupeSentinel(
             u8,
-            start_stream.media_path,
+            media_path,
             0,
         );
         defer self.allocator.free(path);
@@ -330,13 +345,7 @@ const Session = struct {
             return error.TooManyChannels;
 
         if (self.hooks.on_start_stream) |on_start_stream| {
-            try on_start_stream(self.hooks.context, .{
-                .playback_id = start_stream.playback_id,
-                .media_path = start_stream.media_path,
-                .stream_id = request_obj.stream_id,
-                .generation_id = request_obj.generation_id,
-                .start_frame = start_stream.requested_start_frame,
-            });
+            try on_start_stream(self.hooks.context, event);
         }
 
         const stream_info = protocol.StreamInfo{
@@ -628,10 +637,6 @@ fn protocolFailure(err: anyerror) ?ProtocolFailure {
             .code = .invalid_body,
             .detail = "invalid message body",
         },
-        error.InvalidMediaPath => .{
-            .code = .invalid_body,
-            .detail = "invalid media path",
-        },
         error.InvalidPlaybackId => .{
             .code = .invalid_body,
             .detail = "invalid playback id",
@@ -869,6 +874,10 @@ fn expectFixtureAudio(fixture: AudioFixture) !void {
     var session = Session{
         .allocator = allocator,
         .hello_received = true,
+        .hooks = .{
+            .context = @ptrCast(@constCast(&fixture)),
+            .resolve_media_path = resolveFixtureMediaPath,
+        },
     };
     defer session.deinit();
 
@@ -882,7 +891,6 @@ fn expectFixtureAudio(fixture: AudioFixture) !void {
         .message = .{ .start_stream = .{
             .requested_start_frame = 0,
             .playback_id = fixture.name,
-            .media_path = fixture.flac_path,
         } },
     });
 
@@ -949,6 +957,15 @@ fn expectFixtureAudio(fixture: AudioFixture) !void {
     try std.testing.expect(saw_stream_end);
     try std.testing.expectEqual(@as(u64, @intCast(expected_frames)), expected_frame_offset);
     try std.testing.expectEqualSlices(u8, fixture.expected_pcm, received_pcm.items);
+}
+
+fn resolveFixtureMediaPath(
+    context: ?*anyopaque,
+    event: StartStreamEvent,
+) anyerror![]const u8 {
+    _ = event;
+    const fixture: *const AudioFixture = @ptrCast(@alignCast(context.?));
+    return fixture.flac_path;
 }
 
 const ServerFrame = struct {

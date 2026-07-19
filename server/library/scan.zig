@@ -121,6 +121,7 @@ pub fn scanLibrary(
                     metadata.artwork = null;
 
                     const scanned_file = database.ScannedFile{
+                        .track_id = database.newTrackId(io),
                         .path = full_path,
                         .size = size,
                         .modified_ns = modified_ns,

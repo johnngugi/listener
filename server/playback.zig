@@ -11,7 +11,6 @@ pub const SessionUpdate = struct {
 
 pub const StreamBinding = struct {
     playback_id: []const u8,
-    media_path: []const u8,
     stream_id: u64,
     generation_id: u64,
     start_frame: u64,
@@ -25,6 +24,7 @@ pub const Controller = struct {
 
     const Session = struct {
         playback_id: []u8,
+        track_id: []u8,
         media_path: []u8,
         lstn_stream: ?LstnStream = null,
         state: control.PlaybackState,
@@ -33,6 +33,7 @@ pub const Controller = struct {
 
         fn deinit(self: *Session, allocator: std.mem.Allocator) void {
             allocator.free(self.playback_id);
+            allocator.free(self.track_id);
             allocator.free(self.media_path);
         }
 
@@ -54,7 +55,7 @@ pub const Controller = struct {
             return .{
                 .playback_id = self.playback_id,
                 .state = self.state,
-                .media_path = self.media_path,
+                .track_id = self.track_id,
                 .current_frame = self.current_frame,
                 .generation_id = self.generation_id,
             };
@@ -130,8 +131,12 @@ pub const Controller = struct {
         const media_path = try self.allocator.dupe(u8, request.media_path);
         errdefer self.allocator.free(media_path);
 
+        const track_id = try self.allocator.dupe(u8, request.track_id);
+        errdefer self.allocator.free(track_id);
+
         try self.sessions.append(self.allocator, .{
             .playback_id = playback_id,
+            .track_id = track_id,
             .media_path = media_path,
             .state = .starting,
             .current_frame = request.start_frame,
@@ -255,9 +260,6 @@ pub const Controller = struct {
         defer self.mutex.unlock();
 
         const session = try self.findSession(binding.playback_id);
-        if (!std.mem.eql(u8, session.media_path, binding.media_path)) {
-            return error.InvalidState;
-        }
 
         switch (session.state) {
             .starting => session.state = .playing,
@@ -273,6 +275,20 @@ pub const Controller = struct {
         session.generation_id = binding.generation_id;
 
         return session.status();
+    }
+
+    pub fn resolveMediaPath(
+        self: *Controller,
+        playback_id: []const u8,
+    ) control.ControlError![]const u8 {
+        self.lock();
+        defer self.mutex.unlock();
+
+        const session = try self.findSession(playback_id);
+        switch (session.state) {
+            .starting, .playing, .paused => return session.media_path,
+            .idle, .stopped, .ended, .error_state => return error.InvalidState,
+        }
     }
 
     pub fn updateSession(
@@ -309,6 +325,7 @@ test "controller starts playback and owns status state" {
     defer controller.deinit();
 
     const started = try controller.start(.{
+        .track_id = "d9428888-122b-4e3f-8f74-8f7e6b3f5c21",
         .media_path = "/tmp/song.flac",
         .start_frame = 128,
     });
@@ -317,7 +334,10 @@ test "controller starts playback and owns status state" {
     try std.testing.expectEqual(control.PlaybackState.starting, started.state);
 
     const status = try controller.status(.{ .playback_id = started.playback_id });
-    try std.testing.expectEqualStrings("/tmp/song.flac", status.media_path);
+    try std.testing.expectEqualStrings(
+        "d9428888-122b-4e3f-8f74-8f7e6b3f5c21",
+        status.track_id,
+    );
     try std.testing.expectEqual(@as(u64, 128), status.current_frame);
     try std.testing.expectEqual(@as(u64, 1), status.generation_id);
 }
@@ -327,7 +347,10 @@ test "controller executes transport-neutral commands" {
     defer controller.deinit();
 
     const start_response = try controller.execute(.{
-        .start = .{ .media_path = "/tmp/song.flac" },
+        .start = .{
+            .track_id = "d9428888-122b-4e3f-8f74-8f7e6b3f5c21",
+            .media_path = "/tmp/song.flac",
+        },
     });
     try std.testing.expect(start_response == .start);
 
@@ -373,7 +396,10 @@ test "media session can report progress through the boundary" {
     var controller = Controller.init(std.testing.allocator);
     defer controller.deinit();
 
-    const started = try controller.start(.{ .media_path = "/tmp/song.flac" });
+    const started = try controller.start(.{
+        .track_id = "d9428888-122b-4e3f-8f74-8f7e6b3f5c21",
+        .media_path = "/tmp/song.flac",
+    });
     const status = try controller.updateSession(.{
         .playback_id = started.playback_id,
         .state = .playing,
@@ -388,10 +414,12 @@ test "controller binds lstn stream to playback id" {
     var controller = Controller.init(std.testing.allocator);
     defer controller.deinit();
 
-    const started = try controller.start(.{ .media_path = "/tmp/song.flac" });
+    const started = try controller.start(.{
+        .track_id = "d9428888-122b-4e3f-8f74-8f7e6b3f5c21",
+        .media_path = "/tmp/song.flac",
+    });
     const status = try controller.bindStream(.{
         .playback_id = started.playback_id,
-        .media_path = "/tmp/song.flac",
         .stream_id = 42,
         .generation_id = 7,
         .start_frame = 1024,
@@ -402,20 +430,23 @@ test "controller binds lstn stream to playback id" {
     try std.testing.expectEqual(@as(u64, 7), status.generation_id);
 }
 
-test "controller rejects lstn stream binding for a different media path" {
+test "controller resolves media path only for an active playback" {
     var controller = Controller.init(std.testing.allocator);
     defer controller.deinit();
 
-    const started = try controller.start(.{ .media_path = "/tmp/song.flac" });
+    const started = try controller.start(.{
+        .track_id = "d9428888-122b-4e3f-8f74-8f7e6b3f5c21",
+        .media_path = "/tmp/song.flac",
+    });
+
+    try std.testing.expectEqualStrings(
+        "/tmp/song.flac",
+        try controller.resolveMediaPath(started.playback_id),
+    );
+    _ = try controller.stop(.{ .playback_id = started.playback_id });
 
     try std.testing.expectError(
         error.InvalidState,
-        controller.bindStream(.{
-            .playback_id = started.playback_id,
-            .media_path = "/tmp/other.flac",
-            .stream_id = 42,
-            .generation_id = 7,
-            .start_frame = 0,
-        }),
+        controller.resolveMediaPath(started.playback_id),
     );
 }

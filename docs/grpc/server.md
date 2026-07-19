@@ -111,10 +111,15 @@ The gRPC schema models player control, not the LSTN media protocol:
 that identifier to `GetArtwork` to receive the original image bytes together
 with their MIME type and pixel dimensions.
 
+Tracks expose UUID identifiers. `StartRequest.track_id` selects a library
+track, and the server resolves that UUID to its private filesystem path before
+creating the playback session. Track and status responses do not expose media
+paths.
+
 Transport-level and control-command failures should become gRPC statuses. LSTN
 protocol errors remain on the TCP media/data connection.
 
-An eventual client should call `Start`, use the returned `playback_id` in the
+The client calls `Start(track_id)`, uses the returned `playback_id` in the
 LSTN `START_STREAM` body, then open its playback-state subscription through
 `Watch(playback_id)` or query `Status(playback_id)`. The LSTN server binds
 that playback ID to the media header's `stream_id` and `generation_id`, and

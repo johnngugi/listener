@@ -4,6 +4,7 @@ import 'package:listener_front/src/models/library_state.dart';
 import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/theme.dart';
 import 'package:listener_front/src/view_models/library_cubit.dart';
+import 'package:listener_front/src/view_models/playback_cubit.dart';
 import 'package:listener_front/src/widgets/artwork_image.dart';
 
 // Shared column geometry so the header and every row line up exactly.
@@ -491,75 +492,78 @@ class TrackRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: _rowHeight,
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: lineColor)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: _hPad),
-        child: Row(
-          children: [
-            SizedBox(
-              width: _numW,
-              child: BodyCell(track.number, alignRight: true),
-            ),
-            const SizedBox(width: 1),
-            Expanded(
-              flex: _trackFlex,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: Row(
-                  children: [
-                    ArtworkImage(artworkId: track.artworkId, size: 56),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Text(
-                        track.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: textColor,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          height: 1.18,
+    return InkWell(
+      onDoubleTap: () => context.read<PlaybackCubit>().play(track),
+      child: Container(
+        height: _rowHeight,
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: lineColor)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: _hPad),
+          child: Row(
+            children: [
+              SizedBox(
+                width: _numW,
+                child: BodyCell(track.number, alignRight: true),
+              ),
+              const SizedBox(width: 1),
+              Expanded(
+                flex: _trackFlex,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: Row(
+                    children: [
+                      ArtworkImage(artworkId: track.artworkId, size: 56),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          track.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: textColor,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            height: 1.18,
+                          ),
                         ),
                       ),
-                    ),
-                    if (track.hasBadge) ...[
-                      const SizedBox(width: 8),
-                      const TinyLinkedBadge(),
+                      if (track.hasBadge) ...[
+                        const SizedBox(width: 8),
+                        const TinyLinkedBadge(),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
-            ),
-            SizedBox(
-              width: _favW,
-              child: Icon(
-                track.favorite ? Icons.favorite : Icons.favorite_border,
-                color: accentColor,
-                size: 24,
+              SizedBox(
+                width: _favW,
+                child: Icon(
+                  track.favorite ? Icons.favorite : Icons.favorite_border,
+                  color: accentColor,
+                  size: 24,
+                ),
               ),
-            ),
-            const SizedBox(width: 1),
-            SizedBox(width: _lengthW, child: BodyCell(track.length)),
-            const SizedBox(width: 1),
-            Expanded(flex: _artistFlex, child: LinkCell(track.artist)),
-            const SizedBox(width: 1),
-            Expanded(flex: _albumFlex, child: LinkCell(track.album)),
-            const SizedBox(width: 1),
-            SizedBox(width: _releaseW, child: BodyCell(track.releaseDate)),
-            const SizedBox(width: 1),
-            SizedBox(width: _dateW, child: BodyCell(track.dateAdded)),
-            const SizedBox(width: 1),
-            SizedBox(width: _playsW, child: BodyCell(track.plays)),
-            const SizedBox(width: 1),
-            const SizedBox(
-              width: _moreW,
-              child: Icon(Icons.more_horiz, color: mutedColor, size: 26),
-            ),
-          ],
+              const SizedBox(width: 1),
+              SizedBox(width: _lengthW, child: BodyCell(track.length)),
+              const SizedBox(width: 1),
+              Expanded(flex: _artistFlex, child: LinkCell(track.artist)),
+              const SizedBox(width: 1),
+              Expanded(flex: _albumFlex, child: LinkCell(track.album)),
+              const SizedBox(width: 1),
+              SizedBox(width: _releaseW, child: BodyCell(track.releaseDate)),
+              const SizedBox(width: 1),
+              SizedBox(width: _dateW, child: BodyCell(track.dateAdded)),
+              const SizedBox(width: 1),
+              SizedBox(width: _playsW, child: BodyCell(track.plays)),
+              const SizedBox(width: 1),
+              const SizedBox(
+                width: _moreW,
+                child: Icon(Icons.more_horiz, color: mutedColor, size: 26),
+              ),
+            ],
+          ),
         ),
       ),
     );
