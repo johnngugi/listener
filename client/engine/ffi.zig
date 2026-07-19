@@ -152,7 +152,11 @@ const Engine = struct {
 
     pub fn connect(self: *Engine, config: lstn.Config) !void {
         if (self.lstn_connection != null) return error.AlreadyConnected;
-        self.lstn_connection = try lstn.Connection.connect(self.io(), config);
+        self.lstn_connection = try lstn.Connection.connect(
+            self.io(),
+            self.allocator,
+            config,
+        );
     }
 
     pub fn startStream(self: *Engine, message: protocol.StartStream) !void {
@@ -240,7 +244,7 @@ const Engine = struct {
         if (!playback_ended) {
             conn.stopStream(started_stream) catch |err| {
                 if (cleanup_error == null) cleanup_error = err;
-                conn.close();
+                conn.shutdown();
                 connection_closed = true;
             };
         }
@@ -266,6 +270,7 @@ const Engine = struct {
 
         self.active_stream = null;
         if (connection_closed) {
+            conn.close();
             self.lstn_connection = null;
         }
         if (cleanup_error) |err| return err;
@@ -400,7 +405,6 @@ fn receive_audio_frame(
                 );
             },
             .stream_end => break :receive,
-            .ping => try lstn_connection.sendPong(),
             .ignored_message => {},
         }
     }
@@ -530,7 +534,7 @@ test "pause advertises zero credit and resume restores stream credit" {
     try server.result;
 }
 
-test "stopped receiver consumes stream end before the next start" {
+test "persistent reader consumes stream end and answers idle ping before restart" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -549,7 +553,7 @@ test "stopped receiver consumes stream end before the next start" {
     var server_joined = false;
     defer if (!server_joined) server_thread.join();
 
-    var connection = try lstn.Connection.connect(io, .{
+    var connection = try lstn.Connection.connect(io, allocator, .{
         .host = "127.0.0.1",
         .port = listener.socket.address.getPort(),
     });
@@ -805,9 +809,25 @@ const RestartFakeLstnServer = struct {
             first_start.header.generation_id,
         );
 
-        const second_start = try readClientFrame(&reader.interface, &body_storage);
-        try std.testing.expectEqual(protocol.MessageType.start_stream, second_start.header.message_type);
-        try sendTestStreamInfo(&writer.interface, 6, second_start.header);
+        // The connection-lifetime reader must keep servicing heartbeats after
+        // STREAM_END, even though the per-stream receiver has exited.
+        try sendEmptyServerMessage(&writer.interface, .ping, 6, 0, 0);
+
+        var saw_pong = false;
+        var second_start_header: ?protocol.Header = null;
+        while (!saw_pong or second_start_header == null) {
+            const frame = try readClientFrame(&reader.interface, &body_storage);
+            switch (frame.header.message_type) {
+                .pong => {
+                    try std.testing.expectEqual(@as(u32, 0), frame.header.body_len);
+                    saw_pong = true;
+                },
+                .start_stream => second_start_header = frame.header,
+                else => return error.UnexpectedClientMessage,
+            }
+        }
+
+        try sendTestStreamInfo(&writer.interface, 7, second_start_header.?);
     }
 };
 

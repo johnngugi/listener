@@ -88,6 +88,19 @@ The client should prefer outbound connections from the Zig engine to the server.
 Avoid requiring the server to open inbound connections to the client, because
 that creates firewall, NAT, mobile-network, and sandboxing problems.
 
+### LSTN connection lifetime
+
+The Zig engine keeps one LSTN TCP connection open across media streams. One
+reader thread owns all socket reads from `HELLO_ACK` until connection shutdown;
+stream workers consume complete frames handed off by that reader and never read
+the socket directly. The reader answers `PING` immediately, including while the
+engine is idle between `STREAM_END` and the next `START_STREAM`.
+
+All socket writes share one outbound mutex so heartbeat replies, flow-control
+updates, cancellation, and new stream requests preserve client sequence order.
+Shutdown first marks the connection closed and performs a socket shutdown to
+wake the blocked reader, then joins the reader before closing the descriptor.
+
 ## Buffering And Flow Control
 
 The Zig engine should use a ring buffer for decoded audio frames. The real-time
