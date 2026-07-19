@@ -3,10 +3,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:listener_front/src/models/playback_state.dart';
-import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/theme.dart';
 import 'package:listener_front/src/view_models/playback_cubit.dart';
-import 'package:listener_front/src/widgets/album_art.dart';
+import 'package:listener_front/src/widgets/artwork_image.dart';
 
 class NowPlayingBar extends StatelessWidget {
   const NowPlayingBar({super.key});
@@ -20,9 +19,21 @@ class NowPlayingBar extends StatelessWidget {
         border: Border(top: BorderSide(color: lineColor)),
       ),
       child: Row(
-        children: const [
+        children: [
           SizedBox(width: 20),
-          AlbumArt(style: CoverStyle.sunset, size: 78),
+          BlocBuilder<PlaybackCubit, PlaybackState>(
+            builder: (BuildContext context, PlaybackState state) {
+              if (state.status == PlaybackStatus.playing ||
+                  state.status == PlaybackStatus.paused) {
+                return ArtworkImage(
+                  artworkId: state.track?.artworkId,
+                  size: 78,
+                );
+              } else {
+                return SizedBox(width: 78, height: 78);
+              }
+            },
+          ),
           SizedBox(width: 18),
           SizedBox(width: 270, child: NowPlayingText()),
           Spacer(),
@@ -41,30 +52,50 @@ class NowPlayingText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Hotel California',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: textColor,
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-          ),
+        BlocBuilder<PlaybackCubit, PlaybackState>(
+          builder: (BuildContext context, PlaybackState state) {
+            var playbackText = "";
+            if (state.status == PlaybackStatus.playing ||
+                state.status == PlaybackStatus.paused) {
+              playbackText = state.track?.title ?? "";
+            }
+
+            return Text(
+              playbackText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            );
+          },
         ),
         SizedBox(height: 4),
-        Text(
-          'Eagles',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: textColor,
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-          ),
+        BlocBuilder<PlaybackCubit, PlaybackState>(
+          builder: (BuildContext context, PlaybackState state) {
+            var artistText = "";
+            if (state.status == PlaybackStatus.playing ||
+                state.status == PlaybackStatus.paused) {
+              artistText = state.track?.artist ?? "";
+            }
+
+            return Text(
+              artistText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            );
+          },
         ),
       ],
     );
