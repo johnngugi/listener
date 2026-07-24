@@ -29,10 +29,16 @@ class PlaybackCubit extends Cubit<PlaybackState> {
 
   String? _playbackId;
 
+  bool _isSwitchingTrack = false;
+
   Future<void> play([Track? selectedTrack]) async {
-    if (state.status == PlaybackStatus.starting ||
-        state.status == PlaybackStatus.playing) {
-      return;
+    if (_isSwitchingTrack) return;
+
+    if (selectedTrack != null && selectedTrack.id == state.track?.id) {
+      if (state.status == PlaybackStatus.starting ||
+          state.status == PlaybackStatus.playing) {
+        return;
+      }
     }
 
     final track = selectedTrack ?? state.track;
@@ -47,10 +53,15 @@ class PlaybackCubit extends Cubit<PlaybackState> {
       return;
     }
 
-    emit(PlaybackState(track: track, status: PlaybackStatus.starting));
-
     String? playbackId;
+    _isSwitchingTrack = true;
     try {
+      if (_playbackId != null) {
+        await stop();
+      }
+
+      emit(PlaybackState(track: track, status: PlaybackStatus.starting));
+
       final response = await _control.start(
         control.StartRequest(trackId: track.id),
         options: CallOptions(timeout: _controlCallTimeout),
@@ -83,6 +94,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
           errorMessage: error.toString(),
         ),
       );
+    } finally {
+      _isSwitchingTrack = false;
     }
   }
 
