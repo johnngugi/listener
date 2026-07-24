@@ -177,8 +177,35 @@ class PlaybackCubit extends Cubit<PlaybackState> {
   }
 
   void _onEngineEvent(PlaybackEngineEvent event) {
-    if (event == PlaybackEngineEvent.ended) {
-      unawaited(_handlePlaybackEnded());
+    switch (event) {
+      case PlaybackEngineEvent.ended:
+        unawaited(_handlePlaybackEnded());
+      case PlaybackEngineEvent.failed:
+        unawaited(_handlePlaybackFailure());
+    }
+  }
+
+  Future<void> _handlePlaybackFailure() async {
+    final playbackId = _playbackId;
+    if (playbackId == null || isClosed) return;
+    _playbackId = null;
+
+    final status = _engine.stop();
+    emit(
+      PlaybackState(
+        track: state.track,
+        status: PlaybackStatus.error,
+        errorMessage: 'Audio receiver failed: ${status.name}',
+      ),
+    );
+
+    try {
+      await _control.stop(
+        control.StopRequest(playbackId: playbackId),
+        options: CallOptions(timeout: _controlCallTimeout),
+      );
+    } catch (_) {
+      // The local receiver has already stopped; remote cleanup is best-effort.
     }
   }
 

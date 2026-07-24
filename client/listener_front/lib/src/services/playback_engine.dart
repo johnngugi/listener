@@ -64,7 +64,7 @@ typedef _SetEventCallbackDart =
       ffi.Pointer<ffi.Void>,
     );
 
-enum PlaybackEngineEvent { ended }
+enum PlaybackEngineEvent { ended, failed }
 
 enum ListenerStatus {
   ok(0),
@@ -280,6 +280,8 @@ final class ListenerEngine {
     switch (event) {
       case 1:
         _events.add(PlaybackEngineEvent.ended);
+      case 2:
+        _events.add(PlaybackEngineEvent.failed);
     }
   }
 }

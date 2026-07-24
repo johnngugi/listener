@@ -41,6 +41,13 @@ pub fn capturedBytes(allocator: std.mem.Allocator) ![]u8 {
     return try allocator.dupe(u8, state.captured.items);
 }
 
+pub fn isStarted() bool {
+    lock();
+    defer unlock();
+
+    return state.started;
+}
+
 pub fn waitForCapturedBytes(expected_len: usize, max_yields: usize) !void {
     var remaining = max_yields;
     while (remaining > 0) : (remaining -= 1) {

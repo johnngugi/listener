@@ -115,6 +115,13 @@ low watermark: request more data
 high watermark: stop granting new credit
 ```
 
+The output device is opened before network receiving begins, but it is not
+started with an empty buffer. The receiver first fills half of the negotiated
+ring-buffer capacity. `STREAM_END` also releases this startup wait so short
+tracks can play without reaching the threshold. A receiver failure before the
+threshold is returned by the start operation; a failure after playback starts
+is emitted as a playback failure event and retained for stream cleanup.
+
 The engine tells the server how many more frames it can accept. The server sends
 only that much data for the current stream generation.
 
