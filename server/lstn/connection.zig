@@ -691,7 +691,10 @@ fn isExpectedConnectionClose(
     write_err: ?std.Io.net.Stream.Writer.Error,
 ) bool {
     return switch (err) {
-        error.EndOfStream => true,
+        error.EndOfStream,
+        error.HandshakeTimeout,
+        error.HeartbeatTimeout,
+        => true,
         error.ReadFailed => if (read_err) |actual|
             actual == error.ConnectionResetByPeer
         else
@@ -702,6 +705,19 @@ fn isExpectedConnectionClose(
             false,
         else => false,
     };
+}
+
+test "connection timeouts close only their session" {
+    try std.testing.expect(isExpectedConnectionClose(
+        error.HandshakeTimeout,
+        null,
+        null,
+    ));
+    try std.testing.expect(isExpectedConnectionClose(
+        error.HeartbeatTimeout,
+        null,
+        null,
+    ));
 }
 
 fn acknowledgeAudio(active: *Session.ActiveStream, last_received_sequence: u64) void {

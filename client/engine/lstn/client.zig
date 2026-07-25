@@ -92,6 +92,14 @@ pub const Connection = struct {
         self.shared.state_mutex.unlock(self.shared.io);
     }
 
+    pub fn isOpen(self: *Connection) bool {
+        if (self.closed) return false;
+
+        self.shared.state_mutex.lockUncancelable(self.shared.io);
+        defer self.shared.state_mutex.unlock(self.shared.io);
+        return !self.shared.closing and !self.shared.reader_done;
+    }
+
     pub fn startStream(
         self: *Connection,
         message: lstn_protocol.StartStream,

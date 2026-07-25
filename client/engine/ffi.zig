@@ -134,6 +134,8 @@ const Engine = struct {
     playback_buffer: ?ring_buffer.SharedPcmRingBuffer = null,
     receive_thread: ?std.Thread = null,
     receiver_state: ?*ReceiverState = null,
+    connection_host: ?[]u8 = null,
+    connection_port: ?u16 = null,
     flow_control: FlowControlState = .{},
     event_callback: ?PlaybackEventCallback = null,
     event_context: ?*anyopaque = null,
@@ -154,19 +156,20 @@ const Engine = struct {
 
     pub fn connect(self: *Engine, config: lstn.Config) !void {
         if (self.lstn_connection != null) return error.AlreadyConnected;
+
+        const host = try self.allocator.dupe(u8, config.host);
+        errdefer self.allocator.free(host);
+
         self.lstn_connection = try lstn.Connection.connect(
             self.io(),
             self.allocator,
             config,
         );
+        self.connection_host = host;
+        self.connection_port = config.port;
     }
 
     pub fn startStream(self: *Engine, message: protocol.StartStream) !void {
-        const conn = if (self.lstn_connection) |*conn|
-            conn
-        else
-            return error.ExpectedHello;
-
         if (self.active_stream != null or
             self.playback_buffer != null or
             self.receive_thread != null or
@@ -174,6 +177,9 @@ const Engine = struct {
         {
             return error.AlreadyStreaming;
         }
+
+        try self.ensureConnection();
+        const conn = &self.lstn_connection.?;
 
         const started_stream = try conn.startStream(message);
         var receiver_started = false;
@@ -277,7 +283,7 @@ const Engine = struct {
         const conn = if (self.lstn_connection) |*conn| conn else return error.ExpectedHello;
 
         var cleanup_error: ?anyerror = null;
-        var connection_closed = false;
+        var connection_closed = !conn.isOpen();
         const playback_ended = if (self.playback_buffer) |*buffer|
             buffer.isDrained() catch |err| ended: {
                 cleanup_error = err;
@@ -286,9 +292,8 @@ const Engine = struct {
         else
             false;
 
-        if (!playback_ended) {
-            conn.stopStream(started_stream) catch |err| {
-                if (cleanup_error == null) cleanup_error = err;
+        if (!playback_ended and !connection_closed) {
+            conn.stopStream(started_stream) catch {
                 conn.shutdown();
                 connection_closed = true;
             };
@@ -307,9 +312,11 @@ const Engine = struct {
 
         if (self.receiver_state) |receiver_state| {
             if (receiver_state.failure()) |err| {
-                if (cleanup_error == null) cleanup_error = err;
-                conn.shutdown();
-                connection_closed = true;
+                if (!connection_closed) {
+                    if (cleanup_error == null) cleanup_error = err;
+                    conn.shutdown();
+                    connection_closed = true;
+                }
             }
             self.allocator.destroy(receiver_state);
             self.receiver_state = null;
@@ -403,7 +410,28 @@ const Engine = struct {
             conn.close();
         }
 
+        if (self.connection_host) |host| {
+            self.allocator.free(host);
+            self.connection_host = null;
+        }
+
         self.io_thread.deinit();
+    }
+
+    fn ensureConnection(self: *Engine) !void {
+        if (self.lstn_connection) |*conn| {
+            if (conn.isOpen()) return;
+            conn.close();
+            self.lstn_connection = null;
+        }
+
+        const host = self.connection_host orelse return error.ExpectedHello;
+        const port = self.connection_port orelse return error.ExpectedHello;
+        self.lstn_connection = try lstn.Connection.connect(
+            self.io(),
+            self.allocator,
+            .{ .host = host, .port = port },
+        );
     }
 
     pub fn io(self: *Engine) std.Io {
@@ -890,6 +918,115 @@ test "persistent reader consumes stream end and answers idle ping before restart
     try server.result;
 }
 
+test "engine reconnects before starting after an idle disconnect" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var listen_address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var listener = try listen_address.listen(io, .{
+        .mode = std.Io.net.Socket.Mode.stream,
+        .protocol = std.Io.net.Protocol.tcp,
+    });
+    defer listener.deinit(io);
+
+    var server = IdleReconnectFakeLstnServer{
+        .io = io,
+        .listener = &listener,
+    };
+    const server_thread = try std.Thread.spawn(
+        .{},
+        IdleReconnectFakeLstnServer.run,
+        .{&server},
+    );
+    var server_joined = false;
+    defer if (!server_joined) server_thread.join();
+
+    var engine = Engine.init(allocator);
+    defer engine.deinit();
+    try engine.connect(.{
+        .host = "127.0.0.1",
+        .port = listener.socket.address.getPort(),
+    });
+
+    try waitForAtomicBool(&server.first_connection_closed, 100_000);
+    var remaining: usize = 100_000;
+    while (remaining > 0) : (remaining -= 1) {
+        if (!engine.lstn_connection.?.isOpen()) break;
+        std.Thread.yield() catch {};
+    }
+    try std.testing.expect(remaining > 0);
+
+    try std.testing.expectError(
+        lstn.ClientError.StartStreamRejected,
+        engine.startStream(.{
+            .requested_start_frame = 0,
+            .playback_id = "reconnect-test",
+        }),
+    );
+
+    server_thread.join();
+    server_joined = true;
+    try server.result;
+}
+
+test "stopping after a playback disconnect is successful local cleanup" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    selected_output.reset(allocator);
+    defer selected_output.reset(allocator);
+
+    var listen_address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var listener = try listen_address.listen(io, .{
+        .mode = std.Io.net.Socket.Mode.stream,
+        .protocol = std.Io.net.Protocol.tcp,
+    });
+    defer listener.deinit(io);
+
+    var server = PlaybackDisconnectFakeLstnServer{
+        .io = io,
+        .listener = &listener,
+    };
+    const server_thread = try std.Thread.spawn(
+        .{},
+        PlaybackDisconnectFakeLstnServer.run,
+        .{&server},
+    );
+    var server_joined = false;
+    defer if (!server_joined) server_thread.join();
+
+    var engine = Engine.init(allocator);
+    defer engine.deinit();
+    try engine.connect(.{
+        .host = "127.0.0.1",
+        .port = listener.socket.address.getPort(),
+    });
+    try engine.startStream(.{
+        .requested_start_frame = 0,
+        .playback_id = "disconnect-during-playback",
+    });
+
+    server.release_disconnect.store(true, .release);
+    try waitForAtomicBool(&server.disconnected, 100_000);
+    var remaining: usize = 100_000;
+    while (remaining > 0) : (remaining -= 1) {
+        if (!engine.lstn_connection.?.isOpen()) break;
+        std.Thread.yield() catch {};
+    }
+    try std.testing.expect(remaining > 0);
+
+    try engine.stopStream();
+    try std.testing.expect(engine.lstn_connection == null);
+    try std.testing.expect(engine.active_stream == null);
+    try std.testing.expect(engine.playback_buffer == null);
+    try std.testing.expect(engine.receive_thread == null);
+    try std.testing.expect(engine.receiver_state == null);
+
+    server_thread.join();
+    server_joined = true;
+    try server.result;
+}
+
 const AudioDelivery = enum {
     one_at_a_time,
     back_to_back,
@@ -1296,6 +1433,114 @@ const RestartFakeLstnServer = struct {
         }
 
         try sendTestStreamInfo(&writer.interface, 7, second_start_header.?);
+    }
+};
+
+const IdleReconnectFakeLstnServer = struct {
+    io: std.Io,
+    listener: *std.Io.net.Server,
+    first_connection_closed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    result: anyerror!void = {},
+
+    fn run(self: *IdleReconnectFakeLstnServer) void {
+        self.result = self.runInner();
+    }
+
+    fn runInner(self: *IdleReconnectFakeLstnServer) !void {
+        {
+            const stream = try self.listener.accept(self.io);
+            defer stream.close(self.io);
+
+            var read_buffer: [1024]u8 = undefined;
+            var reader = stream.reader(self.io, &read_buffer);
+            var writer = stream.writer(self.io, &.{});
+            var body_storage: [protocol.StartStream.max_wire_len]u8 = undefined;
+
+            const hello = try readClientFrame(&reader.interface, &body_storage);
+            try std.testing.expectEqual(protocol.MessageType.hello, hello.header.message_type);
+            try sendEmptyServerMessage(&writer.interface, .hello_ack, 1, 0, 0);
+        }
+        self.first_connection_closed.store(true, .release);
+
+        const stream = try self.listener.accept(self.io);
+        defer stream.close(self.io);
+
+        var read_buffer: [1024]u8 = undefined;
+        var reader = stream.reader(self.io, &read_buffer);
+        var writer = stream.writer(self.io, &.{});
+        var body_storage: [protocol.StartStream.max_wire_len]u8 = undefined;
+
+        const hello = try readClientFrame(&reader.interface, &body_storage);
+        try std.testing.expectEqual(protocol.MessageType.hello, hello.header.message_type);
+        try sendEmptyServerMessage(&writer.interface, .hello_ack, 1, 0, 0);
+
+        const start = try readClientFrame(&reader.interface, &body_storage);
+        try std.testing.expectEqual(protocol.MessageType.start_stream, start.header.message_type);
+        try sendEmptyServerMessage(
+            &writer.interface,
+            .protocol_error,
+            2,
+            start.header.stream_id,
+            start.header.generation_id,
+        );
+    }
+};
+
+const PlaybackDisconnectFakeLstnServer = struct {
+    io: std.Io,
+    listener: *std.Io.net.Server,
+    release_disconnect: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    disconnected: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    result: anyerror!void = {},
+
+    fn run(self: *PlaybackDisconnectFakeLstnServer) void {
+        self.result = self.runInner();
+    }
+
+    fn runInner(self: *PlaybackDisconnectFakeLstnServer) !void {
+        {
+            const stream = try self.listener.accept(self.io);
+            defer stream.close(self.io);
+
+            var read_buffer: [1024]u8 = undefined;
+            var reader = stream.reader(self.io, &read_buffer);
+            var writer = stream.writer(self.io, &.{});
+            var body_storage: [protocol.StartStream.max_wire_len]u8 = undefined;
+
+            const hello = try readClientFrame(&reader.interface, &body_storage);
+            try std.testing.expectEqual(protocol.MessageType.hello, hello.header.message_type);
+            try sendEmptyServerMessage(&writer.interface, .hello_ack, 1, 0, 0);
+
+            const start = try readClientFrame(&reader.interface, &body_storage);
+            try std.testing.expectEqual(protocol.MessageType.start_stream, start.header.message_type);
+            try sendTestStreamInfo(&writer.interface, 2, start.header);
+
+            const initial_status = try readClientFrame(&reader.interface, &body_storage);
+            try std.testing.expectEqual(
+                protocol.MessageType.buffer_status,
+                initial_status.header.message_type,
+            );
+
+            try sendAudioFrame(
+                &writer.interface,
+                3,
+                start.header.stream_id,
+                start.header.generation_id,
+                0,
+                1,
+                &[_]u8{0} ** 4,
+            );
+            const startup_ack = try readClientFrame(&reader.interface, &body_storage);
+            try expectBufferStatusAck(
+                startup_ack,
+                start.header.stream_id,
+                start.header.generation_id,
+                3,
+            );
+
+            try waitForAtomicBool(&self.release_disconnect, 100_000);
+        }
+        self.disconnected.store(true, .release);
     }
 };
 

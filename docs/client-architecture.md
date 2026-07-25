@@ -100,6 +100,8 @@ All socket writes share one outbound mutex so heartbeat replies, flow-control
 updates, cancellation, and new stream requests preserve client sequence order.
 Shutdown first marks the connection closed and performs a socket shutdown to
 wake the blocked reader, then joins the reader before closing the descriptor.
+The engine retains the configured endpoint and reconnects before the next
+`START_STREAM` when the lifetime reader has observed an idle disconnect.
 
 ## Buffering And Flow Control
 
