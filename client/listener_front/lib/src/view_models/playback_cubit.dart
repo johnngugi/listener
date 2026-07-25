@@ -1,12 +1,14 @@
 import 'dart:async';
 
-import 'package:grpc/grpc.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:grpc/grpc.dart';
 import 'package:listener_front/src/generated/listener/v1/listener.pbgrpc.dart'
     as control;
+import 'package:listener_front/src/models/playback_queue.dart';
 import 'package:listener_front/src/models/playback_state.dart';
 import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/services/playback_engine.dart';
+import 'package:listener_front/src/utils/result.dart';
 
 const _controlCallTimeout = Duration(seconds: 5);
 
@@ -31,21 +33,42 @@ class PlaybackCubit extends Cubit<PlaybackState> {
 
   bool _isSwitchingTrack = false;
 
-  Future<void> play([Track? selectedTrack]) async {
+  Future<void> play({Track? selectedTrack, List<Track>? queueTracks}) async {
     if (_isSwitchingTrack) return;
 
-    if (selectedTrack != null && selectedTrack.id == state.track?.id) {
-      if (state.status == PlaybackStatus.starting ||
-          state.status == PlaybackStatus.playing) {
+    PlaybackQueue? queue = state.queue;
+    if (selectedTrack != null) {
+      if (selectedTrack.id == state.queue?.currentTrack.id &&
+          (state.status == PlaybackStatus.starting ||
+              state.status == PlaybackStatus.playing)) {
         return;
       }
+
+      final tracks = List<Track>.unmodifiable(queueTracks ?? [selectedTrack]);
+
+      final selectedIndex = tracks.indexWhere(
+        (track) => track.id == selectedTrack.id,
+      );
+
+      if (selectedIndex == -1) {
+        emit(
+          PlaybackState(
+            queue: state.queue,
+            status: PlaybackStatus.error,
+            errorMessage: 'Select a track to play',
+          ),
+        );
+        return;
+      }
+
+      queue = PlaybackQueue(tracks: tracks, currentIndex: selectedIndex);
     }
 
-    final track = selectedTrack ?? state.track;
+    final track = queue?.currentTrack;
     if (track == null) {
       emit(
         const PlaybackState(
-          track: null,
+          queue: null,
           status: PlaybackStatus.error,
           errorMessage: 'Select a track to play',
         ),
@@ -60,7 +83,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         await stop();
       }
 
-      emit(PlaybackState(track: track, status: PlaybackStatus.starting));
+      emit(PlaybackState(queue: queue, status: PlaybackStatus.starting));
 
       final response = await _control.start(
         control.StartRequest(trackId: track.id),
@@ -74,7 +97,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
       }
 
       _playbackId = playbackId;
-      emit(PlaybackState(track: track, status: PlaybackStatus.playing));
+      emit(PlaybackState(queue: queue, status: PlaybackStatus.playing));
     } catch (error) {
       if (playbackId != null && playbackId.isNotEmpty) {
         try {
@@ -89,7 +112,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
 
       emit(
         PlaybackState(
-          track: state.track,
+          queue: state.queue,
           status: PlaybackStatus.error,
           errorMessage: error.toString(),
         ),
@@ -114,11 +137,11 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         control.StopRequest(playbackId: playbackId),
         options: CallOptions(timeout: _controlCallTimeout),
       );
-      emit(PlaybackState(track: state.track, status: PlaybackStatus.stopped));
+      emit(PlaybackState(queue: state.queue, status: PlaybackStatus.stopped));
     } catch (error) {
       emit(
         PlaybackState(
-          track: state.track,
+          queue: state.queue,
           status: PlaybackStatus.error,
           errorMessage: error.toString(),
         ),
@@ -140,11 +163,11 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         control.PauseRequest(playbackId: playbackId),
         options: CallOptions(timeout: _controlCallTimeout),
       );
-      emit(PlaybackState(track: state.track, status: PlaybackStatus.paused));
+      emit(PlaybackState(queue: state.queue, status: PlaybackStatus.paused));
     } catch (error) {
       emit(
         PlaybackState(
-          track: state.track,
+          queue: state.queue,
           status: PlaybackStatus.error,
           errorMessage: error.toString(),
         ),
@@ -167,15 +190,39 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         throw StateError('Engine resume failed: ${status.name}');
       }
 
-      emit(PlaybackState(track: state.track, status: PlaybackStatus.playing));
+      emit(PlaybackState(queue: state.queue, status: PlaybackStatus.playing));
     } catch (error) {
       emit(
         PlaybackState(
-          track: state.track,
+          queue: state.queue,
           status: PlaybackStatus.error,
           errorMessage: error.toString(),
         ),
       );
+    }
+  }
+
+  Future<void> previous() async {
+    final queue = state.queue;
+    if (queue == null || queue.tracks.isEmpty) return;
+
+    switch (queue.previousTrack) {
+      case Ok<Track>(:final value):
+        await play(selectedTrack: value, queueTracks: queue.tracks);
+      case Error<Track>():
+        return;
+    }
+  }
+
+  Future<void> next() async {
+    final queue = state.queue;
+    if (queue == null || queue.tracks.isEmpty) return;
+
+    switch (queue.nextTrack) {
+      case Ok<Track>(:final value):
+        await play(selectedTrack: value, queueTracks: queue.tracks);
+      case Error<Track>():
+        return;
     }
   }
 
@@ -206,7 +253,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
     final status = _engine.stop();
     emit(
       PlaybackState(
-        track: state.track,
+        queue: state.queue,
         status: PlaybackStatus.error,
         errorMessage: 'Audio receiver failed: ${status.name}',
       ),
@@ -231,7 +278,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
     if (status != ListenerStatus.ok) {
       emit(
         PlaybackState(
-          track: state.track,
+          queue: null,
           status: PlaybackStatus.error,
           errorMessage: 'Engine cleanup failed: ${status.name}',
         ),
@@ -239,7 +286,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
       return;
     }
 
-    emit(PlaybackState(track: state.track, status: PlaybackStatus.stopped));
+    emit(PlaybackState(queue: state.queue, status: PlaybackStatus.stopped));
 
     try {
       await _control.stop(

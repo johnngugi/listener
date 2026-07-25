@@ -26,7 +26,7 @@ class NowPlayingBar extends StatelessWidget {
               if (state.status == PlaybackStatus.playing ||
                   state.status == PlaybackStatus.paused) {
                 return ArtworkImage(
-                  artworkId: state.track?.artworkId,
+                  artworkId: state.queue?.currentTrack.artworkId,
                   size: 78,
                 );
               } else {
@@ -61,7 +61,7 @@ class NowPlayingText extends StatelessWidget {
             var playbackText = "";
             if (state.status == PlaybackStatus.playing ||
                 state.status == PlaybackStatus.paused) {
-              playbackText = state.track?.title ?? "";
+              playbackText = state.queue?.currentTrack.title ?? "";
             }
 
             return Text(
@@ -82,7 +82,7 @@ class NowPlayingText extends StatelessWidget {
             var artistText = "";
             if (state.status == PlaybackStatus.playing ||
                 state.status == PlaybackStatus.paused) {
-              artistText = state.track?.artist ?? "";
+              artistText = state.queue?.currentTrack.artist ?? "";
             }
 
             return Text(
@@ -121,7 +121,10 @@ class TransportControls extends StatelessWidget {
                 size: 14,
               ),
               SizedBox(width: 62),
-              Icon(Icons.skip_previous, color: textColor, size: 28),
+              IconButton(
+                icon: Icon(Icons.skip_previous, color: textColor, size: 28),
+                onPressed: () => context.read<PlaybackCubit>().previous(),
+              ),
               SizedBox(width: 34),
               BlocConsumer<PlaybackCubit, PlaybackState>(
                 listenWhen: (previous, current) =>
@@ -169,7 +172,10 @@ class TransportControls extends StatelessWidget {
                 },
               ),
               SizedBox(width: 34),
-              Icon(Icons.skip_next, color: textColor, size: 28),
+              IconButton(
+                icon: const Icon(Icons.skip_next, color: textColor, size: 28),
+                onPressed: () => context.read<PlaybackCubit>().next(),
+              ),
               SizedBox(width: 52),
               Icon(Icons.queue_music, color: textColor, size: 24),
             ],

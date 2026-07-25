@@ -493,7 +493,14 @@ class TrackRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onDoubleTap: () => context.read<PlaybackCubit>().play(track),
+      onDoubleTap: () {
+        final libraryTracks = context.read<LibraryCubit>().state.tracks;
+
+        context.read<PlaybackCubit>().play(
+          selectedTrack: track,
+          queueTracks: libraryTracks,
+        );
+      },
       child: Container(
         height: _rowHeight,
         decoration: const BoxDecoration(

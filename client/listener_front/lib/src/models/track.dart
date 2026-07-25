@@ -1,3 +1,4 @@
+import 'package:equatable/equatable.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -15,7 +16,7 @@ enum CoverStyle {
   final Color base;
 }
 
-class Track {
+class Track extends Equatable {
   const Track({
     required this.id,
     required this.number,
@@ -45,9 +46,26 @@ class Track {
   final bool hasBadge;
   final Artwork? artwork;
   final int? artworkId;
+
+  @override
+  List<Object?> get props => [
+    id,
+    number,
+    title,
+    length,
+    artist,
+    album,
+    releaseDate,
+    dateAdded,
+    plays,
+    favorite,
+    hasBadge,
+    artwork,
+    artworkId,
+  ];
 }
 
-class Artwork {
+class Artwork extends Equatable {
   const Artwork({
     required this.mimeType,
     required this.width,
@@ -59,4 +77,7 @@ class Artwork {
   final int width;
   final int height;
   final Uint8List data;
+
+  @override
+  List<Object?> get props => [mimeType, width, height, data];
 }
