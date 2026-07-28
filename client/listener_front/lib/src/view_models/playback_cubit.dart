@@ -1,16 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:grpc/grpc.dart';
 import 'package:listener_front/src/generated/listener/v1/listener.pbgrpc.dart'
     as control;
 import 'package:listener_front/src/models/playback_queue.dart';
 import 'package:listener_front/src/models/playback_state.dart';
 import 'package:listener_front/src/models/track.dart';
+import 'package:listener_front/src/services/playback_control.dart';
 import 'package:listener_front/src/services/playback_engine.dart';
 import 'package:listener_front/src/utils/result.dart';
-
-const _controlCallTimeout = Duration(seconds: 5);
 
 class PlaybackCubit extends Cubit<PlaybackState> {
   PlaybackCubit._(this._engine, this._control)
@@ -19,14 +17,21 @@ class PlaybackCubit extends Cubit<PlaybackState> {
   }
 
   factory PlaybackCubit.connect(
-    ListenerEngine engine,
+    PlaybackEngine engine,
     control.ListenerControlClient controlClient,
+  ) {
+    return PlaybackCubit._(engine, GrpcPlaybackControl(controlClient));
+  }
+
+  factory PlaybackCubit.withDependencies(
+    PlaybackEngine engine,
+    PlaybackControl controlClient,
   ) {
     return PlaybackCubit._(engine, controlClient);
   }
 
-  final ListenerEngine _engine;
-  final control.ListenerControlClient _control;
+  final PlaybackEngine _engine;
+  final PlaybackControl _control;
   late final StreamSubscription<PlaybackEngineEvent> _engineEvents;
 
   String? _playbackId;
@@ -87,7 +92,6 @@ class PlaybackCubit extends Cubit<PlaybackState> {
 
       final response = await _control.start(
         control.StartRequest(trackId: track.id),
-        options: CallOptions(timeout: _controlCallTimeout),
       );
       playbackId = response.playbackId;
 
@@ -101,10 +105,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
     } catch (error) {
       if (playbackId != null && playbackId.isNotEmpty) {
         try {
-          await _control.stop(
-            control.StopRequest(playbackId: playbackId),
-            options: CallOptions(timeout: _controlCallTimeout),
-          );
+          await _control.stop(control.StopRequest(playbackId: playbackId));
         } catch (_) {
           // Preserve the original playback failure.
         }
@@ -133,10 +134,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         throw StateError('Engine stop failed: ${status.name}');
       }
 
-      await _control.stop(
-        control.StopRequest(playbackId: playbackId),
-        options: CallOptions(timeout: _controlCallTimeout),
-      );
+      await _control.stop(control.StopRequest(playbackId: playbackId));
       emit(PlaybackState(queue: state.queue, status: PlaybackStatus.stopped));
     } catch (error) {
       emit(
@@ -159,10 +157,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         throw StateError('Engine pause failed: ${status.name}');
       }
 
-      await _control.pause(
-        control.PauseRequest(playbackId: playbackId),
-        options: CallOptions(timeout: _controlCallTimeout),
-      );
+      await _control.pause(control.PauseRequest(playbackId: playbackId));
       emit(PlaybackState(queue: state.queue, status: PlaybackStatus.paused));
     } catch (error) {
       emit(
@@ -180,10 +175,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
     if (playbackId == null || state.status != PlaybackStatus.paused) return;
 
     try {
-      await _control.resume(
-        control.ResumeRequest(playbackId: playbackId),
-        options: CallOptions(timeout: _controlCallTimeout),
-      );
+      await _control.resume(control.ResumeRequest(playbackId: playbackId));
 
       final status = _engine.resume();
       if (status != ListenerStatus.ok) {
@@ -260,10 +252,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
     );
 
     try {
-      await _control.stop(
-        control.StopRequest(playbackId: playbackId),
-        options: CallOptions(timeout: _controlCallTimeout),
-      );
+      await _control.stop(control.StopRequest(playbackId: playbackId));
     } catch (_) {
       // The local receiver has already stopped; remote cleanup is best-effort.
     }
@@ -272,27 +261,34 @@ class PlaybackCubit extends Cubit<PlaybackState> {
   Future<void> _handlePlaybackEnded() async {
     final playbackId = _playbackId;
     if (playbackId == null || isClosed) return;
-    _playbackId = null;
 
-    final status = _engine.stop();
-    if (status != ListenerStatus.ok) {
-      emit(
-        PlaybackState(
-          queue: null,
-          status: PlaybackStatus.error,
-          errorMessage: 'Engine cleanup failed: ${status.name}',
-        ),
-      );
-      return;
+    final queue = state.queue;
+    if (queue != null) {
+      switch (queue.nextTrack) {
+        case Ok<Track>(:final value):
+          await play(selectedTrack: value, queueTracks: queue.tracks);
+          return;
+        case Error<Track>():
+          _playbackId = null;
+
+          final status = _engine.stop();
+          if (status != ListenerStatus.ok) {
+            emit(
+              PlaybackState(
+                queue: null,
+                status: PlaybackStatus.error,
+                errorMessage: 'Engine cleanup failed: ${status.name}',
+              ),
+            );
+            return;
+          }
+      }
     }
 
     emit(PlaybackState(queue: state.queue, status: PlaybackStatus.stopped));
 
     try {
-      await _control.stop(
-        control.StopRequest(playbackId: playbackId),
-        options: CallOptions(timeout: _controlCallTimeout),
-      );
+      await _control.stop(control.StopRequest(playbackId: playbackId));
     } catch (_) {
       // Playback has already ended locally; server cleanup is best-effort.
     }

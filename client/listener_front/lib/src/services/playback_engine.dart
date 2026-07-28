@@ -90,7 +90,24 @@ enum ListenerStatus {
   }
 }
 
-final class ListenerEngine {
+abstract interface class PlaybackEngine {
+  Stream<PlaybackEngineEvent> get events;
+
+  ListenerStatus startStream({
+    required String playbackId,
+    int requestedStartFrame = 0,
+  });
+
+  ListenerStatus stop();
+
+  ListenerStatus pause();
+
+  ListenerStatus resume();
+
+  void close();
+}
+
+final class ListenerEngine implements PlaybackEngine {
   ListenerEngine._(this._library) {
     _abiVersion = _library.lookupFunction<_AbiVersionNative, _AbiVersionDart>(
       "listener_engine_abi_version",
@@ -176,6 +193,8 @@ final class ListenerEngine {
   bool _closed = false;
 
   int get abiVersion => _abiVersion();
+
+  @override
   Stream<PlaybackEngineEvent> get events => _events.stream;
 
   ListenerStatus connect({String host = '127.0.0.1', int port = 5778}) {
@@ -205,6 +224,7 @@ final class ListenerEngine {
     }
   }
 
+  @override
   ListenerStatus startStream({
     required String playbackId,
     int requestedStartFrame = 0,
@@ -242,6 +262,7 @@ final class ListenerEngine {
     }
   }
 
+  @override
   ListenerStatus stop() {
     if (_closed) {
       throw StateError('ListenerEngine is closed');
@@ -250,6 +271,7 @@ final class ListenerEngine {
     return ListenerStatus.fromCode(_stop(_engine));
   }
 
+  @override
   ListenerStatus pause() {
     if (_closed) {
       throw StateError('ListenerEngine is closed');
@@ -258,6 +280,7 @@ final class ListenerEngine {
     return ListenerStatus.fromCode(_pause(_engine));
   }
 
+  @override
   ListenerStatus resume() {
     if (_closed) {
       throw StateError('ListenerEngine is closed');
@@ -266,6 +289,7 @@ final class ListenerEngine {
     return ListenerStatus.fromCode(_resume(_engine));
   }
 
+  @override
   void close() {
     if (_closed) return;
     _closed = true;
