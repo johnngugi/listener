@@ -306,9 +306,6 @@ const Session = struct {
         request_obj: request.Request,
     ) !void {
         const start_stream = request_obj.message.start_stream;
-        if (start_stream.requested_start_frame != 0) {
-            return error.SeekNotImplemented;
-        }
 
         const playback_id = try self.allocator.dupe(u8, start_stream.playback_id);
         errdefer self.allocator.free(playback_id);
@@ -339,6 +336,10 @@ const Session = struct {
         );
         errdefer audio_decoder.deinit();
 
+        if (start_stream.requested_start_frame != 0) {
+            try audio_decoder.seekToFrame(start_stream.requested_start_frame);
+        }
+
         const track = audio_decoder.trackInfo();
         const format = try protocolSampleFormat(track);
         const channels = std.math.cast(u16, track.channels) orelse
@@ -354,7 +355,7 @@ const Session = struct {
             .channels = channels,
             .channel_layout = 0,
             .total_frames = track.duration_frames orelse 0,
-            .actual_start_frame = 0,
+            .actual_start_frame = start_stream.requested_start_frame,
             .recommended_buffer_frames = track.sample_rate / 2,
         };
         const body = stream_info.encode();
@@ -381,7 +382,7 @@ const Session = struct {
             .playback_id = playback_id,
             .stream_id = request_obj.stream_id,
             .generation_id = request_obj.generation_id,
-            .next_frame_offset = 0,
+            .next_frame_offset = start_stream.requested_start_frame,
             .sent_audio = .empty,
             .eof_reached = false,
         };
@@ -873,6 +874,18 @@ test "server sends decoded fixture PCM as contiguous audio frames" {
     });
 }
 
+test "server streams fixture PCM from requested start frame" {
+    try expectFixtureAudio(.{
+        .name = "seekable-s16le-stereo",
+        .flac_path = "testdata/fixtures/seekable-s16le-stereo.flac",
+        .expected_pcm = @embedFile("../testdata/fixtures/seekable-s16le-stereo.expected.pcm"),
+        .expected_format = .pcm_s16le,
+        .expected_sample_rate = 44_100,
+        .expected_channels = 2,
+        .start_frame = 6_000,
+    });
+}
+
 const AudioFixture = struct {
     name: []const u8,
     flac_path: []const u8,
@@ -880,6 +893,7 @@ const AudioFixture = struct {
     expected_format: protocol.SampleFormat,
     expected_sample_rate: u32,
     expected_channels: u16,
+    start_frame: u64 = 0,
 };
 
 fn expectFixtureAudio(fixture: AudioFixture) !void {
@@ -897,7 +911,7 @@ fn expectFixtureAudio(fixture: AudioFixture) !void {
     };
     defer session.deinit();
 
-    var response_storage: [4096]u8 = undefined;
+    var response_storage: [64 * 1024]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&response_storage);
 
     try session.handleRequest(&writer, .{
@@ -905,7 +919,7 @@ fn expectFixtureAudio(fixture: AudioFixture) !void {
         .generation_id = generation_id,
         .sequence = 2,
         .message = .{ .start_stream = .{
-            .requested_start_frame = 0,
+            .requested_start_frame = fixture.start_frame,
             .playback_id = fixture.name,
         } },
     });
@@ -919,11 +933,16 @@ fn expectFixtureAudio(fixture: AudioFixture) !void {
     try std.testing.expectEqual(fixture.expected_format, stream_info.format);
     try std.testing.expectEqual(fixture.expected_sample_rate, stream_info.sample_rate);
     try std.testing.expectEqual(fixture.expected_channels, stream_info.channels);
-    try std.testing.expectEqual(@as(u64, 0), stream_info.actual_start_frame);
+    try std.testing.expectEqual(fixture.start_frame, stream_info.actual_start_frame);
 
     const bytes_per_frame = try protocolBytesPerFrame(stream_info.format, stream_info.channels);
+    const start_frame: usize = @intCast(fixture.start_frame);
+    const start_byte = start_frame * bytes_per_frame;
+
+    try std.testing.expect(start_byte <= fixture.expected_pcm.len);
     try std.testing.expectEqual(@as(usize, 0), fixture.expected_pcm.len % bytes_per_frame);
 
+    const expected_seeked_pcm = fixture.expected_pcm[start_byte..];
     const expected_frames = fixture.expected_pcm.len / bytes_per_frame;
     try std.testing.expectEqual(@as(u64, @intCast(expected_frames)), stream_info.total_frames);
 
@@ -933,7 +952,7 @@ fn expectFixtureAudio(fixture: AudioFixture) !void {
         .sequence = 3,
         .message = .{ .buffer_status = .{
             .buffered_frames = 0,
-            .credit_frames = 1024,
+            .credit_frames = @intCast(expected_frames),
             .next_render_frame = 0,
             .last_received_sequence = stream_info_frame.header.sequence,
             .underrun_count = 0,
@@ -943,7 +962,7 @@ fn expectFixtureAudio(fixture: AudioFixture) !void {
     var received_pcm: std.ArrayList(u8) = .empty;
     defer received_pcm.deinit(allocator);
 
-    var expected_frame_offset: u64 = 0;
+    var expected_frame_offset: u64 = fixture.start_frame;
     var saw_stream_end = false;
 
     while (offset < writer.buffered().len) {
@@ -971,8 +990,11 @@ fn expectFixtureAudio(fixture: AudioFixture) !void {
     }
 
     try std.testing.expect(saw_stream_end);
-    try std.testing.expectEqual(@as(u64, @intCast(expected_frames)), expected_frame_offset);
-    try std.testing.expectEqualSlices(u8, fixture.expected_pcm, received_pcm.items);
+    try std.testing.expectEqual(
+        @as(u64, @intCast(expected_frames)),
+        expected_frame_offset,
+    );
+    try std.testing.expectEqualSlices(u8, expected_seeked_pcm, received_pcm.items);
 }
 
 fn resolveFixtureMediaPath(

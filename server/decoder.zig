@@ -3,7 +3,7 @@ const std = @import("std");
 const c = @cImport({
     @cInclude("libavcodec/avcodec.h");
     @cInclude("libavformat/avformat.h");
-    @cInclude("libavutil/samplefmt.h");
+    @cInclude("libavutil/avutil.h");
 });
 
 pub const AudioDecoder = struct {
@@ -13,6 +13,9 @@ pub const AudioDecoder = struct {
     codec_ctx: [*c]c.AVCodecContext,
     packet: [*c]c.AVPacket,
     frame: [*c]c.AVFrame,
+    time_base: c.AVRational,
+    stream_start_time: i64,
+    seek_target_frame: ?u64 = null,
 
     // Holds decoded PCM that did not fit in the caller's output buffer.
     pending: std.ArrayListUnmanaged(u8) = .empty,
@@ -121,7 +124,9 @@ pub const AudioDecoder = struct {
             .codec_ctx = codec_ctx,
             .packet = packet,
             .frame = frame,
+            .time_base = audio_stream.*.time_base,
             .audio_stream_index = @intCast(audio_stream_index),
+            .stream_start_time = audio_stream.*.start_time,
             .info = .{
                 .sample_rate = @intCast(codec_ctx.*.sample_rate),
                 .channels = @intCast(codec_ctx.*.ch_layout.nb_channels),
@@ -172,7 +177,89 @@ pub const AudioDecoder = struct {
         };
     }
 
-    // pub fn seekToFrame(self: *AudioDecoder, frame: u64) !void {}
+    pub fn seekToFrame(self: *AudioDecoder, target_frame: u64) !void {
+        if (self.info.duration_frames) |duration| {
+            if (target_frame > duration) {
+                return error.SeekOutOfRange;
+            }
+        }
+
+        const sample_time_base = c.AVRational{
+            .num = 1,
+            .den = @intCast(self.info.sample_rate),
+        };
+
+        const timestamp = c.av_rescale_q(
+            @intCast(target_frame),
+            sample_time_base,
+            self.time_base,
+        );
+
+        const result = c.avformat_seek_file(
+            self.format_ctx,
+            self.audio_stream_index,
+            std.math.minInt(i64),
+            timestamp,
+            timestamp,
+            0,
+        );
+
+        if (result < 0) {
+            return error.SeekFailed;
+        }
+
+        c.avcodec_flush_buffers(self.codec_ctx);
+        c.av_packet_unref(self.packet);
+        c.av_frame_unref(self.frame);
+
+        self.pending.clearRetainingCapacity();
+        self.pending_offset = 0;
+
+        self.input_eof = false;
+        self.flush_sent = false;
+        self.decoder_eof = false;
+        self.seek_target_frame = target_frame;
+    }
+
+    fn seekFramesToSkip(self: *AudioDecoder, frame: [*c]const c.AVFrame) !usize {
+        const target = self.seek_target_frame orelse return 0;
+
+        const timestamp = frame.*.best_effort_timestamp;
+        if (timestamp == c.AV_NOPTS_VALUE) {
+            return error.MissingFrameTimestamp;
+        }
+
+        const stream_origin = if (self.stream_start_time == c.AV_NOPTS_VALUE)
+            0
+        else
+            self.stream_start_time;
+
+        const sample_time_base = c.AVRational{
+            .num = 1,
+            .den = @intCast(self.info.sample_rate),
+        };
+
+        const frame_start = c.av_rescale_q(
+            timestamp - stream_origin,
+            self.time_base,
+            sample_time_base,
+        );
+
+        const target_i64 = std.math.cast(i64, target) orelse return error.SeekOutOfRange;
+
+        const frame_samples: i64 = frame.*.nb_samples;
+        const frame_end = frame_start + frame_samples;
+
+        if (frame_end <= target_i64) {
+            return @intCast(frame_samples);
+        }
+
+        if (frame_start > target_i64) {
+            return error.SeekLandedAfterTarget;
+        }
+
+        return @intCast(target_i64 - frame_start);
+    }
 
     fn decodeOneFrameIntoPending(self: *AudioDecoder) !void {
         while (true) {
@@ -183,7 +270,17 @@ pub const AudioDecoder = struct {
             if (ret == 0) {
                 // Clear frame contents so FFmpeg can reuse the frame for the next decode.
                 defer c.av_frame_unref(self.frame);
-                try self.appendFrame(self.frame);
+
+                const skip_frames = try self.seekFramesToSkip(self.frame);
+                const free_samples: usize = @intCast(self.frame.*.nb_samples);
+
+                if (skip_frames == free_samples) {
+                    continue;
+                }
+
+                try self.appendFrame(self.frame, skip_frames);
+
+                self.seek_target_frame = null;
                 return;
             }
 
@@ -247,7 +344,7 @@ pub const AudioDecoder = struct {
         }
     }
 
-    fn appendFrame(self: *AudioDecoder, frame: [*c]c.struct_AVFrame) !void {
+    fn appendFrame(self: *AudioDecoder, frame: [*c]c.struct_AVFrame, skip_frames: usize) !void {
         // The decoder tells us what sample format it produced.
         // Examples: s16, s16p, flt, fltp, s32, etc.
         const sample_fmt = self.codec_ctx.*.sample_fmt;
@@ -262,6 +359,12 @@ pub const AudioDecoder = struct {
         const channels: usize = @intCast(self.codec_ctx.*.ch_layout.nb_channels);
         const samples: usize = @intCast(frame.*.nb_samples);
         const bps: usize = @intCast(bytes_per_sample);
+
+        if (skip_frames > samples) {
+            return error.InvalidSeekTrim;
+        }
+
+        const remaining_samples = samples - skip_frames;
 
         // FFmpeg can output either planar or packed/interleaved audio.
         //
@@ -278,7 +381,10 @@ pub const AudioDecoder = struct {
             const ptr: [*]const u8 = @ptrCast(frame.*.extended_data[0]);
 
             // Total bytes = samples per channel * channel count * bytes per sample.
-            const pcm_bytes = ptr[0 .. samples * channels * bps];
+            const byte_offset = skip_frames * channels * bps;
+            const remaining_bytes = remaining_samples * channels * bps;
+            const byte_end = byte_offset + remaining_bytes;
+            const pcm_bytes = ptr[byte_offset..byte_end];
 
             try self.pending.appendSlice(
                 self.allocator,
@@ -292,9 +398,9 @@ pub const AudioDecoder = struct {
         // plane 1: R R R ...
         // output:  L R L R ...
         const start = self.pending.items.len;
-        try self.pending.resize(self.allocator, start + samples * channels * bps);
+        try self.pending.resize(self.allocator, start + remaining_samples * channels * bps);
 
-        var sample: usize = 0;
+        var sample: usize = skip_frames;
         var dst = self.pending.items[start..];
 
         while (sample < samples) : (sample += 1) {

@@ -4,7 +4,7 @@ const client_engine = @import("client_engine");
 const selected_output = @import("selected_output");
 const server = @import("server");
 
-test "client engine streams PCM from the real server implementation" {
+test "client engine streams PCM from requested start frame" {
     const allocator = std.testing.allocator;
 
     selected_output.reset(allocator);
@@ -17,7 +17,7 @@ test "client engine streams PCM from the real server implementation" {
     const cwd = std.Io.Dir.cwd();
     const expected_pcm = try cwd.readFileAlloc(
         server_io,
-        "server/testdata/fixtures/strict-s16le-stereo.expected.pcm",
+        "server/testdata/fixtures/seekable-s16le-stereo.expected.pcm",
         allocator,
         .limited(1024 * 1024),
     );
@@ -25,10 +25,19 @@ test "client engine streams PCM from the real server implementation" {
 
     const media_path = try cwd.realPathFileAlloc(
         server_io,
-        "server/testdata/fixtures/strict-s16le-stereo.flac",
+        "server/testdata/fixtures/seekable-s16le-stereo.flac",
         allocator,
     );
     defer allocator.free(media_path);
+
+    const requested_start_frame: u64 = 6_000;
+    const bytes_per_frame: usize = 4;
+    const start_frame: usize = @intCast(requested_start_frame);
+    const start_byte = start_frame * bytes_per_frame;
+
+    try std.testing.expect(start_byte <= expected_pcm.len);
+
+    const expected_seeked_pcm = expected_pcm[start_byte..];
 
     const listen_address = std.Io.net.IpAddress{ .ip4 = .loopback(0) };
     var listener = try listen_address.listen(server_io, .{
@@ -68,18 +77,18 @@ test "client engine streams PCM from the real server implementation" {
 
     try expectStatusOk(client_engine.listener_engine_start_stream(
         engine,
-        0,
+        requested_start_frame,
         "integration-playback".ptr,
         "integration-playback".len,
     ));
 
-    try selected_output.waitForCapturedBytes(expected_pcm.len, 1_000_000);
+    try selected_output.waitForCapturedBytes(expected_seeked_pcm.len, 1_000_000);
     try expectStatusOk(client_engine.listener_engine_stop(engine));
 
     const actual_pcm = try selected_output.capturedBytes(allocator);
     defer allocator.free(actual_pcm);
 
-    try std.testing.expectEqualSlices(u8, expected_pcm, actual_pcm);
+    try std.testing.expectEqualSlices(u8, expected_seeked_pcm, actual_pcm);
 
     client_engine.listener_engine_destroy(engine);
     engine_destroyed = true;
