@@ -6,6 +6,11 @@ const c = @cImport({
     @cInclude("CoreAudioTypes/CoreAudioBaseTypes.h");
 });
 
+pub const Backend = backend.OutputBackendBootstrap{
+    .name = "CoreAudio",
+    .init = &coreAudioInit,
+};
+
 const AudioComponent = ?*anyopaque;
 const AudioUnit = ?*anyopaque;
 const AudioUnitPropertyID = c.UInt32;
@@ -74,11 +79,6 @@ const kAudioUnitProperty_SetRenderCallback: AudioUnitPropertyID = 23;
 const kAudioUnitScope_Input: AudioUnitScope = 1;
 
 extern fn getenv(name: [*:0]const u8) callconv(.c) ?[*:0]u8;
-
-pub const Backend = backend.OutputBackendBootstrap{
-    .name = "CoreAudio",
-    .init = &coreAudioInit,
-};
 
 fn coreAudioInit(impl: *backend.OutputImpl) void {
     impl.*.open = &open;

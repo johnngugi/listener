@@ -21,16 +21,13 @@ class NowPlayingBar extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(width: 20),
-          BlocBuilder<PlaybackCubit, PlaybackState>(
-            builder: (BuildContext context, PlaybackState state) {
-              if (state.status == PlaybackStatus.playing ||
-                  state.status == PlaybackStatus.paused) {
-                return ArtworkImage(
-                  artworkId: state.queue?.currentTrack.artworkId,
-                  size: 78,
-                );
+          BlocSelector<PlaybackCubit, PlaybackState, _ArtworkSelection>(
+            selector: _selectArtwork,
+            builder: (context, artwork) {
+              if (artwork.visible) {
+                return ArtworkImage(artworkId: artwork.artworkId, size: 78);
               } else {
-                return SizedBox(width: 78, height: 78);
+                return const SizedBox(width: 78, height: 78);
               }
             },
           ),
@@ -52,52 +49,35 @@ class NowPlayingText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        BlocBuilder<PlaybackCubit, PlaybackState>(
-          builder: (BuildContext context, PlaybackState state) {
-            var playbackText = "";
-            if (state.status == PlaybackStatus.playing ||
-                state.status == PlaybackStatus.paused) {
-              playbackText = state.queue?.currentTrack.title ?? "";
-            }
-
-            return Text(
-              playbackText,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: textColor,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
-            );
-          },
-        ),
-        SizedBox(height: 4),
-        BlocBuilder<PlaybackCubit, PlaybackState>(
-          builder: (BuildContext context, PlaybackState state) {
-            var artistText = "";
-            if (state.status == PlaybackStatus.playing ||
-                state.status == PlaybackStatus.paused) {
-              artistText = state.queue?.currentTrack.artist ?? "";
-            }
-
-            return Text(
-              artistText,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: textColor,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-            );
-          },
-        ),
-      ],
+    return BlocSelector<PlaybackCubit, PlaybackState, _NowPlayingTextSelection>(
+      selector: _selectNowPlayingText,
+      builder: (context, selection) => Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            selection.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: textColor,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            selection.artist,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: textColor,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -126,7 +106,7 @@ class TransportControls extends StatelessWidget {
                 onPressed: () => context.read<PlaybackCubit>().previous(),
               ),
               SizedBox(width: 34),
-              BlocConsumer<PlaybackCubit, PlaybackState>(
+              BlocListener<PlaybackCubit, PlaybackState>(
                 listenWhen: (previous, current) =>
                     previous.errorMessage != current.errorMessage &&
                     current.errorMessage != null,
@@ -135,41 +115,49 @@ class TransportControls extends StatelessWidget {
                     context,
                   ).showSnackBar(SnackBar(content: Text(state.errorMessage!)));
                 },
-                builder: (context, state) {
-                  final isStarting = state.status == PlaybackStatus.starting;
-                  final isPlaying = state.status == PlaybackStatus.playing;
-                  final isPaused = state.status == PlaybackStatus.paused;
+                child:
+                    BlocSelector<PlaybackCubit, PlaybackState, PlaybackStatus>(
+                      selector: (state) => state.status,
+                      builder: (context, status) {
+                        final isStarting = status == PlaybackStatus.starting;
+                        final isPlaying = status == PlaybackStatus.playing;
+                        final isPaused = status == PlaybackStatus.paused;
 
-                  VoidCallback? onPressed;
-                  Widget icon;
+                        VoidCallback? onPressed;
+                        Widget icon;
 
-                  if (isStarting) {
-                    onPressed = null;
-                    icon = const SizedBox.square(
-                      dimension: 28,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    );
-                  } else if (isPlaying) {
-                    onPressed = context.read<PlaybackCubit>().pause;
-                    icon = const Icon(Icons.pause, color: textColor, size: 40);
-                  } else if (isPaused) {
-                    onPressed = context.read<PlaybackCubit>().resume;
-                    icon = const Icon(
-                      Icons.play_arrow,
-                      color: textColor,
-                      size: 40,
-                    );
-                  } else {
-                    onPressed = context.read<PlaybackCubit>().play;
-                    icon = const Icon(
-                      Icons.play_arrow,
-                      color: textColor,
-                      size: 40,
-                    );
-                  }
+                        if (isStarting) {
+                          onPressed = null;
+                          icon = const SizedBox.square(
+                            dimension: 28,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          );
+                        } else if (isPlaying) {
+                          onPressed = context.read<PlaybackCubit>().pause;
+                          icon = const Icon(
+                            Icons.pause,
+                            color: textColor,
+                            size: 40,
+                          );
+                        } else if (isPaused) {
+                          onPressed = context.read<PlaybackCubit>().resume;
+                          icon = const Icon(
+                            Icons.play_arrow,
+                            color: textColor,
+                            size: 40,
+                          );
+                        } else {
+                          onPressed = context.read<PlaybackCubit>().play;
+                          icon = const Icon(
+                            Icons.play_arrow,
+                            color: textColor,
+                            size: 40,
+                          );
+                        }
 
-                  return IconButton(onPressed: onPressed, icon: icon);
-                },
+                        return IconButton(onPressed: onPressed, icon: icon);
+                      },
+                    ),
               ),
               SizedBox(width: 34),
               IconButton(
@@ -183,36 +171,135 @@ class TransportControls extends StatelessWidget {
           const SizedBox(height: 18),
           Row(
             children: [
-              const Text(
-                '0:10',
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              const PlaybackElapsedTime(),
               const SizedBox(width: 16),
               Expanded(
-                child: SizedBox(
-                  height: 34,
-                  child: CustomPaint(painter: WaveformPainter()),
-                ),
+                child: SizedBox(height: 34, child: PlaybackProgressBar()),
               ),
               const SizedBox(width: 16),
-              const Text(
-                '6:31',
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              const PlaybackDuration(),
             ],
           ),
         ],
       ),
     );
   }
+}
+
+class PlaybackElapsedTime extends StatelessWidget {
+  const PlaybackElapsedTime({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocSelector<PlaybackCubit, PlaybackState, int>(
+      selector: (state) => _positionMilliseconds(state) ~/ 1000,
+      builder: (context, elapsedSeconds) =>
+          Text(_formatSeconds(elapsedSeconds), style: _playbackTimeStyle),
+    );
+  }
+}
+
+class PlaybackDuration extends StatelessWidget {
+  const PlaybackDuration({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocSelector<PlaybackCubit, PlaybackState, int>(
+      selector: (state) =>
+          (state.queue?.currentTrack.durationMilliseconds ?? 0) ~/ 1000,
+      builder: (context, durationSeconds) =>
+          Text(_formatSeconds(durationSeconds), style: _playbackTimeStyle),
+    );
+  }
+}
+
+class PlaybackProgressBar extends StatelessWidget {
+  const PlaybackProgressBar({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocSelector<
+      PlaybackCubit,
+      PlaybackState,
+      _PlaybackProgressSelection
+    >(
+      selector: _selectPlaybackProgress,
+      builder: (context, progress) {
+        if (progress.visible) {
+          return Slider(
+            min: 0,
+            max: progress.maxMilliseconds,
+            value: progress.positionMilliseconds,
+            onChanged: null,
+          );
+        } else {
+          return const SizedBox(width: 78, height: 78);
+        }
+      },
+    );
+  }
+}
+
+const _playbackTimeStyle = TextStyle(
+  color: textColor,
+  fontSize: 13,
+  fontWeight: FontWeight.w600,
+);
+
+typedef _ArtworkSelection = ({bool visible, int? artworkId});
+typedef _NowPlayingTextSelection = ({String title, String artist});
+typedef _PlaybackProgressSelection = ({
+  bool visible,
+  double positionMilliseconds,
+  double maxMilliseconds,
+});
+
+bool _showsTrack(PlaybackState state) =>
+    state.status == PlaybackStatus.playing ||
+    state.status == PlaybackStatus.paused;
+
+_ArtworkSelection _selectArtwork(PlaybackState state) => (
+  visible: _showsTrack(state),
+  artworkId: state.queue?.currentTrack.artworkId,
+);
+
+_NowPlayingTextSelection _selectNowPlayingText(PlaybackState state) {
+  if (!_showsTrack(state)) return (title: '', artist: '');
+  final track = state.queue?.currentTrack;
+  return (title: track?.title ?? '', artist: track?.artist ?? '');
+}
+
+_PlaybackProgressSelection _selectPlaybackProgress(PlaybackState state) {
+  final track = state.queue?.currentTrack;
+  final visible = track != null && _showsTrack(state);
+  if (!visible) {
+    return (visible: false, positionMilliseconds: 0, maxMilliseconds: 1);
+  }
+
+  final maxMilliseconds = track.durationMilliseconds > 0
+      ? track.durationMilliseconds.toDouble()
+      : 1.0;
+  final positionMilliseconds = _positionMilliseconds(
+    state,
+  ).toDouble().clamp(0.0, maxMilliseconds);
+
+  return (
+    visible: true,
+    positionMilliseconds: positionMilliseconds,
+    maxMilliseconds: maxMilliseconds,
+  );
+}
+
+int _positionMilliseconds(PlaybackState state) {
+  final track = state.queue?.currentTrack;
+  if (track == null || track.sampleRate <= 0) return 0;
+  return state.currentFrame * 1000 ~/ track.sampleRate;
+}
+
+String _formatSeconds(int totalSeconds) {
+  final minutes = totalSeconds ~/ 60;
+  final seconds = totalSeconds % 60;
+  return '$minutes:${seconds.toString().padLeft(2, '0')}';
 }
 
 class WaveformPainter extends CustomPainter {

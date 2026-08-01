@@ -34,6 +34,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
   final PlaybackControl _control;
   late final StreamSubscription<PlaybackEngineEvent> _engineEvents;
 
+  Timer? _playbackFrameTimer;
+
   String? _playbackId;
 
   bool _isSwitchingTrack = false;
@@ -102,6 +104,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
 
       _playbackId = playbackId;
       emit(PlaybackState(queue: queue, status: PlaybackStatus.playing));
+      _startPositionPolling();
     } catch (error) {
       if (playbackId != null && playbackId.isNotEmpty) {
         try {
@@ -124,6 +127,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
   }
 
   Future<void> stop() async {
+    _stopPositionPolling();
     final playbackId = _playbackId;
     if (playbackId == null) return;
     _playbackId = null;
@@ -157,9 +161,12 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         throw StateError('Engine pause failed: ${status.name}');
       }
 
+      _updateCurrentFrame();
+      _stopPositionPolling();
       await _control.pause(control.PauseRequest(playbackId: playbackId));
-      emit(PlaybackState(queue: state.queue, status: PlaybackStatus.paused));
+      emit(state.copyWith(status: PlaybackStatus.paused));
     } catch (error) {
+      _stopPositionPolling();
       emit(
         PlaybackState(
           queue: state.queue,
@@ -182,7 +189,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         throw StateError('Engine resume failed: ${status.name}');
       }
 
-      emit(PlaybackState(queue: state.queue, status: PlaybackStatus.playing));
+      emit(state.copyWith(status: PlaybackStatus.playing));
+      _startPositionPolling();
     } catch (error) {
       emit(
         PlaybackState(
@@ -218,8 +226,32 @@ class PlaybackCubit extends Cubit<PlaybackState> {
     }
   }
 
+  void _startPositionPolling() {
+    _stopPositionPolling();
+    _updateCurrentFrame();
+    _playbackFrameTimer = Timer.periodic(
+      const Duration(milliseconds: 250),
+      (_) => _updateCurrentFrame(),
+    );
+  }
+
+  void _stopPositionPolling() {
+    _playbackFrameTimer?.cancel();
+    _playbackFrameTimer = null;
+  }
+
+  void _updateCurrentFrame() {
+    if (_playbackId == null || isClosed) return;
+
+    final result = _engine.currentFrame();
+    if (result.status == ListenerStatus.ok) {
+      emit(state.copyWith(currentFrame: result.frame));
+    }
+  }
+
   @override
   Future<void> close() async {
+    _stopPositionPolling();
     await _engineEvents.cancel();
     if (_playbackId != null) {
       _engine.stop();
@@ -241,6 +273,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
     final playbackId = _playbackId;
     if (playbackId == null || isClosed) return;
     _playbackId = null;
+    _stopPositionPolling();
 
     final status = _engine.stop();
     emit(
@@ -270,6 +303,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
           return;
         case Error<Track>():
           _playbackId = null;
+          _stopPositionPolling();
 
           final status = _engine.stop();
           if (status != ListenerStatus.ok) {

@@ -11,6 +11,32 @@ import 'package:listener_front/src/view_models/playback_cubit.dart';
 
 void main() {
   group('PlaybackCubit continuous playback', () {
+    test(
+      'samples the engine position immediately and preserves it on pause',
+      () async {
+        final engine = _FakePlaybackEngine()..currentFrameValue = 1250;
+        final controlClient = _FakePlaybackControl();
+        final cubit = PlaybackCubit.withDependencies(engine, controlClient);
+
+        await cubit.play(selectedTrack: _track(1));
+
+        expect(cubit.state.currentFrame, 1250);
+        expect(engine.currentFrameCallCount, 1);
+
+        engine.currentFrameValue = 2000;
+        await cubit.pause();
+
+        expect(cubit.state.status, PlaybackStatus.paused);
+        expect(cubit.state.currentFrame, 2000);
+        expect(engine.currentFrameCallCount, 2);
+
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(engine.currentFrameCallCount, 2);
+
+        await cubit.close();
+      },
+    );
+
     test('plays the next track when the current track ends', () async {
       final engine = _FakePlaybackEngine();
       final controlClient = _FakePlaybackControl();
@@ -100,12 +126,13 @@ Track _track(int number) {
     id: 'track-$number',
     number: '$number',
     title: 'Track $number',
-    length: '3:00',
     artist: 'Artist',
     album: 'Album',
     releaseDate: '2026',
     dateAdded: 'Today',
     plays: '0',
+    durationMilliseconds: 180000,
+    sampleRate: 1000,
   );
 }
 
@@ -115,6 +142,8 @@ final class _FakePlaybackEngine implements PlaybackEngine {
 
   final List<String> startedPlaybackIds = [];
   int stopCallCount = 0;
+  int currentFrameCallCount = 0;
+  int currentFrameValue = 0;
 
   @override
   Stream<PlaybackEngineEvent> get events => _events.stream;
@@ -141,6 +170,12 @@ final class _FakePlaybackEngine implements PlaybackEngine {
 
   @override
   ListenerStatus resume() => ListenerStatus.ok;
+
+  @override
+  ({ListenerStatus status, int frame}) currentFrame() {
+    currentFrameCallCount++;
+    return (status: ListenerStatus.ok, frame: currentFrameValue);
+  }
 
   @override
   void close() {

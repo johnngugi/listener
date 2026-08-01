@@ -7,7 +7,7 @@ const selected_output = @import("selected_output");
 const stdout = @import("stdout");
 
 pub export fn listener_engine_abi_version() u32 {
-    return 2;
+    return 1;
 }
 
 pub export fn listener_engine_create() ?*Engine {
@@ -101,6 +101,16 @@ pub export fn listener_engine_resume(engine_ptr: ?*Engine) ListenerStatus {
         return status_from_error(err);
     };
 
+    return .ok;
+}
+
+pub export fn listener_engine_current_frame(engine_ptr: ?*Engine, out_frame: *u64) ListenerStatus {
+    const engine = engine_ptr orelse return .null_engine;
+    const stream = engine.active_stream orelse return .invalid_argument;
+    const buffer = &(engine.playback_buffer orelse return .invalid_argument);
+
+    const rendered = buffer.framesRead();
+    out_frame.* = stream.info.actual_start_frame + rendered;
     return .ok;
 }
 

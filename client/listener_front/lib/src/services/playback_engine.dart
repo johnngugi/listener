@@ -8,6 +8,7 @@ import 'package:ffi/ffi.dart';
 const _listenerEngineDylibEnv = "LISTENER_ENGINE_DYLIB";
 const _devListenerEngineDylibPath =
     "/Users/johnngugi/Coding/listener/client/engine/zig-out/lib/liblistener_engine.dylib";
+const _listenerEngineAbiVersion = 1;
 
 final class Engine extends ffi.Opaque {}
 
@@ -49,14 +50,21 @@ typedef _PauseDart = int Function(ffi.Pointer<Engine>);
 typedef _ResumeNative = ffi.Uint32 Function(ffi.Pointer<Engine>);
 typedef _ResumeDart = int Function(ffi.Pointer<Engine>);
 
+typedef _CurrentFrameNative =
+    ffi.Uint32 Function(ffi.Pointer<Engine>, ffi.Pointer<ffi.Uint64>);
+typedef _CurrentFrameDart =
+    int Function(ffi.Pointer<Engine>, ffi.Pointer<ffi.Uint64>);
+
 typedef _PlaybackEventCallbackNative =
     ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Uint32);
+
 typedef _SetEventCallbackNative =
     ffi.Uint32 Function(
       ffi.Pointer<Engine>,
       ffi.Pointer<ffi.NativeFunction<_PlaybackEventCallbackNative>>,
       ffi.Pointer<ffi.Void>,
     );
+
 typedef _SetEventCallbackDart =
     int Function(
       ffi.Pointer<Engine>,
@@ -104,6 +112,8 @@ abstract interface class PlaybackEngine {
 
   ListenerStatus resume();
 
+  ({ListenerStatus status, int frame}) currentFrame();
+
   void close();
 }
 
@@ -112,6 +122,13 @@ final class ListenerEngine implements PlaybackEngine {
     _abiVersion = _library.lookupFunction<_AbiVersionNative, _AbiVersionDart>(
       "listener_engine_abi_version",
     );
+    final abiVersion = _abiVersion();
+    if (abiVersion != _listenerEngineAbiVersion) {
+      throw StateError(
+        'Unsupported listener engine ABI $abiVersion; '
+        'expected $_listenerEngineAbiVersion',
+      );
+    }
 
     _create = _library.lookupFunction<_CreateNative, _CreateDart>(
       "listener_engine_create",
@@ -141,6 +158,11 @@ final class ListenerEngine implements PlaybackEngine {
     _resume = _library.lookupFunction<_ResumeNative, _ResumeDart>(
       'listener_engine_resume',
     );
+
+    _currentFrame = _library
+        .lookupFunction<_CurrentFrameNative, _CurrentFrameDart>(
+          'listener_engine_current_frame',
+        );
 
     _setEventCallback = _library
         .lookupFunction<_SetEventCallbackNative, _SetEventCallbackDart>(
@@ -183,6 +205,7 @@ final class ListenerEngine implements PlaybackEngine {
   late final _StopDart _stop;
   late final _PauseDart _pause;
   late final _ResumeDart _resume;
+  late final _CurrentFrameDart _currentFrame;
   late final _SetEventCallbackDart _setEventCallback;
   late final ffi.Pointer<Engine> _engine;
   late final ffi.NativeCallable<_PlaybackEventCallbackNative> _eventCallback;
@@ -287,6 +310,22 @@ final class ListenerEngine implements PlaybackEngine {
     }
 
     return ListenerStatus.fromCode(_resume(_engine));
+  }
+
+  @override
+  ({ListenerStatus status, int frame}) currentFrame() {
+    if (_closed) {
+      throw StateError('ListenerEngine is closed');
+    }
+
+    ffi.Pointer<ffi.Uint64> frame = calloc<ffi.Uint64>();
+
+    try {
+      final result = _currentFrame(_engine, frame);
+      return (status: ListenerStatus.fromCode(result), frame: frame.value);
+    } finally {
+      calloc.free(frame);
+    }
   }
 
   @override

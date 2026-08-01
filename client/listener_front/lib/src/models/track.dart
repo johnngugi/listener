@@ -21,12 +21,13 @@ class Track extends Equatable {
     required this.id,
     required this.number,
     required this.title,
-    required this.length,
     required this.artist,
     required this.album,
     required this.releaseDate,
     required this.dateAdded,
     required this.plays,
+    required this.durationMilliseconds,
+    required this.sampleRate,
     this.favorite = false,
     this.hasBadge = false,
     this.artwork,
@@ -36,7 +37,6 @@ class Track extends Equatable {
   final String id;
   final String number;
   final String title;
-  final String length;
   final String artist;
   final String album;
   final String releaseDate;
@@ -46,13 +46,22 @@ class Track extends Equatable {
   final bool hasBadge;
   final Artwork? artwork;
   final int? artworkId;
+  final int durationMilliseconds;
+  final int sampleRate;
+
+  String formatMilliseconds() {
+    int totalSeconds = durationMilliseconds ~/ 1000;
+    int minutes = totalSeconds ~/ 60;
+    int seconds = totalSeconds % 60;
+
+    return "${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}";
+  }
 
   @override
   List<Object?> get props => [
     id,
     number,
     title,
-    length,
     artist,
     album,
     releaseDate,
@@ -62,6 +71,8 @@ class Track extends Equatable {
     hasBadge,
     artwork,
     artworkId,
+    durationMilliseconds,
+    sampleRate,
   ];
 }
 

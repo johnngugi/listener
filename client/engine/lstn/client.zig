@@ -237,7 +237,7 @@ pub const Connection = struct {
     ) !void {
         const readable_frames = try buffer.readableFrames();
         const capacity_frames = try buffer.capacityFrames();
-        const next_render_frame = try buffer.framesRead();
+        const next_render_frame = stream.info.actual_start_frame + buffer.framesRead();
 
         const status = lstn_protocol.BufferStatus{
             .buffered_frames = saturatedU32(readable_frames),

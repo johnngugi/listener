@@ -95,13 +95,14 @@ List<model_track.Track> mapTracks(pb.PbList<grpc.Track> tracks) {
           ? value.trackNumber.toString()
           : value.id.toString(),
       title: value.title,
-      length: formatMilliseconds(value.durationMs.toInt()),
       artist: value.albumArtist,
       album: value.album,
       releaseDate: formatReleaseDate(value.releaseDate),
       dateAdded: '15 May 2026',
       plays: '0',
       artworkId: value.hasArtworkId() ? value.artworkId.toInt() : null,
+      durationMilliseconds: value.durationMs.toInt(),
+      sampleRate: value.sampleRate,
     );
 
     store.add(track);
@@ -123,12 +124,4 @@ String formatReleaseDate(String releaseDate) {
   }
 
   return "";
-}
-
-String formatMilliseconds(int milliseconds) {
-  int totalSeconds = milliseconds ~/ 1000;
-  int minutes = totalSeconds ~/ 60;
-  int seconds = totalSeconds % 60;
-
-  return "${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}";
 }

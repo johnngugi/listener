@@ -553,7 +553,10 @@ class TrackRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 1),
-              SizedBox(width: _lengthW, child: BodyCell(track.length)),
+              SizedBox(
+                width: _lengthW,
+                child: BodyCell(track.formatMilliseconds()),
+              ),
               const SizedBox(width: 1),
               Expanded(flex: _artistFlex, child: LinkCell(track.artist)),
               const SizedBox(width: 1),

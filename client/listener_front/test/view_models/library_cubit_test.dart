@@ -15,6 +15,7 @@ void main() {
           grpc.Track(
             id: '00000000-0000-4000-8000-000000000007',
             artworkId: Int64(42),
+            sampleRate: 48000,
           ),
           grpc.Track(id: '00000000-0000-4000-8000-000000000008'),
         ],
@@ -23,6 +24,7 @@ void main() {
       final tracks = mapTracks(response.tracks);
 
       expect(tracks[0].artworkId, 42);
+      expect(tracks[0].sampleRate, 48000);
       expect(tracks[1].artworkId, isNull);
     });
 

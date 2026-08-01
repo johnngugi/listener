@@ -182,6 +182,7 @@ pub const SharedPcmRingBuffer = struct {
     changed: Condition = .init,
     state: SharedRingState,
     io: std.Io,
+    rendered_frames: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
 
     pub fn init(
         io: std.Io,
@@ -259,6 +260,7 @@ pub const SharedPcmRingBuffer = struct {
         }
 
         const bytes = self.state.ring.read_frames(max_frames, output_buffer);
+        self.rendered_frames.store(self.state.ring.frames_read(), .release);
         self.changed.broadcast(self.io);
 
         return bytes;
@@ -276,6 +278,7 @@ pub const SharedPcmRingBuffer = struct {
         }
 
         const bytes = self.state.ring.read_frames(max_frames, output_buffer);
+        self.rendered_frames.store(self.state.ring.frames_read(), .release);
         self.changed.broadcast(self.io);
 
         return bytes;
@@ -288,6 +291,7 @@ pub const SharedPcmRingBuffer = struct {
         defer self.inner.unlock(self.io);
 
         const bytes = self.state.ring.read_frames(max_frames, output_buffer);
+        self.rendered_frames.store(self.state.ring.frames_read(), .release);
         self.changed.broadcast(self.io);
 
         return bytes;
@@ -345,11 +349,8 @@ pub const SharedPcmRingBuffer = struct {
         return self.state.ring.capacity();
     }
 
-    pub fn framesRead(self: *SharedPcmRingBuffer) !u64 {
-        try self.inner.lock(self.io);
-        defer self.inner.unlock(self.io);
-
-        return self.state.ring.frames_read();
+    pub fn framesRead(self: *const SharedPcmRingBuffer) u64 {
+        return self.rendered_frames.load(.acquire);
     }
 
     pub fn isDrained(self: *SharedPcmRingBuffer) !bool {
