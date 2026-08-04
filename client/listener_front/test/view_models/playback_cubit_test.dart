@@ -105,6 +105,25 @@ void main() {
 
       await cubit.close();
     });
+
+    test('clears the playback session when native seeking fails', () async {
+      final engine = _FakePlaybackEngine();
+      final controlClient = _FakePlaybackControl();
+      final cubit = PlaybackCubit.withDependencies(engine, controlClient);
+
+      await cubit.play(selectedTrack: _track(1));
+      engine.seekStatus = ListenerStatus.invalidSeekFrame;
+
+      await cubit.seekTo(42000);
+
+      expect(engine.soughtFrames, [42000]);
+      expect(engine.stopCallCount, 0);
+      expect(controlClient.stoppedPlaybackIds, ['playback-1']);
+      expect(cubit.state.status, PlaybackStatus.error);
+      expect(cubit.state.errorMessage, contains('invalidSeekFrame'));
+
+      await cubit.close();
+    });
   });
 }
 
@@ -144,6 +163,8 @@ final class _FakePlaybackEngine implements PlaybackEngine {
   int stopCallCount = 0;
   int currentFrameCallCount = 0;
   int currentFrameValue = 0;
+  ListenerStatus seekStatus = ListenerStatus.ok;
+  final List<int> soughtFrames = [];
 
   @override
   Stream<PlaybackEngineEvent> get events => _events.stream;
@@ -175,6 +196,12 @@ final class _FakePlaybackEngine implements PlaybackEngine {
   ({ListenerStatus status, int frame}) currentFrame() {
     currentFrameCallCount++;
     return (status: ListenerStatus.ok, frame: currentFrameValue);
+  }
+
+  @override
+  ListenerStatus seek(int targetFrame) {
+    soughtFrames.add(targetFrame);
+    return seekStatus;
   }
 
   @override

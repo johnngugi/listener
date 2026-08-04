@@ -55,6 +55,9 @@ typedef _CurrentFrameNative =
 typedef _CurrentFrameDart =
     int Function(ffi.Pointer<Engine>, ffi.Pointer<ffi.Uint64>);
 
+typedef _SeekNative = ffi.Uint32 Function(ffi.Pointer<Engine>, ffi.Uint64);
+typedef _SeekDart = int Function(ffi.Pointer<Engine>, int);
+
 typedef _PlaybackEventCallbackNative =
     ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Uint32);
 
@@ -84,6 +87,8 @@ enum ListenerStatus {
   handshakeFailed(6),
   protocolError(7),
   outOfMemory(8),
+  noActiveStream(9),
+  invalidSeekFrame(10),
   unexpected(255);
 
   const ListenerStatus(this.code);
@@ -113,6 +118,8 @@ abstract interface class PlaybackEngine {
   ListenerStatus resume();
 
   ({ListenerStatus status, int frame}) currentFrame();
+
+  ListenerStatus seek(int targetFrame);
 
   void close();
 }
@@ -164,6 +171,10 @@ final class ListenerEngine implements PlaybackEngine {
           'listener_engine_current_frame',
         );
 
+    _seek = _library.lookupFunction<_SeekNative, _SeekDart>(
+      'listener_engine_seek',
+    );
+
     _setEventCallback = _library
         .lookupFunction<_SetEventCallbackNative, _SetEventCallbackDart>(
           'listener_engine_set_event_callback',
@@ -206,6 +217,7 @@ final class ListenerEngine implements PlaybackEngine {
   late final _PauseDart _pause;
   late final _ResumeDart _resume;
   late final _CurrentFrameDart _currentFrame;
+  late final _SeekDart _seek;
   late final _SetEventCallbackDart _setEventCallback;
   late final ffi.Pointer<Engine> _engine;
   late final ffi.NativeCallable<_PlaybackEventCallbackNative> _eventCallback;
@@ -326,6 +338,19 @@ final class ListenerEngine implements PlaybackEngine {
     } finally {
       calloc.free(frame);
     }
+  }
+
+  @override
+  ListenerStatus seek(int targetFrame) {
+    if (_closed) {
+      throw StateError('ListenerEngine is closed');
+    }
+
+    if (targetFrame < 0) {
+      throw RangeError.value(targetFrame, 'targetFrame');
+    }
+
+    return ListenerStatus.fromCode(_seek(_engine, targetFrame));
   }
 
   @override

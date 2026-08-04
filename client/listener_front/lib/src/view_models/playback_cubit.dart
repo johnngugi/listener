@@ -40,6 +40,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
 
   bool _isSwitchingTrack = false;
 
+  bool _isSeeking = false;
+
   Future<void> play({Track? selectedTrack, List<Track>? queueTracks}) async {
     if (_isSwitchingTrack) return;
 
@@ -223,6 +225,54 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         await play(selectedTrack: value, queueTracks: queue.tracks);
       case Error<Track>():
         return;
+    }
+  }
+
+  Future<void> seekTo(double milliseconds) async {
+    if (_isSeeking) return;
+
+    final track = state.queue?.currentTrack;
+    if (_playbackId == null || track == null || track.sampleRate <= 0) return;
+
+    final targetFrame = (milliseconds * track.sampleRate / 1000).round();
+    _isSeeking = true;
+    _stopPositionPolling();
+
+    emit(state.copyWith(currentFrame: targetFrame));
+
+    try {
+      final status = _engine.seek(targetFrame);
+      if (status != ListenerStatus.ok) {
+        throw StateError('Engine seek failed: ${status.name}');
+      }
+
+      _updateCurrentFrame();
+      if (state.status == PlaybackStatus.playing) {
+        _startPositionPolling();
+      }
+    } catch (error) {
+      final playbackId = _playbackId;
+      _playbackId = null;
+
+      emit(
+        PlaybackState(
+          queue: state.queue,
+          status: PlaybackStatus.error,
+          currentFrame: state.currentFrame,
+          errorMessage: error.toString(),
+        ),
+      );
+
+      if (playbackId != null) {
+        try {
+          await _control.stop(control.StopRequest(playbackId: playbackId));
+        } catch (_) {
+          // Native seek has already stopped local playback. Remote cleanup is
+          // best-effort and must not replace the original seek failure.
+        }
+      }
+    } finally {
+      _isSeeking = false;
     }
   }
 

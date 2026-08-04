@@ -114,6 +114,17 @@ pub export fn listener_engine_current_frame(engine_ptr: ?*Engine, out_frame: *u6
     return .ok;
 }
 
+pub export fn listener_engine_seek(engine_ptr: ?*Engine, target_frame: u64) ListenerStatus {
+    const engine = engine_ptr orelse return .null_engine;
+
+    engine.seekStream(target_frame) catch |err| {
+        stdout.print(engine.io(), "listener_engine_seek failed: {}\n", .{err});
+        return status_from_error(err);
+    };
+
+    return .ok;
+}
+
 pub export fn listener_engine_set_event_callback(
     engine_ptr: ?*Engine,
     callback: ?PlaybackEventCallback,
@@ -149,6 +160,7 @@ const Engine = struct {
     flow_control: FlowControlState = .{},
     event_callback: ?PlaybackEventCallback = null,
     event_context: ?*anyopaque = null,
+    active_playback_id: ?[]u8 = null,
 
     pub fn init(allocator: std.mem.Allocator) Engine {
         var audio_backend = backend.OutputBackend{
@@ -191,7 +203,11 @@ const Engine = struct {
         try self.ensureConnection();
         const conn = &self.lstn_connection.?;
 
+        const playback_id = try self.allocator.dupe(u8, message.playback_id);
+        errdefer self.allocator.free(playback_id);
+
         const started_stream = try conn.startStream(message);
+
         var receiver_started = false;
         var discard_connection = false;
         errdefer if (discard_connection) {
@@ -286,6 +302,7 @@ const Engine = struct {
             return err;
         };
         self.active_stream = started_stream;
+        self.active_playback_id = playback_id;
     }
 
     pub fn stopStream(self: *Engine) !void {
@@ -341,6 +358,11 @@ const Engine = struct {
         }
 
         self.active_stream = null;
+        if (self.active_playback_id) |active_playback_id| {
+            self.allocator.free(active_playback_id);
+            self.active_playback_id = null;
+        }
+
         if (connection_closed) {
             conn.close();
             self.lstn_connection = null;
@@ -395,6 +417,39 @@ const Engine = struct {
         };
     }
 
+    pub fn seekStream(self: *Engine, target_frame: u64) !void {
+        const active_stream = self.active_stream orelse
+            return error.NoActiveStream;
+
+        // A failed seek must never leave either the old or replacement stream
+        // rendering after the caller has transitioned to an error state.
+        errdefer self.stopStream() catch {};
+
+        const active_playback_id = self.active_playback_id orelse
+            return error.NoActiveStream;
+
+        if (active_stream.info.total_frames != 0 and
+            target_frame > active_stream.info.total_frames)
+        {
+            return error.InvalidSeekFrame;
+        }
+
+        const playback_id = try self.allocator.dupe(u8, active_playback_id);
+        defer self.allocator.free(playback_id);
+
+        const was_paused = self.flow_control.paused.load(.acquire);
+
+        try self.stopStream();
+        try self.startStream(.{
+            .playback_id = playback_id,
+            .requested_start_frame = target_frame,
+        });
+
+        if (was_paused) {
+            try self.pauseStream();
+        }
+    }
+
     pub fn deinit(self: *Engine) void {
         self.stopStream() catch {};
 
@@ -423,6 +478,11 @@ const Engine = struct {
         if (self.connection_host) |host| {
             self.allocator.free(host);
             self.connection_host = null;
+        }
+
+        if (self.active_playback_id) |active_playback_id| {
+            self.allocator.free(active_playback_id);
+            self.active_playback_id = null;
         }
 
         self.io_thread.deinit();
@@ -459,6 +519,8 @@ pub const ListenerStatus = enum(u32) {
     handshake_failed = 6,
     protocol_error = 7,
     out_of_memory = 8,
+    no_active_stream = 9,
+    invalid_seek_frame = 10,
     unexpected = 255,
 };
 
@@ -697,6 +759,9 @@ fn status_from_error(err: anyerror) ListenerStatus {
         error.BodyTooLarge,
         error.InvalidMessageType,
         => .protocol_error,
+
+        error.NoActiveStream => .no_active_stream,
+        error.InvalidSeekFrame => .invalid_seek_frame,
 
         error.OutOfMemory => .out_of_memory,
 

@@ -213,8 +213,15 @@ class PlaybackDuration extends StatelessWidget {
   }
 }
 
-class PlaybackProgressBar extends StatelessWidget {
+class PlaybackProgressBar extends StatefulWidget {
   const PlaybackProgressBar({super.key});
+
+  @override
+  State<PlaybackProgressBar> createState() => _PlaybackProgressBarState();
+}
+
+class _PlaybackProgressBarState extends State<PlaybackProgressBar> {
+  double? _progressValue;
 
   @override
   Widget build(BuildContext context) {
@@ -225,16 +232,34 @@ class PlaybackProgressBar extends StatelessWidget {
     >(
       selector: _selectPlaybackProgress,
       builder: (context, progress) {
-        if (progress.visible) {
-          return Slider(
-            min: 0,
-            max: progress.maxMilliseconds,
-            value: progress.positionMilliseconds,
-            onChanged: null,
-          );
-        } else {
+        if (!progress.visible) {
           return const SizedBox(width: 78, height: 78);
         }
+
+        return Slider(
+          min: 0,
+          max: progress.maxMilliseconds,
+          value: (_progressValue ?? progress.positionMilliseconds).clamp(
+            0.0,
+            progress.maxMilliseconds,
+          ),
+          onChangeStart: (double milliseconds) {
+            setState(() {
+              _progressValue = milliseconds;
+            });
+          },
+          onChanged: (double milliseconds) {
+            setState(() {
+              _progressValue = milliseconds;
+            });
+          },
+          onChangeEnd: (double milliseconds) {
+            context.read<PlaybackCubit>().seekTo(milliseconds);
+            setState(() {
+              _progressValue = null;
+            });
+          },
+        );
       },
     );
   }
