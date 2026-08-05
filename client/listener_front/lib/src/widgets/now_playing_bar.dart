@@ -169,17 +169,7 @@ class TransportControls extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 18),
-          Row(
-            children: [
-              const PlaybackElapsedTime(),
-              const SizedBox(width: 16),
-              Expanded(
-                child: SizedBox(height: 34, child: PlaybackProgressBar()),
-              ),
-              const SizedBox(width: 16),
-              const PlaybackDuration(),
-            ],
-          ),
+          const PlaybackTimeline(),
         ],
       ),
     );
@@ -187,40 +177,35 @@ class TransportControls extends StatelessWidget {
 }
 
 class PlaybackElapsedTime extends StatelessWidget {
-  const PlaybackElapsedTime({super.key});
+  const PlaybackElapsedTime({super.key, required this.elapsedSeconds});
+
+  final int elapsedSeconds;
 
   @override
   Widget build(BuildContext context) {
-    return BlocSelector<PlaybackCubit, PlaybackState, int>(
-      selector: (state) => _positionMilliseconds(state) ~/ 1000,
-      builder: (context, elapsedSeconds) =>
-          Text(_formatSeconds(elapsedSeconds), style: _playbackTimeStyle),
-    );
+    return Text(_formatSeconds(elapsedSeconds), style: _playbackTimeStyle);
   }
 }
 
 class PlaybackDuration extends StatelessWidget {
-  const PlaybackDuration({super.key});
+  const PlaybackDuration({super.key, required this.durationSeconds});
+
+  final int durationSeconds;
 
   @override
   Widget build(BuildContext context) {
-    return BlocSelector<PlaybackCubit, PlaybackState, int>(
-      selector: (state) =>
-          (state.queue?.currentTrack.durationMilliseconds ?? 0) ~/ 1000,
-      builder: (context, durationSeconds) =>
-          Text(_formatSeconds(durationSeconds), style: _playbackTimeStyle),
-    );
+    return Text(_formatSeconds(durationSeconds), style: _playbackTimeStyle);
   }
 }
 
-class PlaybackProgressBar extends StatefulWidget {
-  const PlaybackProgressBar({super.key});
+class PlaybackTimeline extends StatefulWidget {
+  const PlaybackTimeline({super.key});
 
   @override
-  State<PlaybackProgressBar> createState() => _PlaybackProgressBarState();
+  State<PlaybackTimeline> createState() => _PlaybackTimelineState();
 }
 
-class _PlaybackProgressBarState extends State<PlaybackProgressBar> {
+class _PlaybackTimelineState extends State<PlaybackTimeline> {
   double? _progressValue;
 
   @override
@@ -233,16 +218,18 @@ class _PlaybackProgressBarState extends State<PlaybackProgressBar> {
       selector: _selectPlaybackProgress,
       builder: (context, progress) {
         if (!progress.visible) {
-          return const SizedBox(width: 78, height: 78);
+          return const SizedBox(height: 34);
         }
+        final displayedMilliseconds =
+            (_progressValue ?? progress.positionMilliseconds).clamp(
+              0.0,
+              progress.maxMilliseconds,
+            );
 
-        return Slider(
+        final progressBar = Slider(
           min: 0,
           max: progress.maxMilliseconds,
-          value: (_progressValue ?? progress.positionMilliseconds).clamp(
-            0.0,
-            progress.maxMilliseconds,
-          ),
+          value: displayedMilliseconds,
           onChangeStart: (double milliseconds) {
             setState(() {
               _progressValue = milliseconds;
@@ -259,6 +246,20 @@ class _PlaybackProgressBarState extends State<PlaybackProgressBar> {
               _progressValue = null;
             });
           },
+        );
+
+        return Row(
+          children: [
+            PlaybackElapsedTime(
+              elapsedSeconds: displayedMilliseconds.toInt() ~/ 1000,
+            ),
+            const SizedBox(width: 16),
+            Expanded(child: SizedBox(height: 34, child: progressBar)),
+            const SizedBox(width: 16),
+            PlaybackDuration(
+              durationSeconds: progress.maxMilliseconds.toInt() ~/ 1000,
+            ),
+          ],
         );
       },
     );
