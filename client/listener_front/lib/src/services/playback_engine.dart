@@ -198,6 +198,8 @@ final class ListenerEngine implements PlaybackEngine {
         'Failed to register playback event callback: ${callbackStatus.name}',
       );
     }
+
+    _currentFrameOut = calloc<ffi.Uint64>();
   }
 
   factory ListenerEngine.open() {
@@ -221,6 +223,7 @@ final class ListenerEngine implements PlaybackEngine {
   late final _SetEventCallbackDart _setEventCallback;
   late final ffi.Pointer<Engine> _engine;
   late final ffi.NativeCallable<_PlaybackEventCallbackNative> _eventCallback;
+  late final ffi.Pointer<ffi.Uint64> _currentFrameOut;
 
   final StreamController<PlaybackEngineEvent> _events =
       StreamController<PlaybackEngineEvent>.broadcast();
@@ -330,14 +333,12 @@ final class ListenerEngine implements PlaybackEngine {
       throw StateError('ListenerEngine is closed');
     }
 
-    ffi.Pointer<ffi.Uint64> frame = calloc<ffi.Uint64>();
-
-    try {
-      final result = _currentFrame(_engine, frame);
-      return (status: ListenerStatus.fromCode(result), frame: frame.value);
-    } finally {
-      calloc.free(frame);
-    }
+    _currentFrameOut.value = 0;
+    final result = _currentFrame(_engine, _currentFrameOut);
+    return (
+      status: ListenerStatus.fromCode(result),
+      frame: _currentFrameOut.value,
+    );
   }
 
   @override
@@ -357,6 +358,7 @@ final class ListenerEngine implements PlaybackEngine {
   void close() {
     if (_closed) return;
     _closed = true;
+    calloc.free(_currentFrameOut);
     _destroy(_engine);
     _eventCallback.close();
     unawaited(_events.close());
