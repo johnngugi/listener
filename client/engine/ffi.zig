@@ -209,7 +209,11 @@ const Engine = struct {
         const started_stream = try conn.startStream(message);
 
         var receiver_started = false;
-        var discard_connection = false;
+        // Once STREAM_INFO has been consumed, any later startup failure can
+        // leave stream-scoped frames (notably STREAM_END after cancellation)
+        // queued on this connection. Reusing it would let the next
+        // startStream consume that stale frame as its STREAM_INFO response.
+        var discard_connection = true;
         errdefer if (discard_connection) {
             conn.close();
             self.lstn_connection = null;
@@ -303,6 +307,7 @@ const Engine = struct {
         };
         self.active_stream = started_stream;
         self.active_playback_id = playback_id;
+        discard_connection = false;
     }
 
     pub fn stopStream(self: *Engine) !void {
@@ -869,6 +874,62 @@ test "receiver failure during startup is returned and fully cleaned up" {
     try server.result;
 }
 
+test "output open failure reconnects before the next stream" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    selected_output.reset(allocator);
+    defer selected_output.reset(allocator);
+    selected_output.failNextOpen();
+
+    var listen_address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var listener = try listen_address.listen(io, .{
+        .mode = std.Io.net.Socket.Mode.stream,
+        .protocol = std.Io.net.Protocol.tcp,
+    });
+    defer listener.deinit(io);
+
+    var server = OutputOpenFailureFakeLstnServer{
+        .io = io,
+        .listener = &listener,
+    };
+    const server_thread = try std.Thread.spawn(.{}, OutputOpenFailureFakeLstnServer.run, .{&server});
+    var server_joined = false;
+    defer if (!server_joined) server_thread.join();
+
+    var engine = Engine.init(allocator);
+    defer engine.deinit();
+    try engine.connect(.{
+        .host = "127.0.0.1",
+        .port = listener.socket.address.getPort(),
+    });
+
+    try std.testing.expectError(
+        error.TestOutputOpenFailed,
+        engine.startStream(.{
+            .requested_start_frame = 0,
+            .playback_id = "output-open-failure-test",
+        }),
+    );
+
+    // The server replies to cancellation with a stream-scoped STREAM_END.
+    // Reusing this connection would allow that stale frame to become the next
+    // startStream response and surface as UnexpectedStreamScope.
+    try std.testing.expect(engine.lstn_connection == null);
+    try std.testing.expect(engine.active_stream == null);
+    try std.testing.expect(engine.playback_buffer == null);
+
+    try engine.startStream(.{
+        .requested_start_frame = 0,
+        .playback_id = "output-open-retry-test",
+    });
+    try engine.stopStream();
+
+    server_thread.join();
+    server_joined = true;
+    try server.result;
+}
+
 test "receiver failure after startup is reported as an engine event" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
@@ -1351,6 +1412,87 @@ const StartupFailureFakeLstnServer = struct {
             1,
             1,
             &[_]u8{0} ** 8,
+        );
+    }
+};
+
+const OutputOpenFailureFakeLstnServer = struct {
+    io: std.Io,
+    listener: *std.Io.net.Server,
+    result: anyerror!void = {},
+
+    fn run(self: *OutputOpenFailureFakeLstnServer) void {
+        self.result = self.runInner();
+    }
+
+    fn runInner(self: *OutputOpenFailureFakeLstnServer) !void {
+        {
+            const stream = try self.listener.accept(self.io);
+            defer stream.close(self.io);
+
+            var read_buffer: [1024]u8 = undefined;
+            var reader = stream.reader(self.io, &read_buffer);
+            var writer = stream.writer(self.io, &.{});
+            var body_storage: [protocol.StartStream.max_wire_len]u8 = undefined;
+
+            const hello = try readClientFrame(&reader.interface, &body_storage);
+            try std.testing.expectEqual(protocol.MessageType.hello, hello.header.message_type);
+            try sendEmptyServerMessage(&writer.interface, .hello_ack, 1, 0, 0);
+
+            const start = try readClientFrame(&reader.interface, &body_storage);
+            try std.testing.expectEqual(protocol.MessageType.start_stream, start.header.message_type);
+            try sendTestStreamInfo(&writer.interface, 2, start.header);
+
+            const cancel = try readClientFrame(&reader.interface, &body_storage);
+            try std.testing.expectEqual(protocol.MessageType.cancel_generation, cancel.header.message_type);
+            try std.testing.expectEqual(start.header.stream_id, cancel.header.stream_id);
+            try std.testing.expectEqual(start.header.generation_id, cancel.header.generation_id);
+        }
+
+        const retry_stream = try self.listener.accept(self.io);
+        defer retry_stream.close(self.io);
+
+        var retry_read_buffer: [1024]u8 = undefined;
+        var retry_reader = retry_stream.reader(self.io, &retry_read_buffer);
+        var retry_writer = retry_stream.writer(self.io, &.{});
+        var retry_body_storage: [protocol.StartStream.max_wire_len]u8 = undefined;
+
+        const retry_hello = try readClientFrame(&retry_reader.interface, &retry_body_storage);
+        try std.testing.expectEqual(protocol.MessageType.hello, retry_hello.header.message_type);
+        try sendEmptyServerMessage(&retry_writer.interface, .hello_ack, 1, 0, 0);
+
+        const retry_start = try readClientFrame(&retry_reader.interface, &retry_body_storage);
+        try std.testing.expectEqual(protocol.MessageType.start_stream, retry_start.header.message_type);
+        try sendTestStreamInfo(&retry_writer.interface, 2, retry_start.header);
+
+        const initial_status = try readClientFrame(&retry_reader.interface, &retry_body_storage);
+        try std.testing.expectEqual(protocol.MessageType.buffer_status, initial_status.header.message_type);
+        try sendAudioFrame(
+            &retry_writer.interface,
+            3,
+            retry_start.header.stream_id,
+            retry_start.header.generation_id,
+            0,
+            1,
+            &[_]u8{0} ** 4,
+        );
+
+        const startup_ack = try readClientFrame(&retry_reader.interface, &retry_body_storage);
+        try expectBufferStatusAck(
+            startup_ack,
+            retry_start.header.stream_id,
+            retry_start.header.generation_id,
+            3,
+        );
+
+        const retry_cancel = try readClientFrame(&retry_reader.interface, &retry_body_storage);
+        try std.testing.expectEqual(protocol.MessageType.cancel_generation, retry_cancel.header.message_type);
+        try sendEmptyServerMessage(
+            &retry_writer.interface,
+            .stream_end,
+            4,
+            retry_start.header.stream_id,
+            retry_start.header.generation_id,
         );
     }
 };

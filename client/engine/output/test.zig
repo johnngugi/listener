@@ -15,6 +15,7 @@ const State = struct {
     render_thread: ?std.Thread = null,
     started: bool = false,
     stop_requested: bool = false,
+    fail_next_open: bool = false,
 };
 
 var state: State = .{};
@@ -32,6 +33,13 @@ pub fn reset(allocator: std.mem.Allocator) void {
     state.render_thread = null;
     state.started = false;
     state.stop_requested = false;
+    state.fail_next_open = false;
+}
+
+pub fn failNextOpen() void {
+    lock();
+    defer unlock();
+    state.fail_next_open = true;
 }
 
 pub fn capturedBytes(allocator: std.mem.Allocator) ![]u8 {
@@ -78,6 +86,10 @@ fn open(output_format: backend.OutputFormat, source: backend.OutputSource) !void
     defer unlock();
 
     if (state.allocator == null) return error.TestBackendNotInitialized;
+    if (state.fail_next_open) {
+        state.fail_next_open = false;
+        return error.TestOutputOpenFailed;
+    }
     state.output_format = output_format;
     state.source = source;
     state.stop_requested = false;
