@@ -7,11 +7,12 @@ const library_scan = @import("library/scan.zig");
 const library_service = @import("library/service.zig");
 const sqlite = @import("library/sqlite.zig");
 const stdout = @import("stdout");
+const bonjour = @import("bonjour.zig");
 
 const Config = struct {
-    lstn_host: []const u8 = "127.0.0.1",
+    lstn_host: []const u8 = "0.0.0.0",
     lstn_port: u16 = 5778,
-    grpc_address: [:0]const u8 = "127.0.0.1:5779",
+    grpc_address: [:0]const u8 = "0.0.0.0:5779",
     data_dir: ?[]const u8 = null,
 };
 
@@ -91,6 +92,16 @@ pub fn main(init: std.process.Init) !void {
         .{config.grpc_address},
     );
 
+    const bonjour_thread = std.Thread.spawn(
+        .{},
+        registermDnsService,
+        .{init.io},
+    ) catch |err| {
+        stdout.print(init.io, "Failed to register mDns: {} \n", .{err});
+        return err;
+    };
+    bonjour_thread.detach();
+
     try lstn_server.run(init.io, init.gpa, .{
         .context = &controller,
         .resolve_media_path = resolveLstnMediaPath,
@@ -150,5 +161,11 @@ fn runGrpcControlLoop(
 ) void {
     server.runUnaryControlLoop(allocator, controller, library_api) catch |err| {
         stdout.print(io, "gRPC control loop stopped: {}\n", .{err});
+    };
+}
+
+fn registermDnsService(io: std.Io) void {
+    bonjour.registerBonjourService() catch |err| {
+        stdout.print(io, "bonjour registration failed: {} \n", .{err});
     };
 }
