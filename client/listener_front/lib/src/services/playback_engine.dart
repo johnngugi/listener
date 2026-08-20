@@ -4,6 +4,7 @@ import 'dart:ffi' as ffi;
 import 'dart:io';
 
 import 'package:ffi/ffi.dart';
+import 'package:listener_front/src/services/playback_engine_event.dart';
 
 const _listenerEngineDylibEnv = "LISTENER_ENGINE_DYLIB";
 const _devListenerEngineDylibPath =
@@ -75,7 +76,29 @@ typedef _SetEventCallbackDart =
       ffi.Pointer<ffi.Void>,
     );
 
-enum PlaybackEngineEvent { ended, failed }
+typedef _StartDiscoveryNative = ffi.Uint32 Function(ffi.Pointer<Engine>);
+typedef _StartDiscoveryDart = int Function(ffi.Pointer<Engine>);
+
+typedef _DiscoveredServiceReleaseNative =
+    ffi.Void Function(ffi.Pointer<NativeDiscoveredService>);
+
+typedef _DiscoveredServiceReleaseDart =
+    void Function(ffi.Pointer<NativeDiscoveredService>);
+
+final class NativeDiscoveredService extends ffi.Struct {
+  external ffi.Pointer<ffi.Uint8> fullName;
+
+  @ffi.Size()
+  external int fullNameLength;
+
+  external ffi.Pointer<ffi.Uint8> hostTarget;
+
+  @ffi.Size()
+  external int hostTargetLength;
+
+  @ffi.Uint16()
+  external int port;
+}
 
 enum ListenerStatus {
   ok(0),
@@ -105,6 +128,8 @@ enum ListenerStatus {
 
 abstract interface class PlaybackEngine {
   Stream<PlaybackEngineEvent> get events;
+
+  Future<DiscoveredServiceEvent> discoverService();
 
   ListenerStatus startStream({
     required String playbackId,
@@ -180,6 +205,17 @@ final class ListenerEngine implements PlaybackEngine {
           'listener_engine_set_event_callback',
         );
 
+    _startDiscovery = _library
+        .lookupFunction<_StartDiscoveryNative, _StartDiscoveryDart>(
+          'listener_engine_start_discovery',
+        );
+
+    _releaseDiscoveredService = _library
+        .lookupFunction<
+          _DiscoveredServiceReleaseNative,
+          _DiscoveredServiceReleaseDart
+        >('listener_discovered_service_release');
+
     _engine = _create();
     if (_engine == ffi.nullptr) {
       throw StateError("listener_engine_create returned null");
@@ -221,6 +257,8 @@ final class ListenerEngine implements PlaybackEngine {
   late final _CurrentFrameDart _currentFrame;
   late final _SeekDart _seek;
   late final _SetEventCallbackDart _setEventCallback;
+  late final _StartDiscoveryDart _startDiscovery;
+  late final _DiscoveredServiceReleaseDart _releaseDiscoveredService;
   late final ffi.Pointer<Engine> _engine;
   late final ffi.NativeCallable<_PlaybackEventCallbackNative> _eventCallback;
   late final ffi.Pointer<ffi.Uint64> _currentFrameOut;
@@ -228,12 +266,36 @@ final class ListenerEngine implements PlaybackEngine {
   final StreamController<PlaybackEngineEvent> _events =
       StreamController<PlaybackEngineEvent>.broadcast();
 
+  Completer<DiscoveredServiceEvent>? _discoveryCompleter;
+
   bool _closed = false;
 
   int get abiVersion => _abiVersion();
 
   @override
   Stream<PlaybackEngineEvent> get events => _events.stream;
+
+  @override
+  Future<DiscoveredServiceEvent> discoverService() {
+    if (_closed) {
+      throw StateError('ListenerEngine is closed');
+    }
+
+    if (_discoveryCompleter != null) {
+      throw StateError('Service discovery is already running');
+    }
+
+    final completer = Completer<DiscoveredServiceEvent>();
+    _discoveryCompleter = completer;
+
+    final status = ListenerStatus.fromCode(_startDiscovery(_engine));
+    if (status != ListenerStatus.ok) {
+      _discoveryCompleter = null;
+      throw StateError('Failed to start service discovery: ${status.name}');
+    }
+
+    return completer.future;
+  }
 
   ListenerStatus connect({String host = '127.0.0.1', int port = 5778}) {
     if (_closed) {
@@ -364,14 +426,57 @@ final class ListenerEngine implements PlaybackEngine {
     unawaited(_events.close());
   }
 
-  void _handlePlaybackEvent(ffi.Pointer<ffi.Void> _, int event) {
-    if (_closed) return;
-
+  void _handlePlaybackEvent(ffi.Pointer<ffi.Void> context, int event) {
     switch (event) {
       case 1:
-        _events.add(PlaybackEngineEvent.ended);
+        if (!_closed) {
+          _events.add(Ended());
+        }
       case 2:
-        _events.add(PlaybackEngineEvent.failed);
+        if (!_closed) {
+          _events.add(Failed());
+        }
+      case 3:
+        _handleDiscoveredService(context);
+    }
+  }
+
+  void _handleDiscoveredService(ffi.Pointer<ffi.Void> context) {
+    final completer = _discoveryCompleter;
+    _discoveryCompleter = null;
+
+    if (context == ffi.nullptr) {
+      if (completer != null && !completer.isCompleted) {
+        completer.completeError(
+          StateError('Service discovery returned a null service'),
+        );
+      }
+      return;
+    }
+
+    final discoveredServicePointer = context.cast<NativeDiscoveredService>();
+
+    try {
+      final serviceRef = discoveredServicePointer.ref;
+      final service = DiscoveredServiceEvent(
+        fullName: utf8.decode(
+          serviceRef.fullName.asTypedList(serviceRef.fullNameLength),
+        ),
+        host: utf8.decode(
+          serviceRef.hostTarget.asTypedList(serviceRef.hostTargetLength),
+        ),
+        port: serviceRef.port,
+      );
+
+      if (!_closed && completer != null && !completer.isCompleted) {
+        completer.complete(service);
+      }
+    } catch (error, stackTrace) {
+      if (completer != null && !completer.isCompleted) {
+        completer.completeError(error, stackTrace);
+      }
+    } finally {
+      _releaseDiscoveredService(discoveredServicePointer);
     }
   }
 }

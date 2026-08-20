@@ -31,11 +31,23 @@ pub const Connection = struct {
         allocator: std.mem.Allocator,
         config: Config,
     ) !Connection {
-        const address = try net.IpAddress.parse(config.host, config.port);
-        const connection = try address.connect(io, .{
+        const connect_options: net.IpAddress.ConnectOptions = .{
             .mode = net.Socket.Mode.stream,
             .protocol = net.Protocol.tcp,
-        });
+        };
+
+        const connection = connection: {
+            if (net.IpAddress.parse(config.host, config.port)) |address| {
+                break :connection try address.connect(io, connect_options);
+            } else |_| {
+                const host_name = try net.HostName.init(config.host);
+                break :connection try host_name.connect(
+                    io,
+                    config.port,
+                    connect_options,
+                );
+            }
+        };
 
         const shared = try allocator.create(SharedState);
         shared.* = .{

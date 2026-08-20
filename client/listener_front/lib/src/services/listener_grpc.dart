@@ -6,10 +6,10 @@ class ListenerGrpc {
     : controlClient = ListenerControlClient(channel),
       libraryClient = ListenerLibraryClient(channel);
 
-  factory ListenerGrpc.connect() {
+  factory ListenerGrpc.connect({String host = '127.0.0.1', int port = 5779}) {
     final channel = ClientChannel(
-      "127.0.0.1",
-      port: 5779,
+      host,
+      port: port,
       options: const ChannelOptions(credentials: ChannelCredentials.insecure()),
     );
 

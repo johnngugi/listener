@@ -5,6 +5,8 @@ const backend = @import("audio_backend");
 const ring_buffer = @import("audio_ring_buffer");
 const selected_output = @import("selected_output");
 const stdout = @import("stdout");
+const bonjour = @import("bonjour.zig");
+const playback_event = @import("playback_event.zig");
 
 pub export fn listener_engine_abi_version() u32 {
     return 1;
@@ -127,24 +129,68 @@ pub export fn listener_engine_seek(engine_ptr: ?*Engine, target_frame: u64) List
 
 pub export fn listener_engine_set_event_callback(
     engine_ptr: ?*Engine,
-    callback: ?PlaybackEventCallback,
+    callback: ?playback_event.PlaybackEventCallback,
     context: ?*anyopaque,
 ) ListenerStatus {
     const engine = engine_ptr orelse return .null_engine;
+    engine.stopDiscovery();
     engine.event_callback = callback;
     engine.event_context = context;
     return .ok;
 }
 
-const PlaybackEventCallback = *const fn (
-    context: ?*anyopaque,
-    event: u32,
-) callconv(.c) void;
+pub export fn listener_engine_start_discovery(
+    engine_ptr: ?*Engine,
+) ListenerStatus {
+    const engine = engine_ptr orelse return .null_engine;
+    const callback = engine.event_callback orelse return .null_event_callback;
 
-const PlaybackEvent = enum(u32) {
-    ended = 1,
-    failed = 2,
-};
+    // A retry replaces any existing discovery operation. Joining here keeps
+    // at most one worker alive and makes its callback lifetime unambiguous.
+    engine.stopDiscovery();
+    engine.discovery_stop_requested.store(false, .release);
+
+    const thread = std.Thread.spawn(
+        .{},
+        discoveryMain,
+        .{
+            engine.allocator,
+            callback,
+            &engine.discovery_stop_requested,
+        },
+    ) catch |err| {
+        stdout.print(engine.io(), "listener_engine_start_discovery failed: {}\n", .{err});
+        return status_from_error(err);
+    };
+    engine.discovery_service_thread = thread;
+
+    return .ok;
+}
+
+fn discoveryMain(
+    allocator: std.mem.Allocator,
+    callback: playback_event.PlaybackEventCallback,
+    stop_requested: *const std.atomic.Value(bool),
+) void {
+    bonjour.findListenerService(
+        allocator,
+        callback,
+        stop_requested,
+    ) catch |err| {
+        stdout.printGlobal("listener service discovery failed: {}\n", .{err});
+    };
+}
+
+pub export fn listener_discovered_service_release(
+    service_ptr: ?*playback_event.DiscoveredService,
+) void {
+    const service = service_ptr orelse return;
+    const allocator = std.heap.smp_allocator;
+
+    allocator.free(service.full_name[0..service.full_name_len]);
+    allocator.free(service.host_target[0..service.host_target_len]);
+    allocator.destroy(service);
+}
 
 const Engine = struct {
     allocator: std.mem.Allocator,
@@ -158,9 +204,11 @@ const Engine = struct {
     connection_host: ?[]u8 = null,
     connection_port: ?u16 = null,
     flow_control: FlowControlState = .{},
-    event_callback: ?PlaybackEventCallback = null,
+    event_callback: ?playback_event.PlaybackEventCallback = null,
     event_context: ?*anyopaque = null,
     active_playback_id: ?[]u8 = null,
+    discovery_service_thread: ?std.Thread = null,
+    discovery_stop_requested: std.atomic.Value(bool) = .init(false),
 
     pub fn init(allocator: std.mem.Allocator) Engine {
         var audio_backend = backend.OutputBackend{
@@ -456,6 +504,10 @@ const Engine = struct {
     }
 
     pub fn deinit(self: *Engine) void {
+        // No discovery callback can be invoked after this returns. Dart closes
+        // its NativeCallable only after listener_engine_destroy completes.
+        self.stopDiscovery();
+
         self.stopStream() catch {};
 
         if (self.receive_thread) |thread| {
@@ -493,6 +545,15 @@ const Engine = struct {
         self.io_thread.deinit();
     }
 
+    fn stopDiscovery(self: *Engine) void {
+        self.discovery_stop_requested.store(true, .release);
+
+        if (self.discovery_service_thread) |thread| {
+            thread.join();
+            self.discovery_service_thread = null;
+        }
+    }
+
     fn ensureConnection(self: *Engine) !void {
         if (self.lstn_connection) |*conn| {
             if (conn.isOpen()) return;
@@ -526,6 +587,9 @@ pub const ListenerStatus = enum(u32) {
     out_of_memory = 8,
     no_active_stream = 9,
     invalid_seek_frame = 10,
+    service_not_found = 11,
+    null_event_context = 12,
+    null_event_callback = 13,
     unexpected = 255,
 };
 
@@ -618,7 +682,7 @@ fn receiveAudioMain(
     playback_buffer: *ring_buffer.SharedPcmRingBuffer,
     flow_control: *FlowControlState,
     receiver_state: *ReceiverState,
-    event_callback: ?PlaybackEventCallback,
+    event_callback: ?playback_event.PlaybackEventCallback,
     event_context: ?*anyopaque,
 ) void {
     receive_audio_frame(
@@ -634,7 +698,7 @@ fn receiveAudioMain(
         playback_buffer.stop() catch {};
         if (receiver_state.finish(err)) {
             if (event_callback) |callback| {
-                callback(event_context, @intFromEnum(PlaybackEvent.failed));
+                callback(event_context, @intFromEnum(playback_event.PlaybackEvent.failed));
             }
         }
         return;
@@ -650,7 +714,7 @@ fn receive_audio_frame(
     playback_buffer: *ring_buffer.SharedPcmRingBuffer,
     flow_control: *FlowControlState,
     receiver_state: ?*ReceiverState,
-    event_callback: ?PlaybackEventCallback,
+    event_callback: ?playback_event.PlaybackEventCallback,
     event_context: ?*anyopaque,
 ) !void {
     var last_received_sequence: u64 = 0;
@@ -699,7 +763,7 @@ fn receive_audio_frame(
 
     if (try playback_buffer.waitUntilDrained()) {
         if (event_callback) |callback| {
-            callback(event_context, @intFromEnum(PlaybackEvent.ended));
+            callback(event_context, @intFromEnum(playback_event.PlaybackEvent.ended));
         }
     }
 }
@@ -721,6 +785,8 @@ fn status_from_error(err: anyerror) ListenerStatus {
         error.NonCanonical,
         error.ParseFailed,
         error.UnresolvedScope,
+        error.InvalidHostName,
+        error.NameTooLong,
         => .invalid_host,
 
         error.AddressUnavailable,
@@ -741,6 +807,9 @@ fn status_from_error(err: anyerror) ListenerStatus {
         error.WouldBlock,
         error.NetworkDown,
         error.SystemResources,
+        error.UnknownHostName,
+        error.NoAddressReturned,
+        error.NameServerFailure,
         => .connect_failed,
 
         error.EndOfStream,
@@ -769,6 +838,8 @@ fn status_from_error(err: anyerror) ListenerStatus {
         error.InvalidSeekFrame => .invalid_seek_frame,
 
         error.OutOfMemory => .out_of_memory,
+
+        error.ListenerServiceNotFound => .service_not_found,
 
         else => .unexpected,
     };
@@ -971,7 +1042,7 @@ test "receiver failure after startup is reported as an engine event" {
     server.release_failure.store(true, .release);
     try waitForAtomicU32(
         &received_event,
-        @intFromEnum(PlaybackEvent.failed),
+        @intFromEnum(playback_event.PlaybackEvent.failed),
         100_000,
     );
 
@@ -1231,7 +1302,7 @@ fn expectEngineStreamsNetworkAudio(audio_delivery: AudioDelivery) !void {
 }
 
 fn recordPlaybackEvent(context: ?*anyopaque, event: u32) callconv(.c) void {
-    if (event != @intFromEnum(PlaybackEvent.ended)) return;
+    if (event != @intFromEnum(playback_event.PlaybackEvent.ended)) return;
     const playback_ended: *std.atomic.Value(bool) = @ptrCast(@alignCast(context.?));
     playback_ended.store(true, .release);
 }

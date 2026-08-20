@@ -8,6 +8,7 @@ import 'package:listener_front/src/models/playback_state.dart';
 import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/services/playback_control.dart';
 import 'package:listener_front/src/services/playback_engine.dart';
+import 'package:listener_front/src/services/playback_engine_event.dart';
 import 'package:listener_front/src/utils/result.dart';
 
 class PlaybackCubit extends Cubit<PlaybackState> {
@@ -312,10 +313,12 @@ class PlaybackCubit extends Cubit<PlaybackState> {
 
   void _onEngineEvent(PlaybackEngineEvent event) {
     switch (event) {
-      case PlaybackEngineEvent.ended:
+      case Ended():
         unawaited(_handlePlaybackEnded());
-      case PlaybackEngineEvent.failed:
+      case Failed():
         unawaited(_handlePlaybackFailure());
+      default:
+        break;
     }
   }
 

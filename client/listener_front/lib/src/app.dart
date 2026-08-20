@@ -5,7 +5,9 @@ import 'package:listener_front/src/widgets/sidebar.dart';
 import 'package:listener_front/src/widgets/track_library.dart';
 
 class MainApp extends StatelessWidget {
-  const MainApp({super.key});
+  const MainApp({super.key, this.home = const LibraryScreen()});
+
+  final Widget home;
 
   @override
   Widget build(BuildContext context) {
@@ -17,7 +19,7 @@ class MainApp extends StatelessWidget {
         colorScheme: const ColorScheme.dark(primary: accentColor),
         fontFamily: 'Helvetica',
       ),
-      home: const LibraryScreen(),
+      home: home,
     );
   }
 }

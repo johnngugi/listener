@@ -6,6 +6,7 @@ import 'package:listener_front/src/generated/listener/v1/listener.pbgrpc.dart'
 import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/services/playback_control.dart';
 import 'package:listener_front/src/services/playback_engine.dart';
+import 'package:listener_front/src/services/playback_engine_event.dart';
 import 'package:listener_front/src/view_models/playback_cubit.dart';
 import 'package:listener_front/src/widgets/now_playing_bar.dart';
 
@@ -95,6 +96,11 @@ final class _FakePlaybackEngine implements PlaybackEngine {
 
   @override
   Stream<PlaybackEngineEvent> get events => const Stream.empty();
+
+  @override
+  Future<DiscoveredServiceEvent> discoverService() {
+    throw UnsupportedError('Discovery is not used by this fake');
+  }
 
   @override
   ListenerStatus startStream({

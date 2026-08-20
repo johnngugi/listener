@@ -7,6 +7,7 @@ import 'package:listener_front/src/models/playback_state.dart';
 import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/services/playback_control.dart';
 import 'package:listener_front/src/services/playback_engine.dart';
+import 'package:listener_front/src/services/playback_engine_event.dart';
 import 'package:listener_front/src/view_models/playback_cubit.dart';
 
 void main() {
@@ -44,7 +45,7 @@ void main() {
       final tracks = [_track(1), _track(2)];
 
       await cubit.play(selectedTrack: tracks.first, queueTracks: tracks);
-      engine.addEvent(PlaybackEngineEvent.ended);
+      engine.addEvent(const Ended());
       await _waitForState(
         cubit,
         (state) =>
@@ -74,7 +75,7 @@ void main() {
         cubit,
         (state) => state.status == PlaybackStatus.stopped,
       );
-      engine.addEvent(PlaybackEngineEvent.ended);
+      engine.addEvent(const Ended());
       await stopped;
 
       expect(cubit.state.queue?.currentTrack, tracks.last);
@@ -92,7 +93,7 @@ void main() {
       final tracks = [_track(1), _track(2)];
 
       await cubit.play(selectedTrack: tracks.first, queueTracks: tracks);
-      engine.addEvent(PlaybackEngineEvent.ended);
+      engine.addEvent(const Ended());
       await _waitForState(
         cubit,
         (state) => state.status == PlaybackStatus.error,
@@ -168,6 +169,11 @@ final class _FakePlaybackEngine implements PlaybackEngine {
 
   @override
   Stream<PlaybackEngineEvent> get events => _events.stream;
+
+  @override
+  Future<DiscoveredServiceEvent> discoverService() {
+    throw UnsupportedError('Discovery is not used by this fake');
+  }
 
   void addEvent(PlaybackEngineEvent event) => _events.add(event);
 
