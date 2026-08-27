@@ -22,27 +22,45 @@ const _albumFlex = 19;
 const _headerHeight = 56.0;
 const _rowHeight = 80.0;
 
+enum _LibraryLayout { minimal, compact, medium, full }
+
+_LibraryLayout _libraryLayoutFor(double width) {
+  if (width >= 1320) return _LibraryLayout.full;
+  if (width >= 820) return _LibraryLayout.medium;
+  if (width >= 480) return _LibraryLayout.compact;
+  return _LibraryLayout.minimal;
+}
+
 class TrackLibrary extends StatelessWidget {
-  const TrackLibrary({super.key});
+  const TrackLibrary({super.key, this.showSidebarButton = false});
+
+  final bool showSidebarButton;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: backgroundColor,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const LibraryTopBar(),
-          const SizedBox(height: 32),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: _hPad),
-            child: LibraryTitle(),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 760;
+        final horizontalPadding = compact ? 16.0 : _hPad;
+
+        return Container(
+          color: backgroundColor,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              LibraryTopBar(showSidebarButton: showSidebarButton),
+              SizedBox(height: compact ? 22 : 32),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                child: const LibraryTitle(),
+              ),
+              SizedBox(height: compact ? 20 : 28),
+              const TrackTableHeader(),
+              const Expanded(child: LibraryListPane()),
+            ],
           ),
-          const SizedBox(height: 28),
-          const TrackTableHeader(),
-          const Expanded(child: LibraryListPane()),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -237,42 +255,61 @@ class _LoadMoreError extends StatelessWidget {
 }
 
 class LibraryTopBar extends StatelessWidget {
-  const LibraryTopBar({super.key});
+  const LibraryTopBar({super.key, this.showSidebarButton = false});
+
+  final bool showSidebarButton;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(_hPad, 22, _hPad, 0),
-      child: Row(
-        children: [
-          const Icon(Icons.chevron_left, color: mutedColor, size: 32),
-          const Spacer(),
-          Icon(
-            Icons.bookmark_border,
-            color: mutedColor.withValues(alpha: .95),
-            size: 25,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 600;
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            compact ? 16 : _hPad,
+            22,
+            compact ? 16 : _hPad,
+            0,
           ),
-          const SizedBox(width: 40),
-          Icon(
-            Icons.search,
-            color: mutedColor.withValues(alpha: .95),
-            size: 27,
-          ),
-          const SizedBox(width: 46),
-          const CircleAvatar(
-            radius: 17,
-            backgroundColor: greenColor,
-            child: Text(
-              'J',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 18,
+          child: Row(
+            children: [
+              if (showSidebarButton)
+                IconButton(
+                  tooltip: 'Open navigation',
+                  onPressed: () => Scaffold.of(context).openDrawer(),
+                  icon: const Icon(Icons.menu, color: mutedColor, size: 28),
+                )
+              else
+                const Icon(Icons.chevron_left, color: mutedColor, size: 32),
+              const Spacer(),
+              Icon(
+                Icons.bookmark_border,
+                color: mutedColor.withValues(alpha: .95),
+                size: 25,
               ),
-            ),
+              SizedBox(width: compact ? 20 : 40),
+              Icon(
+                Icons.search,
+                color: mutedColor.withValues(alpha: .95),
+                size: 27,
+              ),
+              SizedBox(width: compact ? 24 : 46),
+              const CircleAvatar(
+                radius: 17,
+                backgroundColor: greenColor,
+                child: Text(
+                  'J',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 18,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -282,51 +319,76 @@ class LibraryTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 620;
+        final heading = Wrap(
+          crossAxisAlignment: WrapCrossAlignment.end,
+          spacing: 14,
+          runSpacing: 8,
+          children: const [_LibraryHeading(), _LibraryTrackCount()],
+        );
+
+        if (compact) {
+          return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  const Text(
-                    'My Tracks',
-                    style: TextStyle(
-                      color: textColor,
-                      fontFamily: 'Georgia',
-                      fontSize: 38,
-                      height: 1,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: BlocSelector<LibraryCubit, LibraryState, int>(
-                      selector: (state) => state.totalSize,
-                      builder: (context, totalSize) => Text(
-                        '$totalSize ${totalSize == 1 ? 'track' : 'tracks'}',
-                        style: const TextStyle(
-                          color: mutedColor,
-                          fontSize: 17,
-                          height: 1,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 34),
+              heading,
+              const SizedBox(height: 20),
+              const PlayNowButton(),
             ],
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: heading),
+            const PlayNowButton(),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _LibraryHeading extends StatelessWidget {
+  const _LibraryHeading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Text(
+      'My Tracks',
+      style: TextStyle(
+        color: textColor,
+        fontFamily: 'Georgia',
+        fontSize: 38,
+        height: 1,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+}
+
+class _LibraryTrackCount extends StatelessWidget {
+  const _LibraryTrackCount();
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocSelector<LibraryCubit, LibraryState, int>(
+      selector: (state) => state.totalSize,
+      builder: (context, totalSize) => Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Text(
+          '$totalSize ${totalSize == 1 ? 'track' : 'tracks'}',
+          style: const TextStyle(
+            color: mutedColor,
+            fontSize: 17,
+            height: 1,
+            fontWeight: FontWeight.w600,
           ),
         ),
-        const PlayNowButton(),
-      ],
+      ),
     );
   }
 }
@@ -384,86 +446,114 @@ class TrackTableHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: _headerHeight,
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: lineColor)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: _hPad),
-        child: Row(
-          children: [
-            const SizedBox(
-              width: _numW,
-              child: SortableHeader(
-                '#',
-                LibrarySortField.trackNumber,
-                alignRight: true,
-              ),
-            ),
-            const VerticalRule(height: _headerHeight),
-            const Expanded(
-              flex: _trackFlex,
-              child: SortableHeader('Track', LibrarySortField.title),
-            ),
-            const SizedBox(width: _favW, child: HeaderIcon(Icons.search)),
-            const VerticalRule(height: _headerHeight),
-            const SizedBox(
-              width: _lengthW,
-              child: SortableHeader('Length', LibrarySortField.duration),
-            ),
-            const VerticalRule(height: _headerHeight),
-            Expanded(
-              flex: _artistFlex,
-              child: Row(
-                children: const [
-                  Expanded(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final layout = _libraryLayoutFor(constraints.maxWidth);
+        final horizontalPadding = layout == _LibraryLayout.full ? _hPad : 16.0;
+        final showNumber = layout != _LibraryLayout.minimal;
+        final showLength = layout != _LibraryLayout.minimal;
+        final showDetails =
+            layout == _LibraryLayout.medium || layout == _LibraryLayout.full;
+        final showEverything = layout == _LibraryLayout.full;
+
+        return Container(
+          height: _headerHeight,
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: lineColor)),
+          ),
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+            child: Row(
+              children: [
+                if (showNumber) ...[
+                  const SizedBox(
+                    width: _numW,
                     child: SortableHeader(
-                      'Album artist',
-                      LibrarySortField.albumArtist,
+                      '#',
+                      LibrarySortField.trackNumber,
+                      alignRight: true,
                     ),
                   ),
-                  Icon(Icons.search, color: mutedColor, size: 22),
-                  SizedBox(width: 8),
+                  const VerticalRule(height: _headerHeight),
                 ],
-              ),
-            ),
-            const VerticalRule(height: _headerHeight),
-            Expanded(
-              flex: _albumFlex,
-              child: Row(
-                children: const [
-                  Expanded(
-                    child: SortableHeader('Album', LibrarySortField.album),
+                const Expanded(
+                  flex: _trackFlex,
+                  child: SortableHeader('Track', LibrarySortField.title),
+                ),
+                if (showDetails) ...[
+                  const SizedBox(width: _favW, child: HeaderIcon(Icons.search)),
+                  const VerticalRule(height: _headerHeight),
+                ],
+                if (showLength) ...[
+                  const SizedBox(
+                    width: _lengthW,
+                    child: SortableHeader('Length', LibrarySortField.duration),
                   ),
-                  Icon(Icons.search, color: mutedColor, size: 22),
-                  SizedBox(width: 8),
+                  const VerticalRule(height: _headerHeight),
                 ],
-              ),
+                if (showDetails) ...[
+                  Expanded(
+                    flex: _artistFlex,
+                    child: Row(
+                      children: const [
+                        Expanded(
+                          child: SortableHeader(
+                            'Album artist',
+                            LibrarySortField.albumArtist,
+                          ),
+                        ),
+                        Icon(Icons.search, color: mutedColor, size: 22),
+                        SizedBox(width: 8),
+                      ],
+                    ),
+                  ),
+                  const VerticalRule(height: _headerHeight),
+                  Expanded(
+                    flex: _albumFlex,
+                    child: Row(
+                      children: const [
+                        Expanded(
+                          child: SortableHeader(
+                            'Album',
+                            LibrarySortField.album,
+                          ),
+                        ),
+                        Icon(Icons.search, color: mutedColor, size: 22),
+                        SizedBox(width: 8),
+                      ],
+                    ),
+                  ),
+                  const VerticalRule(height: _headerHeight),
+                ],
+                if (showEverything) ...[
+                  const SizedBox(
+                    width: _releaseW,
+                    child: SortableHeader(
+                      'Release date',
+                      LibrarySortField.releaseDate,
+                    ),
+                  ),
+                  const VerticalRule(height: _headerHeight),
+                  const SizedBox(
+                    width: _dateW,
+                    child: SortableHeader(
+                      'Date added',
+                      LibrarySortField.dateAdded,
+                    ),
+                  ),
+                  const VerticalRule(height: _headerHeight),
+                  const SizedBox(width: _playsW, child: HeaderLabel('Plays')),
+                  const VerticalRule(height: _headerHeight),
+                ],
+                const SizedBox(
+                  width: _moreW,
+                  child: HeaderIcon(Icons.settings_outlined),
+                ),
+              ],
             ),
-            const VerticalRule(height: _headerHeight),
-            const SizedBox(
-              width: _releaseW,
-              child: SortableHeader(
-                'Release date',
-                LibrarySortField.releaseDate,
-              ),
-            ),
-            const VerticalRule(height: _headerHeight),
-            const SizedBox(
-              width: _dateW,
-              child: SortableHeader('Date added', LibrarySortField.dateAdded),
-            ),
-            const VerticalRule(height: _headerHeight),
-            const SizedBox(width: _playsW, child: HeaderLabel('Plays')),
-            const VerticalRule(height: _headerHeight),
-            const SizedBox(
-              width: _moreW,
-              child: HeaderIcon(Icons.settings_outlined),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -580,90 +670,120 @@ class TrackRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onDoubleTap: () {
-        final libraryTracks = context.read<LibraryCubit>().state.tracks;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final layout = _libraryLayoutFor(constraints.maxWidth);
+        final horizontalPadding = layout == _LibraryLayout.full ? _hPad : 16.0;
+        final showNumber = layout != _LibraryLayout.minimal;
+        final showLength = layout != _LibraryLayout.minimal;
+        final showDetails =
+            layout == _LibraryLayout.medium || layout == _LibraryLayout.full;
+        final showEverything = layout == _LibraryLayout.full;
+        final artworkSize = layout == _LibraryLayout.minimal ? 48.0 : 56.0;
 
-        context.read<PlaybackCubit>().play(
-          selectedTrack: track,
-          queueTracks: libraryTracks,
+        return InkWell(
+          onDoubleTap: () {
+            final libraryTracks = context.read<LibraryCubit>().state.tracks;
+
+            context.read<PlaybackCubit>().play(
+              selectedTrack: track,
+              queueTracks: libraryTracks,
+            );
+          },
+          child: Container(
+            height: _rowHeight,
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: lineColor)),
+            ),
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+              child: Row(
+                children: [
+                  if (showNumber) ...[
+                    SizedBox(
+                      width: _numW,
+                      child: BodyCell(track.number, alignRight: true),
+                    ),
+                    const SizedBox(width: 1),
+                  ],
+                  Expanded(
+                    flex: _trackFlex,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      child: Row(
+                        children: [
+                          ArtworkImage(
+                            artworkId: track.artworkId,
+                            size: artworkSize,
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Text(
+                              track.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: textColor,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                height: 1.18,
+                              ),
+                            ),
+                          ),
+                          if (track.hasBadge &&
+                              layout != _LibraryLayout.minimal) ...[
+                            const SizedBox(width: 8),
+                            const TinyLinkedBadge(),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (showDetails) ...[
+                    SizedBox(
+                      width: _favW,
+                      child: Icon(
+                        track.favorite ? Icons.favorite : Icons.favorite_border,
+                        color: accentColor,
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 1),
+                  ],
+                  if (showLength) ...[
+                    SizedBox(
+                      width: _lengthW,
+                      child: BodyCell(track.formatMilliseconds()),
+                    ),
+                    const SizedBox(width: 1),
+                  ],
+                  if (showDetails) ...[
+                    Expanded(flex: _artistFlex, child: LinkCell(track.artist)),
+                    const SizedBox(width: 1),
+                    Expanded(flex: _albumFlex, child: LinkCell(track.album)),
+                    const SizedBox(width: 1),
+                  ],
+                  if (showEverything) ...[
+                    SizedBox(
+                      width: _releaseW,
+                      child: BodyCell(track.releaseDate),
+                    ),
+                    const SizedBox(width: 1),
+                    SizedBox(width: _dateW, child: BodyCell(track.dateAdded)),
+                    const SizedBox(width: 1),
+                    SizedBox(width: _playsW, child: BodyCell(track.plays)),
+                    const SizedBox(width: 1),
+                  ],
+                  const SizedBox(
+                    width: _moreW,
+                    child: Icon(Icons.more_horiz, color: mutedColor, size: 26),
+                  ),
+                ],
+              ),
+            ),
+          ),
         );
       },
-      child: Container(
-        height: _rowHeight,
-        decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: lineColor)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: _hPad),
-          child: Row(
-            children: [
-              SizedBox(
-                width: _numW,
-                child: BodyCell(track.number, alignRight: true),
-              ),
-              const SizedBox(width: 1),
-              Expanded(
-                flex: _trackFlex,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  child: Row(
-                    children: [
-                      ArtworkImage(artworkId: track.artworkId, size: 56),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Text(
-                          track.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: textColor,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            height: 1.18,
-                          ),
-                        ),
-                      ),
-                      if (track.hasBadge) ...[
-                        const SizedBox(width: 8),
-                        const TinyLinkedBadge(),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              SizedBox(
-                width: _favW,
-                child: Icon(
-                  track.favorite ? Icons.favorite : Icons.favorite_border,
-                  color: accentColor,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 1),
-              SizedBox(
-                width: _lengthW,
-                child: BodyCell(track.formatMilliseconds()),
-              ),
-              const SizedBox(width: 1),
-              Expanded(flex: _artistFlex, child: LinkCell(track.artist)),
-              const SizedBox(width: 1),
-              Expanded(flex: _albumFlex, child: LinkCell(track.album)),
-              const SizedBox(width: 1),
-              SizedBox(width: _releaseW, child: BodyCell(track.releaseDate)),
-              const SizedBox(width: 1),
-              SizedBox(width: _dateW, child: BodyCell(track.dateAdded)),
-              const SizedBox(width: 1),
-              SizedBox(width: _playsW, child: BodyCell(track.plays)),
-              const SizedBox(width: 1),
-              const SizedBox(
-                width: _moreW,
-                child: Icon(Icons.more_horiz, color: mutedColor, size: 26),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

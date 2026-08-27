@@ -11,6 +11,81 @@ import 'package:listener_front/src/view_models/playback_cubit.dart';
 import 'package:listener_front/src/widgets/now_playing_bar.dart';
 
 void main() {
+  testWidgets('compact player centers transport and keeps seeking visible', (
+    tester,
+  ) async {
+    final engine = _FakePlaybackEngine()..currentFrameValue = 30000;
+    final cubit = PlaybackCubit.withDependencies(
+      engine,
+      _FakePlaybackControl(),
+    );
+    addTearDown(cubit.close);
+    await cubit.play(selectedTrack: _track);
+
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.bottomLeft,
+              child: SizedBox(
+                width: 700,
+                child: BlocProvider.value(
+                  value: cubit,
+                  child: const NowPlayingBar(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byType(Slider), findsOneWidget);
+
+      final previousCenter = tester.getCenter(find.byIcon(Icons.skip_previous));
+      final pauseCenter = tester.getCenter(find.byIcon(Icons.pause));
+      final nextCenter = tester.getCenter(find.byIcon(Icons.skip_next));
+
+      expect(pauseCenter.dx, closeTo(350, 0.1));
+      expect((previousCenter.dx + nextCenter.dx) / 2, closeTo(350, 0.1));
+      expect(tester.takeException(), isNull);
+    } finally {
+      await cubit.pause();
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+  });
+
+  testWidgets('now playing bar does not overflow at responsive widths', (
+    tester,
+  ) async {
+    final cubit = PlaybackCubit.withDependencies(
+      _FakePlaybackEngine(),
+      _FakePlaybackControl(),
+    );
+    addTearDown(cubit.close);
+
+    for (final width in [320.0, 500.0, 700.0, 1000.0, 1200.0]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.bottomLeft,
+              child: SizedBox(
+                width: width,
+                child: BlocProvider.value(
+                  value: cubit,
+                  child: const NowPlayingBar(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(tester.takeException(), isNull, reason: 'overflowed at $width px');
+    }
+  });
+
   testWidgets('keeps the timeline compact when no track is playing', (
     tester,
   ) async {

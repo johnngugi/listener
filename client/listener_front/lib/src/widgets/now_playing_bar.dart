@@ -12,34 +12,138 @@ class NowPlayingBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 120,
-      decoration: const BoxDecoration(
-        color: panelColor,
-        border: Border(top: BorderSide(color: lineColor)),
-      ),
-      child: Row(
-        children: [
-          SizedBox(width: 20),
-          BlocSelector<PlaybackCubit, PlaybackState, _ArtworkSelection>(
-            selector: _selectArtwork,
-            builder: (context, artwork) {
-              if (artwork.visible) {
-                return ArtworkImage(artworkId: artwork.artworkId, size: 78);
-              } else {
-                return const SizedBox(width: 78, height: 78);
-              }
-            },
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 900;
+
+        return Container(
+          height: 120,
+          decoration: const BoxDecoration(
+            color: panelColor,
+            border: Border(top: BorderSide(color: lineColor)),
           ),
-          SizedBox(width: 18),
-          SizedBox(width: 270, child: NowPlayingText()),
-          Spacer(),
-          TransportControls(),
-          Spacer(),
-          OutputControl(),
-          SizedBox(width: 32),
-        ],
-      ),
+          child: compact
+              ? _CompactNowPlayingBar(width: constraints.maxWidth)
+              : _WideNowPlayingBar(width: constraints.maxWidth),
+        );
+      },
+    );
+  }
+}
+
+class _WideNowPlayingBar extends StatelessWidget {
+  const _WideNowPlayingBar({required this.width});
+
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    final showOutput = width >= 1180;
+
+    return Row(
+      children: [
+        const SizedBox(width: 20),
+        const _NowPlayingArtwork(size: 78),
+        const SizedBox(width: 18),
+        SizedBox(width: showOutput ? 270 : 220, child: const NowPlayingText()),
+        const SizedBox(width: 24),
+        const Expanded(child: TransportControls()),
+        if (showOutput) ...[const SizedBox(width: 24), const OutputControl()],
+        const SizedBox(width: 24),
+      ],
+    );
+  }
+}
+
+class _CompactNowPlayingBar extends StatelessWidget {
+  const _CompactNowPlayingBar({required this.width});
+
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    final showArtwork = width >= 700;
+    final showTrack = width >= 480;
+    final trackWidth = (width / 2 - 96).clamp(0.0, 270.0);
+
+    return Column(
+      children: [
+        Expanded(
+          child: Stack(
+            fit: StackFit.expand,
+            alignment: Alignment.center,
+            children: [
+              if (showTrack)
+                Positioned(
+                  left: 12,
+                  top: 8,
+                  bottom: 4,
+                  width: trackWidth,
+                  child: Row(
+                    children: [
+                      if (showArtwork) ...[
+                        const _NowPlayingArtwork(size: 52),
+                        const SizedBox(width: 12),
+                      ],
+                      const Expanded(child: NowPlayingText()),
+                    ],
+                  ),
+                ),
+              Align(
+                alignment: Alignment.center,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: 'Previous track',
+                      icon: const Icon(
+                        Icons.skip_previous,
+                        color: textColor,
+                        size: 25,
+                      ),
+                      onPressed: () => context.read<PlaybackCubit>().previous(),
+                    ),
+                    const _PlayPauseButton(iconSize: 34),
+                    IconButton(
+                      tooltip: 'Next track',
+                      icon: const Icon(
+                        Icons.skip_next,
+                        color: textColor,
+                        size: 25,
+                      ),
+                      onPressed: () => context.read<PlaybackCubit>().next(),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12),
+          child: PlaybackTimeline(),
+        ),
+        const SizedBox(height: 4),
+      ],
+    );
+  }
+}
+
+class _NowPlayingArtwork extends StatelessWidget {
+  const _NowPlayingArtwork({required this.size});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocSelector<PlaybackCubit, PlaybackState, _ArtworkSelection>(
+      selector: _selectArtwork,
+      builder: (context, artwork) {
+        if (artwork.visible) {
+          return ArtworkImage(artworkId: artwork.artworkId, size: size);
+        }
+        return SizedBox.square(dimension: size);
+      },
     );
   }
 }
@@ -87,90 +191,81 @@ class TransportControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 820,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.fiber_manual_record,
-                color: Color(0xFF656568),
-                size: 14,
-              ),
-              SizedBox(width: 62),
-              IconButton(
-                icon: Icon(Icons.skip_previous, color: textColor, size: 28),
-                onPressed: () => context.read<PlaybackCubit>().previous(),
-              ),
-              SizedBox(width: 34),
-              BlocListener<PlaybackCubit, PlaybackState>(
-                listenWhen: (previous, current) =>
-                    previous.errorMessage != current.errorMessage &&
-                    current.errorMessage != null,
-                listener: (context, state) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text(state.errorMessage!)));
-                },
-                child:
-                    BlocSelector<PlaybackCubit, PlaybackState, PlaybackStatus>(
-                      selector: (state) => state.status,
-                      builder: (context, status) {
-                        final isStarting = status == PlaybackStatus.starting;
-                        final isPlaying = status == PlaybackStatus.playing;
-                        final isPaused = status == PlaybackStatus.paused;
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.fiber_manual_record, color: Color(0xFF656568), size: 14),
+            SizedBox(width: 62),
+            IconButton(
+              icon: Icon(Icons.skip_previous, color: textColor, size: 28),
+              onPressed: () => context.read<PlaybackCubit>().previous(),
+            ),
+            SizedBox(width: 34),
+            const _PlayPauseButton(iconSize: 40),
+            SizedBox(width: 34),
+            IconButton(
+              icon: const Icon(Icons.skip_next, color: textColor, size: 28),
+              onPressed: () => context.read<PlaybackCubit>().next(),
+            ),
+            SizedBox(width: 52),
+            Icon(Icons.queue_music, color: textColor, size: 24),
+          ],
+        ),
+        const SizedBox(height: 18),
+        const PlaybackTimeline(),
+      ],
+    );
+  }
+}
 
-                        VoidCallback? onPressed;
-                        Widget icon;
+class _PlayPauseButton extends StatelessWidget {
+  const _PlayPauseButton({required this.iconSize});
 
-                        if (isStarting) {
-                          onPressed = null;
-                          icon = const SizedBox.square(
-                            dimension: 28,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          );
-                        } else if (isPlaying) {
-                          onPressed = context.read<PlaybackCubit>().pause;
-                          icon = const Icon(
-                            Icons.pause,
-                            color: textColor,
-                            size: 40,
-                          );
-                        } else if (isPaused) {
-                          onPressed = context.read<PlaybackCubit>().resume;
-                          icon = const Icon(
-                            Icons.play_arrow,
-                            color: textColor,
-                            size: 40,
-                          );
-                        } else {
-                          onPressed = context.read<PlaybackCubit>().play;
-                          icon = const Icon(
-                            Icons.play_arrow,
-                            color: textColor,
-                            size: 40,
-                          );
-                        }
+  final double iconSize;
 
-                        return IconButton(onPressed: onPressed, icon: icon);
-                      },
-                    ),
-              ),
-              SizedBox(width: 34),
-              IconButton(
-                icon: const Icon(Icons.skip_next, color: textColor, size: 28),
-                onPressed: () => context.read<PlaybackCubit>().next(),
-              ),
-              SizedBox(width: 52),
-              Icon(Icons.queue_music, color: textColor, size: 24),
-            ],
-          ),
-          const SizedBox(height: 18),
-          const PlaybackTimeline(),
-        ],
+  @override
+  Widget build(BuildContext context) {
+    return BlocListener<PlaybackCubit, PlaybackState>(
+      listenWhen: (previous, current) =>
+          previous.errorMessage != current.errorMessage &&
+          current.errorMessage != null,
+      listener: (context, state) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(state.errorMessage!)));
+      },
+      child: BlocSelector<PlaybackCubit, PlaybackState, PlaybackStatus>(
+        selector: (state) => state.status,
+        builder: (context, status) {
+          final isStarting = status == PlaybackStatus.starting;
+          final isPlaying = status == PlaybackStatus.playing;
+          final isPaused = status == PlaybackStatus.paused;
+
+          VoidCallback? onPressed;
+          Widget icon;
+
+          if (isStarting) {
+            onPressed = null;
+            icon = const SizedBox.square(
+              dimension: 28,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            );
+          } else if (isPlaying) {
+            onPressed = context.read<PlaybackCubit>().pause;
+            icon = Icon(Icons.pause, color: textColor, size: iconSize);
+          } else if (isPaused) {
+            onPressed = context.read<PlaybackCubit>().resume;
+            icon = Icon(Icons.play_arrow, color: textColor, size: iconSize);
+          } else {
+            onPressed = context.read<PlaybackCubit>().play;
+            icon = Icon(Icons.play_arrow, color: textColor, size: iconSize);
+          }
+
+          return IconButton(onPressed: onPressed, icon: icon);
+        },
       ),
     );
   }

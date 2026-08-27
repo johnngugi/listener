@@ -53,23 +53,27 @@ class BrandHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        const Text(
-          'Listener',
-          style: TextStyle(
-            color: textColor,
-            fontSize: 36,
-            height: 1,
-            fontWeight: FontWeight.w300,
-            letterSpacing: 0,
+        const Expanded(
+          child: Text(
+            'Listener',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 36,
+              height: 1,
+              fontWeight: FontWeight.w300,
+              letterSpacing: 0,
+            ),
           ),
         ),
-        const Spacer(),
+        const SizedBox(width: 12),
         Icon(
           Icons.settings_outlined,
           size: 22,
           color: mutedColor.withValues(alpha: .9),
         ),
-        const SizedBox(width: 20),
+        const SizedBox(width: 16),
         Icon(
           Icons.more_horiz,
           size: 26,
@@ -141,19 +145,28 @@ class PlaylistHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        const Text(
-          'PLAYLISTS',
-          style: TextStyle(
-            color: textColor,
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0,
+        const Expanded(
+          child: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  'PLAYLISTS',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+              Icon(Icons.chevron_right, color: mutedColor, size: 20),
+            ],
           ),
         ),
-        const Icon(Icons.chevron_right, color: mutedColor, size: 20),
-        const Spacer(),
         Icon(Icons.add, color: mutedColor.withValues(alpha: .95), size: 22),
-        const SizedBox(width: 20),
+        const SizedBox(width: 16),
         Icon(
           Icons.more_horiz,
           color: mutedColor.withValues(alpha: .95),

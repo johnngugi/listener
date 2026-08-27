@@ -27,22 +27,39 @@ class MainApp extends StatelessWidget {
 class LibraryScreen extends StatelessWidget {
   const LibraryScreen({super.key});
 
+  static const sidebarBreakpoint = 1100.0;
+
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Column(
-        children: [
-          Expanded(
-            child: Row(
-              children: [
-                Sidebar(),
-                Expanded(child: TrackLibrary()),
-              ],
-            ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final showSidebar = constraints.maxWidth >= sidebarBreakpoint;
+
+        return Scaffold(
+          drawer: showSidebar
+              ? null
+              : const Drawer(
+                  width: 260,
+                  backgroundColor: panelColor,
+                  child: SafeArea(child: Sidebar()),
+                ),
+          body: Column(
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    if (showSidebar) const Sidebar(),
+                    Expanded(
+                      child: TrackLibrary(showSidebarButton: !showSidebar),
+                    ),
+                  ],
+                ),
+              ),
+              const NowPlayingBar(),
+            ],
           ),
-          NowPlayingBar(),
-        ],
-      ),
+        );
+      },
     );
   }
 }

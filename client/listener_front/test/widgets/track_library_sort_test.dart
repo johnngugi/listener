@@ -4,10 +4,36 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:listener_front/src/generated/listener/v1/listener.pbgrpc.dart'
     as grpc;
+import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/view_models/library_cubit.dart';
+import 'package:listener_front/src/widgets/sidebar.dart';
 import 'package:listener_front/src/widgets/track_library.dart';
 
 void main() {
+  testWidgets('compact library top bar opens the navigation drawer', (
+    tester,
+  ) async {
+    final scaffoldKey = GlobalKey<ScaffoldState>();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          key: scaffoldKey,
+          drawer: const Drawer(width: 260, child: Sidebar()),
+          body: const LibraryTopBar(showSidebarButton: true),
+        ),
+      ),
+    );
+
+    expect(scaffoldKey.currentState!.isDrawerOpen, isFalse);
+
+    await tester.tap(find.byTooltip('Open navigation'));
+    await tester.pumpAndSettle();
+
+    expect(scaffoldKey.currentState!.isDrawerOpen, isTrue);
+    expect(find.text('Listener'), findsOneWidget);
+  });
+
   testWidgets('clicking a sortable header updates its arrow and request', (
     tester,
   ) async {
@@ -61,4 +87,58 @@ void main() {
     );
     expect(find.byIcon(Icons.arrow_drop_down), findsOneWidget);
   });
+
+  testWidgets('library content does not overflow at responsive widths', (
+    tester,
+  ) async {
+    final cubit = LibraryCubit(
+      (_) async => grpc.ListTracksResponse(totalSize: Int64(1)),
+    );
+    addTearDown(cubit.close);
+
+    for (final width in [320.0, 600.0, 900.0, 1400.0]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: BlocProvider.value(
+              value: cubit,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: SizedBox(
+                  width: width,
+                  child: const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      LibraryTopBar(),
+                      Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 16),
+                        child: LibraryTitle(),
+                      ),
+                      TrackTableHeader(),
+                      TrackRow(track: _responsiveTrack),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(tester.takeException(), isNull, reason: 'overflowed at $width px');
+    }
+  });
 }
+
+const _responsiveTrack = Track(
+  id: 'track-1',
+  number: '12',
+  title: 'A deliberately long track title for compact layouts',
+  artist: 'A long album artist name',
+  album: 'A long album title',
+  releaseDate: '2026-08-28',
+  dateAdded: 'Today',
+  plays: '120',
+  durationMilliseconds: 245000,
+  sampleRate: 48000,
+);
