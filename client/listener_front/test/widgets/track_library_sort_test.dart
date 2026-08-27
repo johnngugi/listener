@@ -128,6 +128,66 @@ void main() {
       expect(tester.takeException(), isNull, reason: 'overflowed at $width px');
     }
   });
+
+  testWidgets('library toolbar reports search text and offers sorting', (
+    tester,
+  ) async {
+    final cubit = LibraryCubit(
+      (_) async => grpc.ListTracksResponse(totalSize: Int64.ZERO),
+    );
+    addTearDown(cubit.close);
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    var query = '';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BlocProvider.value(
+            value: cubit,
+            child: SizedBox(
+              width: 700,
+              child: LibraryToolbar(
+                controller: controller,
+                query: query,
+                onQueryChanged: (value) => query = value,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('library-search-field')),
+      'Alan Walker',
+    );
+
+    expect(query, 'Alan Walker');
+    expect(find.byTooltip('Sort tracks'), findsOneWidget);
+  });
+
+  testWidgets('compact track row combines artist and album metadata', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 700,
+            child: TrackRow(track: _responsiveTrack, isCurrent: true),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.text('A long album artist name · A long album title'),
+      findsOne,
+    );
+    expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 const _responsiveTrack = Track(

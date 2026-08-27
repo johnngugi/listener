@@ -17,7 +17,7 @@ class NowPlayingBar extends StatelessWidget {
         final compact = constraints.maxWidth < 900;
 
         return Container(
-          height: 120,
+          height: compact ? 104 : 108,
           decoration: const BoxDecoration(
             color: panelColor,
             border: Border(top: BorderSide(color: lineColor)),
@@ -43,13 +43,13 @@ class _WideNowPlayingBar extends StatelessWidget {
     return Row(
       children: [
         const SizedBox(width: 20),
-        const _NowPlayingArtwork(size: 78),
+        const _NowPlayingArtwork(size: 68),
+        const SizedBox(width: 16),
+        SizedBox(width: showOutput ? 250 : 210, child: const NowPlayingText()),
         const SizedBox(width: 18),
-        SizedBox(width: showOutput ? 270 : 220, child: const NowPlayingText()),
-        const SizedBox(width: 24),
         const Expanded(child: TransportControls()),
-        if (showOutput) ...[const SizedBox(width: 24), const OutputControl()],
-        const SizedBox(width: 24),
+        if (showOutput) ...[const SizedBox(width: 18), const OutputControl()],
+        const SizedBox(width: 20),
       ],
     );
   }
@@ -76,13 +76,13 @@ class _CompactNowPlayingBar extends StatelessWidget {
               if (showTrack)
                 Positioned(
                   left: 12,
-                  top: 8,
-                  bottom: 4,
+                  top: 6,
+                  bottom: 2,
                   width: trackWidth,
                   child: Row(
                     children: [
                       if (showArtwork) ...[
-                        const _NowPlayingArtwork(size: 52),
+                        const _NowPlayingArtwork(size: 48),
                         const SizedBox(width: 12),
                       ],
                       const Expanded(child: NowPlayingText()),
@@ -103,7 +103,7 @@ class _CompactNowPlayingBar extends StatelessWidget {
                       ),
                       onPressed: () => context.read<PlaybackCubit>().previous(),
                     ),
-                    const _PlayPauseButton(iconSize: 34),
+                    const _PlayPauseButton(iconSize: 27, compact: true),
                     IconButton(
                       tooltip: 'Next track',
                       icon: const Icon(
@@ -123,7 +123,7 @@ class _CompactNowPlayingBar extends StatelessWidget {
           padding: EdgeInsets.symmetric(horizontal: 12),
           child: PlaybackTimeline(),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 2),
       ],
     );
   }
@@ -165,7 +165,7 @@ class NowPlayingText extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: textColor,
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -175,7 +175,7 @@ class NowPlayingText extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              color: textColor,
+              color: mutedColor,
               fontSize: 13,
               fontWeight: FontWeight.w500,
             ),
@@ -197,24 +197,39 @@ class TransportControls extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.fiber_manual_record, color: Color(0xFF656568), size: 14),
-            SizedBox(width: 62),
             IconButton(
-              icon: Icon(Icons.skip_previous, color: textColor, size: 28),
+              tooltip: 'Previous track',
+              icon: const Icon(
+                Icons.skip_previous_rounded,
+                color: textColor,
+                size: 25,
+              ),
               onPressed: () => context.read<PlaybackCubit>().previous(),
             ),
-            SizedBox(width: 34),
-            const _PlayPauseButton(iconSize: 40),
-            SizedBox(width: 34),
+            const SizedBox(width: 14),
+            const _PlayPauseButton(iconSize: 29),
+            const SizedBox(width: 14),
             IconButton(
-              icon: const Icon(Icons.skip_next, color: textColor, size: 28),
+              tooltip: 'Next track',
+              icon: const Icon(
+                Icons.skip_next_rounded,
+                color: textColor,
+                size: 25,
+              ),
               onPressed: () => context.read<PlaybackCubit>().next(),
             ),
-            SizedBox(width: 52),
-            Icon(Icons.queue_music, color: textColor, size: 24),
+            const SizedBox(width: 18),
+            const Tooltip(
+              message: 'Playback queue',
+              child: Icon(
+                Icons.queue_music_rounded,
+                color: mutedColor,
+                size: 22,
+              ),
+            ),
           ],
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 4),
         const PlaybackTimeline(),
       ],
     );
@@ -222,9 +237,10 @@ class TransportControls extends StatelessWidget {
 }
 
 class _PlayPauseButton extends StatelessWidget {
-  const _PlayPauseButton({required this.iconSize});
+  const _PlayPauseButton({required this.iconSize, this.compact = false});
 
   final double iconSize;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -264,7 +280,28 @@ class _PlayPauseButton extends StatelessWidget {
             icon = Icon(Icons.play_arrow, color: textColor, size: iconSize);
           }
 
-          return IconButton(onPressed: onPressed, icon: icon);
+          return Tooltip(
+            message: isPlaying ? 'Pause' : 'Play',
+            child: Container(
+              width: compact ? 42 : 46,
+              height: compact ? 42 : 46,
+              decoration: BoxDecoration(
+                color: accentColor,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: accentColor.withValues(alpha: 0.24),
+                    blurRadius: 14,
+                  ),
+                ],
+              ),
+              child: IconButton(
+                padding: EdgeInsets.zero,
+                onPressed: onPressed,
+                icon: icon,
+              ),
+            ),
+          );
         },
       ),
     );
@@ -321,26 +358,37 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
               progress.maxMilliseconds,
             );
 
-        final progressBar = Slider(
-          min: 0,
-          max: progress.maxMilliseconds,
-          value: displayedMilliseconds,
-          onChangeStart: (double milliseconds) {
-            setState(() {
-              _progressValue = milliseconds;
-            });
-          },
-          onChanged: (double milliseconds) {
-            setState(() {
-              _progressValue = milliseconds;
-            });
-          },
-          onChangeEnd: (double milliseconds) {
-            context.read<PlaybackCubit>().seekTo(milliseconds);
-            setState(() {
-              _progressValue = null;
-            });
-          },
+        final progressBar = SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            activeTrackColor: accentColor,
+            inactiveTrackColor: mutedColor.withValues(alpha: 0.25),
+            trackHeight: 3,
+            thumbColor: textColor,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+            overlayColor: accentColor.withValues(alpha: 0.14),
+            overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+          ),
+          child: Slider(
+            min: 0,
+            max: progress.maxMilliseconds,
+            value: displayedMilliseconds,
+            onChangeStart: (double milliseconds) {
+              setState(() {
+                _progressValue = milliseconds;
+              });
+            },
+            onChanged: (double milliseconds) {
+              setState(() {
+                _progressValue = milliseconds;
+              });
+            },
+            onChangeEnd: (double milliseconds) {
+              context.read<PlaybackCubit>().seekTo(milliseconds);
+              setState(() {
+                _progressValue = null;
+              });
+            },
+          ),
         );
 
         return Row(
@@ -348,9 +396,9 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
             PlaybackElapsedTime(
               elapsedSeconds: displayedMilliseconds.toInt() ~/ 1000,
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 8),
             Expanded(child: SizedBox(height: 34, child: progressBar)),
-            const SizedBox(width: 16),
+            const SizedBox(width: 8),
             PlaybackDuration(
               durationSeconds: progress.maxMilliseconds.toInt() ~/ 1000,
             ),
@@ -362,8 +410,8 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
 }
 
 const _playbackTimeStyle = TextStyle(
-  color: textColor,
-  fontSize: 13,
+  color: mutedColor,
+  fontSize: 12,
   fontWeight: FontWeight.w600,
 );
 
@@ -479,41 +527,46 @@ class OutputControl extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 210,
+    return Container(
+      height: 56,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: backgroundColor.withValues(alpha: 0.55),
+        border: Border.all(color: lineColor),
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          const Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.speaker, color: textColor, size: 38),
-              SizedBox(height: 8),
-              Text(
-                'System Output',
-                style: TextStyle(
-                  color: mutedColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
+          const Icon(Icons.speaker_outlined, color: mutedColor, size: 24),
+          const SizedBox(width: 9),
+          const Text(
+            'System Output',
+            style: TextStyle(
+              color: textColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-          const SizedBox(width: 36),
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: const [
-              Icon(Icons.volume_up_outlined, color: textColor, size: 38),
-              SizedBox(height: 9),
-              Text(
-                '100',
-                style: TextStyle(
-                  color: mutedColor,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
+          const SizedBox(width: 14),
+          Container(width: 1, height: 24, color: lineColor),
+          const SizedBox(width: 12),
+          const Tooltip(
+            message: 'Volume 100%',
+            child: Row(
+              children: [
+                Icon(Icons.volume_up_outlined, color: textColor, size: 24),
+                SizedBox(width: 5),
+                Text(
+                  '100',
+                  style: TextStyle(
+                    color: mutedColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),

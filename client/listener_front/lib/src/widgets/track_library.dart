@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:listener_front/src/models/library_state.dart';
+import 'package:listener_front/src/models/playback_state.dart';
 import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/theme.dart';
 import 'package:listener_front/src/view_models/library_cubit.dart';
@@ -26,15 +27,29 @@ enum _LibraryLayout { minimal, compact, medium, full }
 
 _LibraryLayout _libraryLayoutFor(double width) {
   if (width >= 1320) return _LibraryLayout.full;
-  if (width >= 820) return _LibraryLayout.medium;
-  if (width >= 480) return _LibraryLayout.compact;
+  if (width >= 1050) return _LibraryLayout.medium;
+  if (width >= 620) return _LibraryLayout.compact;
   return _LibraryLayout.minimal;
 }
 
-class TrackLibrary extends StatelessWidget {
+class TrackLibrary extends StatefulWidget {
   const TrackLibrary({super.key, this.showSidebarButton = false});
 
   final bool showSidebarButton;
+
+  @override
+  State<TrackLibrary> createState() => _TrackLibraryState();
+}
+
+class _TrackLibraryState extends State<TrackLibrary> {
+  final _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,15 +63,24 @@ class TrackLibrary extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              LibraryTopBar(showSidebarButton: showSidebarButton),
-              SizedBox(height: compact ? 22 : 32),
+              LibraryTopBar(showSidebarButton: widget.showSidebarButton),
+              SizedBox(height: compact ? 18 : 24),
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
                 child: const LibraryTitle(),
               ),
-              SizedBox(height: compact ? 20 : 28),
+              SizedBox(height: compact ? 16 : 20),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                child: LibraryToolbar(
+                  controller: _searchController,
+                  query: _query,
+                  onQueryChanged: (value) => setState(() => _query = value),
+                ),
+              ),
+              const SizedBox(height: 12),
               const TrackTableHeader(),
-              const Expanded(child: LibraryListPane()),
+              Expanded(child: LibraryListPane(query: _query)),
             ],
           ),
         );
@@ -66,7 +90,9 @@ class TrackLibrary extends StatelessWidget {
 }
 
 class LibraryListPane extends StatelessWidget {
-  const LibraryListPane({super.key});
+  const LibraryListPane({super.key, this.query = ''});
+
+  final String query;
 
   @override
   Widget build(BuildContext context) {
@@ -75,7 +101,7 @@ class LibraryListPane extends StatelessWidget {
       builder: (context, isRefreshing) {
         return Stack(
           children: [
-            const LibraryList(),
+            LibraryList(query: query),
             if (isRefreshing)
               const Positioned(
                 top: 0,
@@ -95,7 +121,9 @@ class LibraryListPane extends StatelessWidget {
 }
 
 class LibraryList extends StatefulWidget {
-  const LibraryList({super.key});
+  const LibraryList({super.key, this.query = ''});
+
+  final String query;
 
   @override
   State<LibraryList> createState() => _LibraryListState();
@@ -143,27 +171,62 @@ class _LibraryListState extends State<LibraryList> {
 
               return const Center(child: Text("Library empty"));
             } else {
+              final normalizedQuery = widget.query.trim().toLowerCase();
+              final visibleTracks = normalizedQuery.isEmpty
+                  ? state.tracks
+                  : state.tracks
+                        .where(
+                          (track) =>
+                              [track.title, track.artist, track.album].any(
+                                (value) => value.toLowerCase().contains(
+                                  normalizedQuery,
+                                ),
+                              ),
+                        )
+                        .toList(growable: false);
               final showFooter =
-                  state.status == LibraryStatus.loadingMore ||
-                  state.status == LibraryStatus.failure;
+                  normalizedQuery.isEmpty &&
+                  (state.status == LibraryStatus.loadingMore ||
+                      state.status == LibraryStatus.failure);
 
-              return ListView.builder(
-                controller: _scrollController,
-                padding: EdgeInsets.zero,
-                itemCount: state.tracks.length + (showFooter ? 1 : 0),
-                itemBuilder: (context, index) {
-                  if (index == state.tracks.length) {
-                    if (state.status == LibraryStatus.loadingMore) {
-                      return const _LoadingMoreIndicator();
+              if (visibleTracks.isEmpty && normalizedQuery.isNotEmpty) {
+                return _NoSearchResults(query: widget.query);
+              }
+
+              return BlocSelector<
+                PlaybackCubit,
+                PlaybackState,
+                ({String? trackId, PlaybackStatus status})
+              >(
+                selector: (playback) => (
+                  trackId: playback.queue?.currentTrack.id,
+                  status: playback.status,
+                ),
+                builder: (context, playback) => ListView.builder(
+                  controller: _scrollController,
+                  padding: EdgeInsets.zero,
+                  itemCount: visibleTracks.length + (showFooter ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    if (index == visibleTracks.length) {
+                      if (state.status == LibraryStatus.loadingMore) {
+                        return const _LoadingMoreIndicator();
+                      }
+
+                      return _LoadMoreError(
+                        onRetry: context.read<LibraryCubit>().retry,
+                      );
                     }
 
-                    return _LoadMoreError(
-                      onRetry: context.read<LibraryCubit>().retry,
+                    final track = visibleTracks[index];
+                    return TrackRow(
+                      track: track,
+                      isCurrent: playback.trackId == track.id,
+                      isPlaying:
+                          playback.trackId == track.id &&
+                          playback.status == PlaybackStatus.playing,
                     );
-                  }
-
-                  return TrackRow(track: state.tracks[index]);
-                },
+                  },
+                ),
               );
             }
         }
@@ -176,6 +239,34 @@ class _LibraryListState extends State<LibraryList> {
         _scrollController.position.extentAfter < 400) {
       context.read<LibraryCubit>().loadNextPage();
     }
+  }
+}
+
+class _NoSearchResults extends StatelessWidget {
+  const _NoSearchResults({required this.query});
+
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.search_off_rounded, color: mutedColor, size: 34),
+          const SizedBox(height: 10),
+          const Text(
+            'No matching tracks',
+            style: TextStyle(color: textColor, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Nothing in the loaded library matches “$query”.',
+            style: const TextStyle(color: mutedColor),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -278,22 +369,8 @@ class LibraryTopBar extends StatelessWidget {
                   tooltip: 'Open navigation',
                   onPressed: () => Scaffold.of(context).openDrawer(),
                   icon: const Icon(Icons.menu, color: mutedColor, size: 28),
-                )
-              else
-                const Icon(Icons.chevron_left, color: mutedColor, size: 32),
+                ),
               const Spacer(),
-              Icon(
-                Icons.bookmark_border,
-                color: mutedColor.withValues(alpha: .95),
-                size: 25,
-              ),
-              SizedBox(width: compact ? 20 : 40),
-              Icon(
-                Icons.search,
-                color: mutedColor.withValues(alpha: .95),
-                size: 27,
-              ),
-              SizedBox(width: compact ? 24 : 46),
               const CircleAvatar(
                 radius: 17,
                 backgroundColor: greenColor,
@@ -319,35 +396,11 @@ class LibraryTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 620;
-        final heading = Wrap(
-          crossAxisAlignment: WrapCrossAlignment.end,
-          spacing: 14,
-          runSpacing: 8,
-          children: const [_LibraryHeading(), _LibraryTrackCount()],
-        );
-
-        if (compact) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              heading,
-              const SizedBox(height: 20),
-              const PlayNowButton(),
-            ],
-          );
-        }
-
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: heading),
-            const PlayNowButton(),
-          ],
-        );
-      },
+    return const Wrap(
+      crossAxisAlignment: WrapCrossAlignment.end,
+      spacing: 14,
+      runSpacing: 8,
+      children: [_LibraryHeading(), _LibraryTrackCount()],
     );
   }
 }
@@ -393,53 +446,155 @@ class _LibraryTrackCount extends StatelessWidget {
   }
 }
 
-class PlayNowButton extends StatelessWidget {
-  const PlayNowButton({super.key});
+class LibraryToolbar extends StatelessWidget {
+  const LibraryToolbar({
+    super.key,
+    required this.controller,
+    required this.query,
+    required this.onQueryChanged,
+  });
+
+  final TextEditingController controller;
+  final String query;
+  final ValueChanged<String> onQueryChanged;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 2),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: Row(
-          children: [
-            Container(
-              height: 48,
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              color: accentColor,
-              child: const Row(
-                children: [
-                  Icon(Icons.play_arrow, color: Colors.white, size: 24),
-                  SizedBox(width: 8),
-                  Text(
-                    'Play now',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 620;
+
+        final search = TextField(
+          key: const Key('library-search-field'),
+          controller: controller,
+          onChanged: onQueryChanged,
+          style: const TextStyle(color: textColor, fontSize: 15),
+          decoration: InputDecoration(
+            hintText: 'Search tracks, artists, and albums',
+            hintStyle: const TextStyle(color: mutedColor),
+            prefixIcon: const Icon(Icons.search_rounded, color: mutedColor),
+            suffixIcon: query.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Clear search',
+                    onPressed: () {
+                      controller.clear();
+                      onQueryChanged('');
+                    },
+                    icon: const Icon(Icons.close_rounded, color: mutedColor),
                   ),
-                ],
-              ),
+            filled: true,
+            fillColor: panelColor,
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(vertical: 14),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: lineColor),
             ),
-            Container(
-              width: 48,
-              height: 48,
-              decoration: const BoxDecoration(
-                color: accentColor,
-                border: Border(
-                  left: BorderSide(color: backgroundColor, width: 2),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: accentColor),
+            ),
+          ),
+        );
+
+        final sortButton =
+            BlocSelector<
+              LibraryCubit,
+              LibraryState,
+              ({LibrarySortField field, LibrarySortDirection direction})
+            >(
+              selector: (state) =>
+                  (field: state.sortField, direction: state.sortDirection),
+              builder: (context, sort) => PopupMenuButton<LibrarySortField>(
+                tooltip: 'Sort tracks',
+                onSelected: context.read<LibraryCubit>().setSort,
+                color: panelColor,
+                itemBuilder: (context) => LibrarySortField.values
+                    .map(
+                      (field) => PopupMenuItem(
+                        value: field,
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 24,
+                              child: field == sort.field
+                                  ? Icon(
+                                      sort.direction ==
+                                              LibrarySortDirection.ascending
+                                          ? Icons.arrow_upward_rounded
+                                          : Icons.arrow_downward_rounded,
+                                      color: accentColor,
+                                      size: 18,
+                                    )
+                                  : null,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(_sortFieldLabel(field)),
+                          ],
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+                child: Container(
+                  height: 46,
+                  padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 16),
+                  decoration: BoxDecoration(
+                    color: panelColor,
+                    border: Border.all(color: lineColor),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.sort_rounded,
+                        color: mutedColor,
+                        size: 21,
+                      ),
+                      if (!compact) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          _sortFieldLabel(sort.field),
+                          style: const TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(width: 4),
+                      const Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        color: mutedColor,
+                        size: 20,
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              child: const Icon(Icons.arrow_drop_down, color: Colors.white),
-            ),
+            );
+
+        return Row(
+          children: [
+            Expanded(child: search),
+            const SizedBox(width: 10),
+            sortButton,
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 }
+
+String _sortFieldLabel(LibrarySortField field) => switch (field) {
+  LibrarySortField.trackNumber => 'Track number',
+  LibrarySortField.title => 'Title',
+  LibrarySortField.duration => 'Length',
+  LibrarySortField.albumArtist => 'Artist',
+  LibrarySortField.album => 'Album',
+  LibrarySortField.releaseDate => 'Release date',
+  LibrarySortField.dateAdded => 'Date added',
+};
 
 class TrackTableHeader extends StatelessWidget {
   const TrackTableHeader({super.key});
@@ -449,6 +604,10 @@ class TrackTableHeader extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final layout = _libraryLayoutFor(constraints.maxWidth);
+        if (layout == _LibraryLayout.compact ||
+            layout == _LibraryLayout.minimal) {
+          return const SizedBox.shrink();
+        }
         final horizontalPadding = layout == _LibraryLayout.full ? _hPad : 16.0;
         final showNumber = layout != _LibraryLayout.minimal;
         final showLength = layout != _LibraryLayout.minimal;
@@ -481,7 +640,10 @@ class TrackTableHeader extends StatelessWidget {
                   child: SortableHeader('Track', LibrarySortField.title),
                 ),
                 if (showDetails) ...[
-                  const SizedBox(width: _favW, child: HeaderIcon(Icons.search)),
+                  const SizedBox(
+                    width: _favW,
+                    child: HeaderIcon(Icons.favorite_border_rounded),
+                  ),
                   const VerticalRule(height: _headerHeight),
                 ],
                 if (showLength) ...[
@@ -492,36 +654,17 @@ class TrackTableHeader extends StatelessWidget {
                   const VerticalRule(height: _headerHeight),
                 ],
                 if (showDetails) ...[
-                  Expanded(
+                  const Expanded(
                     flex: _artistFlex,
-                    child: Row(
-                      children: const [
-                        Expanded(
-                          child: SortableHeader(
-                            'Album artist',
-                            LibrarySortField.albumArtist,
-                          ),
-                        ),
-                        Icon(Icons.search, color: mutedColor, size: 22),
-                        SizedBox(width: 8),
-                      ],
+                    child: SortableHeader(
+                      'Artist',
+                      LibrarySortField.albumArtist,
                     ),
                   ),
                   const VerticalRule(height: _headerHeight),
-                  Expanded(
+                  const Expanded(
                     flex: _albumFlex,
-                    child: Row(
-                      children: const [
-                        Expanded(
-                          child: SortableHeader(
-                            'Album',
-                            LibrarySortField.album,
-                          ),
-                        ),
-                        Icon(Icons.search, color: mutedColor, size: 22),
-                        SizedBox(width: 8),
-                      ],
-                    ),
+                    child: SortableHeader('Album', LibrarySortField.album),
                   ),
                   const VerticalRule(height: _headerHeight),
                 ],
@@ -664,126 +807,294 @@ class VerticalRule extends StatelessWidget {
 }
 
 class TrackRow extends StatelessWidget {
-  const TrackRow({super.key, required this.track});
+  const TrackRow({
+    super.key,
+    required this.track,
+    this.isCurrent = false,
+    this.isPlaying = false,
+  });
 
   final Track track;
+  final bool isCurrent;
+  final bool isPlaying;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final layout = _libraryLayoutFor(constraints.maxWidth);
+        final usesMediaRow =
+            layout == _LibraryLayout.compact ||
+            layout == _LibraryLayout.minimal;
         final horizontalPadding = layout == _LibraryLayout.full ? _hPad : 16.0;
         final showNumber = layout != _LibraryLayout.minimal;
         final showLength = layout != _LibraryLayout.minimal;
         final showDetails =
             layout == _LibraryLayout.medium || layout == _LibraryLayout.full;
         final showEverything = layout == _LibraryLayout.full;
-        final artworkSize = layout == _LibraryLayout.minimal ? 48.0 : 56.0;
+        final artworkSize = layout == _LibraryLayout.minimal ? 46.0 : 54.0;
 
-        return InkWell(
-          onDoubleTap: () {
-            final libraryTracks = context.read<LibraryCubit>().state.tracks;
-
-            context.read<PlaybackCubit>().play(
-              selectedTrack: track,
-              queueTracks: libraryTracks,
-            );
-          },
-          child: Container(
-            height: _rowHeight,
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: lineColor)),
-            ),
-            child: Padding(
+        return Material(
+          color: isCurrent
+              ? accentColor.withValues(alpha: 0.09)
+              : Colors.transparent,
+          child: InkWell(
+            hoverColor: Colors.white.withValues(alpha: 0.035),
+            onDoubleTap: () => _play(context),
+            child: Container(
+              height: _rowHeight,
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: const BorderSide(color: lineColor),
+                  left: BorderSide(
+                    color: isCurrent ? accentColor : Colors.transparent,
+                    width: 3,
+                  ),
+                ),
+              ),
               padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-              child: Row(
-                children: [
-                  if (showNumber) ...[
-                    SizedBox(
-                      width: _numW,
-                      child: BodyCell(track.number, alignRight: true),
-                    ),
-                    const SizedBox(width: 1),
-                  ],
-                  Expanded(
-                    flex: _trackFlex,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      child: Row(
-                        children: [
-                          ArtworkImage(
-                            artworkId: track.artworkId,
-                            size: artworkSize,
+              child: usesMediaRow
+                  ? _mediaRow(layout, artworkSize)
+                  : Row(
+                      children: [
+                        if (showNumber) ...[
+                          SizedBox(
+                            width: _numW,
+                            child: isCurrent
+                                ? _PlayingIndicator(isPlaying: isPlaying)
+                                : BodyCell(track.number, alignRight: true),
                           ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Text(
-                              track.title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: textColor,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                height: 1.18,
-                              ),
+                          const SizedBox(width: 1),
+                        ],
+                        Expanded(
+                          flex: _trackFlex,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            child: Row(
+                              children: [
+                                ArtworkImage(
+                                  artworkId: track.artworkId,
+                                  size: artworkSize,
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(child: _TrackTitle(track: track)),
+                                if (track.hasBadge) ...[
+                                  const SizedBox(width: 8),
+                                  const TinyLinkedBadge(),
+                                ],
+                              ],
                             ),
                           ),
-                          if (track.hasBadge &&
-                              layout != _LibraryLayout.minimal) ...[
-                            const SizedBox(width: 8),
-                            const TinyLinkedBadge(),
-                          ],
+                        ),
+                        if (showDetails) ...[
+                          SizedBox(
+                            width: _favW,
+                            child: _FavoriteIcon(favorite: track.favorite),
+                          ),
+                          const SizedBox(width: 1),
                         ],
-                      ),
+                        if (showLength) ...[
+                          SizedBox(
+                            width: _lengthW,
+                            child: BodyCell(track.formatMilliseconds()),
+                          ),
+                          const SizedBox(width: 1),
+                        ],
+                        if (showDetails) ...[
+                          Expanded(
+                            flex: _artistFlex,
+                            child: LinkCell(track.artist),
+                          ),
+                          const SizedBox(width: 1),
+                          Expanded(
+                            flex: _albumFlex,
+                            child: LinkCell(track.album, secondary: true),
+                          ),
+                          const SizedBox(width: 1),
+                        ],
+                        if (showEverything) ...[
+                          SizedBox(
+                            width: _releaseW,
+                            child: BodyCell(track.releaseDate),
+                          ),
+                          const SizedBox(width: 1),
+                          SizedBox(
+                            width: _dateW,
+                            child: BodyCell(track.dateAdded),
+                          ),
+                          const SizedBox(width: 1),
+                          SizedBox(
+                            width: _playsW,
+                            child: BodyCell(track.plays),
+                          ),
+                          const SizedBox(width: 1),
+                        ],
+                        const _MoreIcon(),
+                      ],
                     ),
-                  ),
-                  if (showDetails) ...[
-                    SizedBox(
-                      width: _favW,
-                      child: Icon(
-                        track.favorite ? Icons.favorite : Icons.favorite_border,
-                        color: accentColor,
-                        size: 24,
-                      ),
-                    ),
-                    const SizedBox(width: 1),
-                  ],
-                  if (showLength) ...[
-                    SizedBox(
-                      width: _lengthW,
-                      child: BodyCell(track.formatMilliseconds()),
-                    ),
-                    const SizedBox(width: 1),
-                  ],
-                  if (showDetails) ...[
-                    Expanded(flex: _artistFlex, child: LinkCell(track.artist)),
-                    const SizedBox(width: 1),
-                    Expanded(flex: _albumFlex, child: LinkCell(track.album)),
-                    const SizedBox(width: 1),
-                  ],
-                  if (showEverything) ...[
-                    SizedBox(
-                      width: _releaseW,
-                      child: BodyCell(track.releaseDate),
-                    ),
-                    const SizedBox(width: 1),
-                    SizedBox(width: _dateW, child: BodyCell(track.dateAdded)),
-                    const SizedBox(width: 1),
-                    SizedBox(width: _playsW, child: BodyCell(track.plays)),
-                    const SizedBox(width: 1),
-                  ],
-                  const SizedBox(
-                    width: _moreW,
-                    child: Icon(Icons.more_horiz, color: mutedColor, size: 26),
-                  ),
-                ],
-              ),
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _mediaRow(_LibraryLayout layout, double artworkSize) {
+    final minimal = layout == _LibraryLayout.minimal;
+    final metadata = [
+      if (track.artist.isNotEmpty) track.artist,
+      if (track.album.isNotEmpty) track.album,
+    ].join(' · ');
+
+    return Row(
+      children: [
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            ArtworkImage(artworkId: track.artworkId, size: artworkSize),
+            if (isCurrent)
+              Positioned(
+                right: -4,
+                bottom: -4,
+                child: Container(
+                  width: 22,
+                  height: 22,
+                  decoration: const BoxDecoration(
+                    color: accentColor,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    isPlaying
+                        ? Icons.graphic_eq_rounded
+                        : Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 15,
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(width: 13),
+        Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _TrackTitle(track: track),
+              if (metadata.isNotEmpty) ...[
+                const SizedBox(height: 5),
+                Text(
+                  metadata,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: mutedColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          track.formatMilliseconds(),
+          style: const TextStyle(
+            color: mutedColor,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        if (!minimal) ...[
+          const SizedBox(width: 10),
+          _FavoriteIcon(favorite: track.favorite),
+        ],
+        const SizedBox(width: 4),
+        const _MoreIcon(width: 42),
+      ],
+    );
+  }
+
+  void _play(BuildContext context) {
+    final libraryTracks = context.read<LibraryCubit>().state.tracks;
+    context.read<PlaybackCubit>().play(
+      selectedTrack: track,
+      queueTracks: libraryTracks,
+    );
+  }
+}
+
+class _TrackTitle extends StatelessWidget {
+  const _TrackTitle({required this.track});
+
+  final Track track;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      track.title,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(
+        color: textColor,
+        fontSize: 16,
+        fontWeight: FontWeight.w700,
+        height: 1.18,
+      ),
+    );
+  }
+}
+
+class _PlayingIndicator extends StatelessWidget {
+  const _PlayingIndicator({required this.isPlaying});
+
+  final bool isPlaying;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Icon(
+        isPlaying ? Icons.graphic_eq_rounded : Icons.play_arrow_rounded,
+        color: accentColor,
+        size: 20,
+      ),
+    );
+  }
+}
+
+class _FavoriteIcon extends StatelessWidget {
+  const _FavoriteIcon({required this.favorite});
+
+  final bool favorite;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: favorite ? 'Remove from favorites' : 'Add to favorites',
+      child: Icon(
+        favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+        color: favorite ? accentColor : mutedColor,
+        size: 22,
+      ),
+    );
+  }
+}
+
+class _MoreIcon extends StatelessWidget {
+  const _MoreIcon({this.width = _moreW});
+
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      child: const Tooltip(
+        message: 'More track actions',
+        child: Icon(Icons.more_horiz_rounded, color: mutedColor, size: 25),
+      ),
     );
   }
 }
@@ -843,7 +1154,7 @@ class BodyCell extends StatelessWidget {
           text,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
-            color: textColor,
+            color: mutedColor,
             fontSize: 15,
             fontWeight: FontWeight.w600,
             letterSpacing: 0,
@@ -855,9 +1166,10 @@ class BodyCell extends StatelessWidget {
 }
 
 class LinkCell extends StatelessWidget {
-  const LinkCell(this.text, {super.key});
+  const LinkCell(this.text, {super.key, this.secondary = false});
 
   final String text;
+  final bool secondary;
 
   @override
   Widget build(BuildContext context) {
@@ -869,10 +1181,10 @@ class LinkCell extends StatelessWidget {
           text,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: accentColor,
+          style: TextStyle(
+            color: secondary ? mutedColor : textColor.withValues(alpha: 0.88),
             fontSize: 16,
-            fontWeight: FontWeight.w600,
+            fontWeight: secondary ? FontWeight.w500 : FontWeight.w600,
             letterSpacing: 0,
           ),
         ),

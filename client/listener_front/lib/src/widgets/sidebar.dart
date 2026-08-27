@@ -15,22 +15,13 @@ class Sidebar extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             BrandHeader(),
-            SizedBox(height: 22),
-            SideSection(
-              label: 'BROWSE',
-              items: [
-                SideItem(Icons.home_outlined, 'Home'),
-                SideItem(Icons.library_music_outlined, 'Genres'),
-              ],
-            ),
-            SizedBox(height: 36),
+            SizedBox(height: 30),
             SideSection(
               label: 'MY LIBRARY',
               items: [
                 SideItem(Icons.album_outlined, 'Albums'),
                 SideItem(Icons.hub_outlined, 'Artists'),
                 SideItem(Icons.music_note_outlined, 'Tracks', selected: true),
-                SideItem(Icons.folder_outlined, 'Folders'),
               ],
             ),
             Spacer(),
@@ -105,7 +96,7 @@ class SideSection extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
-        for (final item in items) ...[item, const SizedBox(height: 20)],
+        for (final item in items) ...[item, const SizedBox(height: 4)],
       ],
     );
   }
@@ -122,18 +113,34 @@ class SideItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = selected ? accentColor : mutedColor;
 
-    return Row(
-      children: [
-        Icon(icon, color: color, size: 22),
-        const SizedBox(width: 14),
-        Text(
-          title,
-          style: _sidebarItemStyle.copyWith(
-            color: color,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+      decoration: BoxDecoration(
+        color: selected
+            ? accentColor.withValues(alpha: 0.13)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        border: Border(
+          left: BorderSide(
+            color: selected ? accentColor : Colors.transparent,
+            width: 3,
           ),
         ),
-      ],
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(width: 14),
+          Text(
+            title,
+            style: _sidebarItemStyle.copyWith(
+              color: color,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
