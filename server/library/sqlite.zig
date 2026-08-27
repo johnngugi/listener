@@ -58,7 +58,79 @@ const schema =
     \\    ON tracks(root_id, last_seen_scan_id);
     \\CREATE INDEX IF NOT EXISTS tracks_artwork_idx
     \\    ON tracks(artwork_id);
+    \\CREATE INDEX IF NOT EXISTS tracks_track_number_sort_idx
+    \\    ON tracks(COALESCE(track_number, 0), id);
+    \\CREATE INDEX IF NOT EXISTS tracks_title_sort_idx
+    \\    ON tracks(COALESCE(title, '') COLLATE NOCASE, id);
+    \\CREATE INDEX IF NOT EXISTS tracks_duration_sort_idx
+    \\    ON tracks(COALESCE(duration_ms, 0), id);
+    \\CREATE INDEX IF NOT EXISTS tracks_album_artist_sort_idx
+    \\    ON tracks(COALESCE(album_artist, '') COLLATE NOCASE, id);
+    \\CREATE INDEX IF NOT EXISTS tracks_album_sort_idx
+    \\    ON tracks(COALESCE(album, '') COLLATE NOCASE, id);
+    \\CREATE INDEX IF NOT EXISTS tracks_release_date_sort_idx
+    \\    ON tracks(COALESCE(release_date, ''), id);
+    \\CREATE INDEX IF NOT EXISTS tracks_date_added_sort_idx
+    \\    ON tracks(date_added, id);
 ;
+
+const track_select =
+    "SELECT id, path, size, modified_ns, title, track_artist, " ++
+    "album_artist, album, track_number, disc_number, release_date, " ++
+    "duration_ms, codec, sample_rate, bits_per_sample, date_added, " ++
+    "artwork_id, uuid FROM tracks ";
+
+fn sortedTracksSql(
+    comptime expression: []const u8,
+    comptime direction: database.SortDirection,
+    comptime has_cursor: bool,
+) [*:0]const u8 {
+    const comparison = switch (direction) {
+        .ascending => ">",
+        .descending => "<",
+    };
+    const order = switch (direction) {
+        .ascending => " ASC",
+        .descending => " DESC",
+    };
+    const ordering = " ORDER BY " ++ expression ++ order ++ ", id" ++ order;
+    return if (has_cursor)
+        track_select ++ "WHERE " ++ expression ++ comparison ++ "?1 OR (" ++
+            expression ++ "=?1 AND id" ++ comparison ++ "?2)" ++
+            ordering ++ " LIMIT ?3"
+    else
+        track_select ++ ordering ++ " LIMIT ?1";
+}
+
+fn sortedTracksSqlForField(
+    field: database.TrackSortField,
+    comptime direction: database.SortDirection,
+    comptime has_cursor: bool,
+) [*:0]const u8 {
+    return switch (field) {
+        .database_id => sortedTracksSql("id", direction, has_cursor),
+        .track_number => sortedTracksSql("COALESCE(track_number, 0)", direction, has_cursor),
+        .title => sortedTracksSql("COALESCE(title, '') COLLATE NOCASE", direction, has_cursor),
+        .duration => sortedTracksSql("COALESCE(duration_ms, 0)", direction, has_cursor),
+        .album_artist => sortedTracksSql("COALESCE(album_artist, '') COLLATE NOCASE", direction, has_cursor),
+        .album => sortedTracksSql("COALESCE(album, '') COLLATE NOCASE", direction, has_cursor),
+        .release_date => sortedTracksSql("COALESCE(release_date, '')", direction, has_cursor),
+        .date_added => sortedTracksSql("date_added", direction, has_cursor),
+    };
+}
+
+fn listTracksSql(sort: database.TrackSort, has_cursor: bool) [*:0]const u8 {
+    return switch (sort.direction) {
+        .ascending => if (has_cursor)
+            sortedTracksSqlForField(sort.field, .ascending, true)
+        else
+            sortedTracksSqlForField(sort.field, .ascending, false),
+        .descending => if (has_cursor)
+            sortedTracksSqlForField(sort.field, .descending, true)
+        else
+            sortedTracksSqlForField(sort.field, .descending, false),
+    };
+}
 
 const Sqlite = struct {
     allocator: std.mem.Allocator,
@@ -329,8 +401,7 @@ const Sqlite = struct {
     fn listTracks(
         context: *anyopaque,
         allocator: std.mem.Allocator,
-        after_id: i64,
-        limit: u32,
+        query: database.ListTracksQuery,
     ) database.Error!database.TrackPage {
         const self = fromContext(context);
 
@@ -342,18 +413,25 @@ const Sqlite = struct {
         const total_count = count_stmt.columnI64(0);
         if (total_count < 0) return error.DatabaseOperationFailed;
 
-        var stmt = try self.prepare(
-            "SELECT id, path, size, modified_ns, title, track_artist, " ++
-                "album_artist, album, track_number, disc_number, release_date, " ++
-                "duration_ms, codec, sample_rate, bits_per_sample, date_added, " ++
-                "artwork_id, uuid " ++
-                "FROM tracks " ++
-                "WHERE id>?1 ORDER BY id LIMIT ?2",
-        );
+        var stmt = try self.prepare(listTracksSql(query.sort, query.after != null));
         defer stmt.deinit();
 
-        try stmt.bindI64(1, after_id);
-        try stmt.bindI64(2, @as(i64, limit) + 1);
+        if (query.after) |cursor| {
+            switch (cursor.value) {
+                .integer => |value| {
+                    if (isTextSort(query.sort.field)) return error.DatabaseOperationFailed;
+                    try stmt.bindI64(1, value);
+                },
+                .text => |value| {
+                    if (!isTextSort(query.sort.field)) return error.DatabaseOperationFailed;
+                    try stmt.bindText(1, value);
+                },
+            }
+            try stmt.bindI64(2, cursor.id);
+            try stmt.bindI64(3, @as(i64, query.limit) + 1);
+        } else {
+            try stmt.bindI64(1, @as(i64, query.limit) + 1);
+        }
 
         var tracks: std.ArrayList(database.Track) = .empty;
         errdefer {
@@ -418,7 +496,7 @@ const Sqlite = struct {
             }) catch return error.OutOfMemory;
         }
 
-        const has_more = tracks.items.len > limit;
+        const has_more = tracks.items.len > query.limit;
         if (has_more) {
             var extra = tracks.pop().?;
             extra.deinit(allocator);
@@ -428,6 +506,13 @@ const Sqlite = struct {
             .tracks = tracks.toOwnedSlice(allocator) catch return error.OutOfMemory,
             .total_size = @intCast(total_count),
             .has_more = has_more,
+        };
+    }
+
+    fn isTextSort(field: database.TrackSortField) bool {
+        return switch (field) {
+            .title, .album_artist, .album, .release_date => true,
+            .database_id, .track_number, .duration, .date_added => false,
         };
     }
 
@@ -681,6 +766,23 @@ fn testFile(path: []const u8, size: u64, modified_ns: i64) database.ScannedFile 
     };
 }
 
+fn expectTrackOrder(
+    db: database.Database,
+    sort: database.TrackSort,
+    expected_paths: []const []const u8,
+) !void {
+    var page = try db.listTracks(std.testing.allocator, .{
+        .sort = sort,
+        .limit = 20,
+    });
+    defer page.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(expected_paths.len, page.tracks.len);
+    for (page.tracks, expected_paths) |track, expected| {
+        try std.testing.expectEqualStrings(expected, track.path);
+    }
+}
+
 test "SQLite scan lifecycle upserts files and removes stale rows" {
     var db = try open(std.testing.allocator, ":memory:", .{});
     defer db.deinit();
@@ -740,7 +842,7 @@ test "artwork is deduplicated by digest and linked to tracks" {
     try db.upsertFiles(scan, &.{file});
     try db.finishScan(scan);
 
-    var page = try db.listTracks(std.testing.allocator, 0, 10);
+    var page = try db.listTracks(std.testing.allocator, .{ .limit = 10 });
     defer page.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), page.tracks.len);
     try std.testing.expectEqual(first_id, page.tracks[0].artwork_id.?);
@@ -776,18 +878,119 @@ test "lists tracks with stable keyset pagination" {
     });
     try db.finishScan(scan);
 
-    var first = try db.listTracks(std.testing.allocator, 0, 2);
+    var first = try db.listTracks(std.testing.allocator, .{ .limit = 2 });
     defer first.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), first.tracks.len);
     try std.testing.expectEqual(@as(u64, 3), first.total_size);
     try std.testing.expect(first.has_more);
     try std.testing.expectEqualStrings("/music/one.flac", first.tracks[0].path);
 
-    var second = try db.listTracks(std.testing.allocator, first.tracks[1].cursor, 2);
+    var second = try db.listTracks(std.testing.allocator, .{
+        .after = first.tracks[1].pageCursor(.{}),
+        .limit = 2,
+    });
     defer second.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), second.tracks.len);
     try std.testing.expect(!second.has_more);
     try std.testing.expectEqualStrings("/music/three.flac", second.tracks[0].path);
+}
+
+test "sorts tracks by library columns in both directions" {
+    var db = try open(std.testing.allocator, ":memory:", .{});
+    defer db.deinit();
+    try db.migrate();
+
+    var one = testFile("/music/one.flac", 100, 10);
+    one.track_number = 2;
+    one.title = "beta";
+    one.duration_ms = 200;
+    one.album_artist = "Zulu";
+    one.album = "Second";
+    one.release_date = "2025-01-01";
+
+    var two = testFile("/music/two.flac", 200, 20);
+    two.track_number = 3;
+    two.title = "Alpha";
+    two.duration_ms = 100;
+    two.album_artist = "alpha";
+    two.album = "Third";
+    two.release_date = "2024-01-01";
+
+    var three = testFile("/music/three.flac", 300, 30);
+    three.track_number = 1;
+    three.title = "alpha";
+    three.duration_ms = 300;
+    three.album_artist = "Mike";
+    three.album = "First";
+    three.release_date = "2026-01-01";
+
+    const scan = try db.beginScan("/music");
+    try db.upsertFiles(scan, &.{ one, two, three });
+    try db.finishScan(scan);
+
+    const cases = [_]struct {
+        field: database.TrackSortField,
+        ascending: []const []const u8,
+    }{
+        .{ .field = .database_id, .ascending = &.{ one.path, two.path, three.path } },
+        .{ .field = .track_number, .ascending = &.{ three.path, one.path, two.path } },
+        .{ .field = .title, .ascending = &.{ two.path, three.path, one.path } },
+        .{ .field = .duration, .ascending = &.{ two.path, one.path, three.path } },
+        .{ .field = .album_artist, .ascending = &.{ two.path, three.path, one.path } },
+        .{ .field = .album, .ascending = &.{ three.path, one.path, two.path } },
+        .{ .field = .release_date, .ascending = &.{ two.path, one.path, three.path } },
+    };
+
+    for (cases) |case| {
+        try expectTrackOrder(db, .{ .field = case.field }, case.ascending);
+
+        var descending: [3][]const u8 = undefined;
+        for (case.ascending, 0..) |path, index| {
+            descending[descending.len - 1 - index] = path;
+        }
+        try expectTrackOrder(
+            db,
+            .{ .field = case.field, .direction = .descending },
+            &descending,
+        );
+    }
+}
+
+test "sorted keyset pagination includes equal values exactly once" {
+    var db = try open(std.testing.allocator, ":memory:", .{});
+    defer db.deinit();
+    try db.migrate();
+
+    var one = testFile("/music/one.flac", 100, 10);
+    one.title = "Zulu";
+    var two = testFile("/music/two.flac", 200, 20);
+    two.title = "alpha";
+    var three = testFile("/music/three.flac", 300, 30);
+    three.title = "Alpha";
+
+    const scan = try db.beginScan("/music");
+    try db.upsertFiles(scan, &.{ one, two, three });
+    try db.finishScan(scan);
+
+    const sort: database.TrackSort = .{ .field = .title };
+    var first = try db.listTracks(std.testing.allocator, .{
+        .sort = sort,
+        .limit = 2,
+    });
+    defer first.deinit(std.testing.allocator);
+    try std.testing.expect(first.has_more);
+    try std.testing.expectEqualStrings(two.path, first.tracks[0].path);
+    try std.testing.expectEqualStrings(three.path, first.tracks[1].path);
+
+    var second = try db.listTracks(std.testing.allocator, .{
+        .sort = sort,
+        .after = first.tracks[1].pageCursor(sort),
+        .limit = 2,
+    });
+    defer second.deinit(std.testing.allocator);
+    try std.testing.expect(!second.has_more);
+    try std.testing.expectEqual(@as(usize, 1), second.tracks.len);
+    try std.testing.expectEqualStrings(one.path, second.tracks[0].path);
 }
 
 test "persists extracted metadata and preserves date added on update" {
@@ -811,7 +1014,7 @@ test "persists extracted metadata and preserves date added on update" {
     try db.upsertFiles(first_scan, &.{file});
     try db.finishScan(first_scan);
 
-    var first_page = try db.listTracks(std.testing.allocator, 0, 10);
+    var first_page = try db.listTracks(std.testing.allocator, .{ .limit = 10 });
     const date_added = first_page.tracks[0].date_added;
 
     var track_id: [36]u8 = undefined;
@@ -838,7 +1041,7 @@ test "persists extracted metadata and preserves date added on update" {
     try db.upsertFiles(second_scan, &.{file});
     try db.finishScan(second_scan);
 
-    var second_page = try db.listTracks(std.testing.allocator, 0, 10);
+    var second_page = try db.listTracks(std.testing.allocator, .{ .limit = 10 });
     defer second_page.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("Updated Song", second_page.tracks[0].title.?);
     try std.testing.expectEqual(date_added, second_page.tracks[0].date_added);

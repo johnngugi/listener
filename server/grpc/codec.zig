@@ -56,6 +56,7 @@ pub fn encodeResponse(
 pub fn encodeListTracksResponse(
     allocator: std.mem.Allocator,
     page: database.TrackPage,
+    sort: database.TrackSort,
 ) std.mem.Allocator.Error![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
@@ -102,10 +103,10 @@ pub fn encodeListTracksResponse(
     }
 
     if (page.has_more and page.tracks.len != 0) {
-        const token = try std.fmt.allocPrint(
+        const token = try library.encodePageToken(
             allocator,
-            "{d}",
-            .{page.tracks[page.tracks.len - 1].cursor},
+            page.tracks[page.tracks.len - 1],
+            sort,
         );
         defer allocator.free(token);
         try appendString(&out, allocator, 2, token);
@@ -312,11 +313,35 @@ fn decodeListTracks(message: []const u8) DecodeError!library.ListTracksRequest {
             1 => out.page_size = std.math.cast(u32, try field.uint64()) orelse
                 return error.InvalidInteger,
             2 => out.page_token = try field.string(),
+            3 => out.sort.field = try decodeTrackSortField(try field.uint64()),
+            4 => out.sort.direction = try decodeSortDirection(try field.uint64()),
             else => try field.skip(),
         }
     }
 
     return out;
+}
+
+fn decodeTrackSortField(value: u64) DecodeError!database.TrackSortField {
+    return switch (value) {
+        0 => .database_id,
+        1 => .track_number,
+        2 => .title,
+        3 => .duration,
+        4 => .album_artist,
+        5 => .album,
+        6 => .release_date,
+        7 => .date_added,
+        else => error.InvalidInteger,
+    };
+}
+
+fn decodeSortDirection(value: u64) DecodeError!database.SortDirection {
+    return switch (value) {
+        0, 1 => .ascending,
+        2 => .descending,
+        else => error.InvalidInteger,
+    };
 }
 
 fn decodeGetArtwork(message: []const u8) DecodeError!library.GetArtworkRequest {
@@ -469,12 +494,14 @@ test "decodes start request" {
 test "decodes list tracks request" {
     const request = try decodeRequest(
         library.Method.list_tracks.fullName(),
-        "\x08\xfa\x01\x12\x02\x34\x32",
+        "\x08\xfa\x01\x12\x02\x34\x32\x18\x02\x20\x02",
     );
 
     try std.testing.expect(request == .list_tracks);
     try std.testing.expectEqual(@as(u32, 250), request.list_tracks.page_size);
     try std.testing.expectEqualStrings("42", request.list_tracks.page_token);
+    try std.testing.expectEqual(database.TrackSortField.title, request.list_tracks.sort.field);
+    try std.testing.expectEqual(database.SortDirection.descending, request.list_tracks.sort.direction);
 }
 
 test "decodes get artwork request" {
@@ -532,7 +559,7 @@ test "encodes list tracks response" {
         .tracks = &tracks,
         .total_size = 9,
         .has_more = true,
-    });
+    }, .{});
     defer std.testing.allocator.free(encoded);
 
     try std.testing.expectEqualStrings(

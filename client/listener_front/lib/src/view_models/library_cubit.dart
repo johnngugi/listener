@@ -17,6 +17,7 @@ class LibraryCubit extends Cubit<LibraryState> {
   }
 
   final ListTracksCall _listTracks;
+  int _requestGeneration = 0;
 
   static const libraryPageSize = 200;
 
@@ -41,48 +42,126 @@ class LibraryCubit extends Cubit<LibraryState> {
     await _loadPage(isFirstPage: state.tracks.isEmpty);
   }
 
-  Future<void> _loadPage({required bool isFirstPage}) async {
+  Future<void> setSort(LibrarySortField field) async {
+    final direction = state.sortField == field
+        ? switch (state.sortDirection) {
+            LibrarySortDirection.ascending => LibrarySortDirection.descending,
+            LibrarySortDirection.descending => LibrarySortDirection.ascending,
+          }
+        : LibrarySortDirection.ascending;
+    final hasTracks = state.tracks.isNotEmpty;
+
+    _requestGeneration++;
     emit(
       state.copyWith(
-        status: isFirstPage
-            ? LibraryStatus.loadingFirstPage
-            : LibraryStatus.loadingMore,
+        status: hasTracks
+            ? LibraryStatus.ready
+            : LibraryStatus.loadingFirstPage,
+        nextPageToken: '',
+        sortField: field,
+        sortDirection: direction,
+        isRefreshing: hasTracks,
         clearError: true,
       ),
     );
+
+    await _loadPage(isFirstPage: true, backgroundRefresh: hasTracks);
+  }
+
+  Future<void> _loadPage({
+    required bool isFirstPage,
+    bool backgroundRefresh = false,
+  }) async {
+    final generation = _requestGeneration;
+    final previousTracks = state.tracks;
+    final pageToken = isFirstPage ? '' : state.nextPageToken;
+    final sortField = state.sortField;
+    final sortDirection = state.sortDirection;
+
+    if (!backgroundRefresh) {
+      emit(
+        state.copyWith(
+          status: isFirstPage
+              ? LibraryStatus.loadingFirstPage
+              : LibraryStatus.loadingMore,
+          isRefreshing: false,
+          clearError: true,
+        ),
+      );
+    }
 
     try {
       final response = await _listTracks(
         grpc.ListTracksRequest(
           pageSize: libraryPageSize,
-          pageToken: isFirstPage ? '' : state.nextPageToken,
+          pageToken: pageToken,
+          sortField: _grpcSortField(sortField),
+          sortDirection: _grpcSortDirection(sortDirection),
         ),
       );
 
-      if (isClosed) return;
+      if (isClosed || generation != _requestGeneration) return;
 
       emit(
         state.copyWith(
           tracks: [
-            if (!isFirstPage) ...state.tracks,
+            if (!isFirstPage) ...previousTracks,
             ...mapTracks(response.tracks),
           ],
           nextPageToken: response.nextPageToken,
           totalSize: response.totalSize.toInt(),
           status: LibraryStatus.ready,
+          isRefreshing: false,
         ),
       );
     } catch (error) {
-      if (isClosed) return;
+      if (isClosed || generation != _requestGeneration) return;
+
+      if (backgroundRefresh && previousTracks.isNotEmpty) {
+        emit(
+          state.copyWith(
+            status: LibraryStatus.ready,
+            isRefreshing: false,
+            errorMessage: error.toString(),
+          ),
+        );
+        return;
+      }
 
       emit(
         state.copyWith(
           status: LibraryStatus.failure,
+          isRefreshing: false,
           errorMessage: error.toString(),
         ),
       );
     }
   }
+}
+
+grpc.TrackSortField _grpcSortField(LibrarySortField field) {
+  return switch (field) {
+    LibrarySortField.trackNumber =>
+      grpc.TrackSortField.TRACK_SORT_FIELD_TRACK_NUMBER,
+    LibrarySortField.title => grpc.TrackSortField.TRACK_SORT_FIELD_TITLE,
+    LibrarySortField.duration => grpc.TrackSortField.TRACK_SORT_FIELD_DURATION,
+    LibrarySortField.albumArtist =>
+      grpc.TrackSortField.TRACK_SORT_FIELD_ALBUM_ARTIST,
+    LibrarySortField.album => grpc.TrackSortField.TRACK_SORT_FIELD_ALBUM,
+    LibrarySortField.releaseDate =>
+      grpc.TrackSortField.TRACK_SORT_FIELD_RELEASE_DATE,
+    LibrarySortField.dateAdded =>
+      grpc.TrackSortField.TRACK_SORT_FIELD_DATE_ADDED,
+  };
+}
+
+grpc.SortDirection _grpcSortDirection(LibrarySortDirection direction) {
+  return switch (direction) {
+    LibrarySortDirection.ascending =>
+      grpc.SortDirection.SORT_DIRECTION_ASCENDING,
+    LibrarySortDirection.descending =>
+      grpc.SortDirection.SORT_DIRECTION_DESCENDING,
+  };
 }
 
 List<model_track.Track> mapTracks(pb.PbList<grpc.Track> tracks) {
@@ -98,7 +177,7 @@ List<model_track.Track> mapTracks(pb.PbList<grpc.Track> tracks) {
       artist: value.albumArtist,
       album: value.album,
       releaseDate: formatReleaseDate(value.releaseDate),
-      dateAdded: '15 May 2026',
+      dateAdded: formatUnixSeconds(value.dateAddedUnixSeconds.toInt()),
       plays: '0',
       artworkId: value.hasArtworkId() ? value.artworkId.toInt() : null,
       durationMilliseconds: value.durationMs.toInt(),
@@ -124,4 +203,13 @@ String formatReleaseDate(String releaseDate) {
   }
 
   return "";
+}
+
+String formatUnixSeconds(int unixSeconds) {
+  if (unixSeconds <= 0) return '';
+  final date = DateTime.fromMillisecondsSinceEpoch(
+    unixSeconds * Duration.millisecondsPerSecond,
+    isUtc: true,
+  ).toLocal();
+  return DateFormat('d MMM yyyy').format(date);
 }

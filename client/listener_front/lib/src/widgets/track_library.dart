@@ -40,9 +40,38 @@ class TrackLibrary extends StatelessWidget {
           ),
           const SizedBox(height: 28),
           const TrackTableHeader(),
-          Expanded(child: LibraryList()),
+          const Expanded(child: LibraryListPane()),
         ],
       ),
+    );
+  }
+}
+
+class LibraryListPane extends StatelessWidget {
+  const LibraryListPane({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocSelector<LibraryCubit, LibraryState, bool>(
+      selector: (state) => state.isRefreshing,
+      builder: (context, isRefreshing) {
+        return Stack(
+          children: [
+            const LibraryList(),
+            if (isRefreshing)
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: LinearProgressIndicator(
+                  minHeight: 2,
+                  color: accentColor,
+                  backgroundColor: Colors.transparent,
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -366,21 +395,34 @@ class TrackTableHeader extends StatelessWidget {
           children: [
             const SizedBox(
               width: _numW,
-              child: HeaderLabel('#', alignRight: true),
+              child: SortableHeader(
+                '#',
+                LibrarySortField.trackNumber,
+                alignRight: true,
+              ),
             ),
             const VerticalRule(height: _headerHeight),
-            const Expanded(flex: _trackFlex, child: HeaderLabel('Track')),
+            const Expanded(
+              flex: _trackFlex,
+              child: SortableHeader('Track', LibrarySortField.title),
+            ),
             const SizedBox(width: _favW, child: HeaderIcon(Icons.search)),
             const VerticalRule(height: _headerHeight),
-            const SizedBox(width: _lengthW, child: HeaderLabel('Length')),
+            const SizedBox(
+              width: _lengthW,
+              child: SortableHeader('Length', LibrarySortField.duration),
+            ),
             const VerticalRule(height: _headerHeight),
             Expanded(
               flex: _artistFlex,
               child: Row(
                 children: const [
-                  Expanded(child: HeaderLabel('Album artist', active: true)),
-                  HeaderSortIcon(),
-                  SizedBox(width: 8),
+                  Expanded(
+                    child: SortableHeader(
+                      'Album artist',
+                      LibrarySortField.albumArtist,
+                    ),
+                  ),
                   Icon(Icons.search, color: mutedColor, size: 22),
                   SizedBox(width: 8),
                 ],
@@ -391,7 +433,9 @@ class TrackTableHeader extends StatelessWidget {
               flex: _albumFlex,
               child: Row(
                 children: const [
-                  Expanded(child: HeaderLabel('Album')),
+                  Expanded(
+                    child: SortableHeader('Album', LibrarySortField.album),
+                  ),
                   Icon(Icons.search, color: mutedColor, size: 22),
                   SizedBox(width: 8),
                 ],
@@ -400,10 +444,16 @@ class TrackTableHeader extends StatelessWidget {
             const VerticalRule(height: _headerHeight),
             const SizedBox(
               width: _releaseW,
-              child: HeaderLabel('Release date'),
+              child: SortableHeader(
+                'Release date',
+                LibrarySortField.releaseDate,
+              ),
             ),
             const VerticalRule(height: _headerHeight),
-            const SizedBox(width: _dateW, child: HeaderLabel('Date added')),
+            const SizedBox(
+              width: _dateW,
+              child: SortableHeader('Date added', LibrarySortField.dateAdded),
+            ),
             const VerticalRule(height: _headerHeight),
             const SizedBox(width: _playsW, child: HeaderLabel('Plays')),
             const VerticalRule(height: _headerHeight),
@@ -414,6 +464,56 @@ class TrackTableHeader extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class SortableHeader extends StatelessWidget {
+  const SortableHeader(
+    this.label,
+    this.field, {
+    super.key,
+    this.alignRight = false,
+  });
+
+  final String label;
+  final LibrarySortField field;
+  final bool alignRight;
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocSelector<
+      LibraryCubit,
+      LibraryState,
+      ({LibrarySortField field, LibrarySortDirection direction})
+    >(
+      selector: (state) =>
+          (field: state.sortField, direction: state.sortDirection),
+      builder: (context, sort) {
+        final active = sort.field == field;
+        final arrow = sort.direction == LibrarySortDirection.ascending
+            ? Icons.arrow_drop_up
+            : Icons.arrow_drop_down;
+
+        return InkWell(
+          onTap: () => context.read<LibraryCubit>().setSort(field),
+          child: Row(
+            mainAxisAlignment: alignRight
+                ? MainAxisAlignment.end
+                : MainAxisAlignment.start,
+            children: [
+              Flexible(
+                child: HeaderLabel(
+                  label,
+                  active: active,
+                  alignRight: alignRight,
+                ),
+              ),
+              if (active) Icon(arrow, color: accentColor, size: 18),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -459,18 +559,6 @@ class HeaderIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(child: Icon(icon, color: mutedColor, size: 25));
-  }
-}
-
-class HeaderSortIcon extends StatelessWidget {
-  const HeaderSortIcon({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Align(
-      alignment: Alignment.centerLeft,
-      child: Icon(Icons.arrow_drop_up, color: accentColor, size: 18),
-    );
   }
 }
 

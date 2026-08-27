@@ -184,10 +184,14 @@ class ListTracksRequest extends $pb.GeneratedMessage {
   factory ListTracksRequest({
     $core.int? pageSize,
     $core.String? pageToken,
+    TrackSortField? sortField,
+    SortDirection? sortDirection,
   }) {
     final result = create();
     if (pageSize != null) result.pageSize = pageSize;
     if (pageToken != null) result.pageToken = pageToken;
+    if (sortField != null) result.sortField = sortField;
+    if (sortDirection != null) result.sortDirection = sortDirection;
     return result;
   }
 
@@ -207,6 +211,10 @@ class ListTracksRequest extends $pb.GeneratedMessage {
       createEmptyInstance: create)
     ..aI(1, _omitFieldNames ? '' : 'pageSize', fieldType: $pb.PbFieldType.OU3)
     ..aOS(2, _omitFieldNames ? '' : 'pageToken')
+    ..aE<TrackSortField>(3, _omitFieldNames ? '' : 'sortField',
+        enumValues: TrackSortField.values)
+    ..aE<SortDirection>(4, _omitFieldNames ? '' : 'sortDirection',
+        enumValues: SortDirection.values)
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -245,6 +253,24 @@ class ListTracksRequest extends $pb.GeneratedMessage {
   $core.bool hasPageToken() => $_has(1);
   @$pb.TagNumber(2)
   void clearPageToken() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  TrackSortField get sortField => $_getN(2);
+  @$pb.TagNumber(3)
+  set sortField(TrackSortField value) => $_setField(3, value);
+  @$pb.TagNumber(3)
+  $core.bool hasSortField() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearSortField() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  SortDirection get sortDirection => $_getN(3);
+  @$pb.TagNumber(4)
+  set sortDirection(SortDirection value) => $_setField(4, value);
+  @$pb.TagNumber(4)
+  $core.bool hasSortDirection() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearSortDirection() => $_clearField(4);
 }
 
 class ListTracksResponse extends $pb.GeneratedMessage {

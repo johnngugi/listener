@@ -15,6 +15,44 @@ import 'dart:convert' as $convert;
 import 'dart:core' as $core;
 import 'dart:typed_data' as $typed_data;
 
+@$core.Deprecated('Use trackSortFieldDescriptor instead')
+const TrackSortField$json = {
+  '1': 'TrackSortField',
+  '2': [
+    {'1': 'TRACK_SORT_FIELD_UNSPECIFIED', '2': 0},
+    {'1': 'TRACK_SORT_FIELD_TRACK_NUMBER', '2': 1},
+    {'1': 'TRACK_SORT_FIELD_TITLE', '2': 2},
+    {'1': 'TRACK_SORT_FIELD_DURATION', '2': 3},
+    {'1': 'TRACK_SORT_FIELD_ALBUM_ARTIST', '2': 4},
+    {'1': 'TRACK_SORT_FIELD_ALBUM', '2': 5},
+    {'1': 'TRACK_SORT_FIELD_RELEASE_DATE', '2': 6},
+    {'1': 'TRACK_SORT_FIELD_DATE_ADDED', '2': 7},
+  ],
+};
+
+/// Descriptor for `TrackSortField`. Decode as a `google.protobuf.EnumDescriptorProto`.
+final $typed_data.Uint8List trackSortFieldDescriptor = $convert.base64Decode(
+    'Cg5UcmFja1NvcnRGaWVsZBIgChxUUkFDS19TT1JUX0ZJRUxEX1VOU1BFQ0lGSUVEEAASIQodVF'
+    'JBQ0tfU09SVF9GSUVMRF9UUkFDS19OVU1CRVIQARIaChZUUkFDS19TT1JUX0ZJRUxEX1RJVExF'
+    'EAISHQoZVFJBQ0tfU09SVF9GSUVMRF9EVVJBVElPThADEiEKHVRSQUNLX1NPUlRfRklFTERfQU'
+    'xCVU1fQVJUSVNUEAQSGgoWVFJBQ0tfU09SVF9GSUVMRF9BTEJVTRAFEiEKHVRSQUNLX1NPUlRf'
+    'RklFTERfUkVMRUFTRV9EQVRFEAYSHwobVFJBQ0tfU09SVF9GSUVMRF9EQVRFX0FEREVEEAc=');
+
+@$core.Deprecated('Use sortDirectionDescriptor instead')
+const SortDirection$json = {
+  '1': 'SortDirection',
+  '2': [
+    {'1': 'SORT_DIRECTION_UNSPECIFIED', '2': 0},
+    {'1': 'SORT_DIRECTION_ASCENDING', '2': 1},
+    {'1': 'SORT_DIRECTION_DESCENDING', '2': 2},
+  ],
+};
+
+/// Descriptor for `SortDirection`. Decode as a `google.protobuf.EnumDescriptorProto`.
+final $typed_data.Uint8List sortDirectionDescriptor = $convert.base64Decode(
+    'Cg1Tb3J0RGlyZWN0aW9uEh4KGlNPUlRfRElSRUNUSU9OX1VOU1BFQ0lGSUVEEAASHAoYU09SVF'
+    '9ESVJFQ1RJT05fQVNDRU5ESU5HEAESHQoZU09SVF9ESVJFQ1RJT05fREVTQ0VORElORxAC');
+
 @$core.Deprecated('Use playbackStateDescriptor instead')
 const PlaybackState$json = {
   '1': 'PlaybackState',
@@ -74,13 +112,31 @@ const ListTracksRequest$json = {
   '2': [
     {'1': 'page_size', '3': 1, '4': 1, '5': 13, '10': 'pageSize'},
     {'1': 'page_token', '3': 2, '4': 1, '5': 9, '10': 'pageToken'},
+    {
+      '1': 'sort_field',
+      '3': 3,
+      '4': 1,
+      '5': 14,
+      '6': '.listener.control.v1.TrackSortField',
+      '10': 'sortField'
+    },
+    {
+      '1': 'sort_direction',
+      '3': 4,
+      '4': 1,
+      '5': 14,
+      '6': '.listener.control.v1.SortDirection',
+      '10': 'sortDirection'
+    },
   ],
 };
 
 /// Descriptor for `ListTracksRequest`. Decode as a `google.protobuf.DescriptorProto`.
 final $typed_data.Uint8List listTracksRequestDescriptor = $convert.base64Decode(
     'ChFMaXN0VHJhY2tzUmVxdWVzdBIbCglwYWdlX3NpemUYASABKA1SCHBhZ2VTaXplEh0KCnBhZ2'
-    'VfdG9rZW4YAiABKAlSCXBhZ2VUb2tlbg==');
+    'VfdG9rZW4YAiABKAlSCXBhZ2VUb2tlbhJCCgpzb3J0X2ZpZWxkGAMgASgOMiMubGlzdGVuZXIu'
+    'Y29udHJvbC52MS5UcmFja1NvcnRGaWVsZFIJc29ydEZpZWxkEkkKDnNvcnRfZGlyZWN0aW9uGA'
+    'QgASgOMiIubGlzdGVuZXIuY29udHJvbC52MS5Tb3J0RGlyZWN0aW9uUg1zb3J0RGlyZWN0aW9u');
 
 @$core.Deprecated('Use listTracksResponseDescriptor instead')
 const ListTracksResponse$json = {

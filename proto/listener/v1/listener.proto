@@ -32,6 +32,25 @@ message GetArtworkResponse {
 message ListTracksRequest {
   uint32 page_size = 1;
   string page_token = 2;
+  TrackSortField sort_field = 3;
+  SortDirection sort_direction = 4;
+}
+
+enum TrackSortField {
+  TRACK_SORT_FIELD_UNSPECIFIED = 0;
+  TRACK_SORT_FIELD_TRACK_NUMBER = 1;
+  TRACK_SORT_FIELD_TITLE = 2;
+  TRACK_SORT_FIELD_DURATION = 3;
+  TRACK_SORT_FIELD_ALBUM_ARTIST = 4;
+  TRACK_SORT_FIELD_ALBUM = 5;
+  TRACK_SORT_FIELD_RELEASE_DATE = 6;
+  TRACK_SORT_FIELD_DATE_ADDED = 7;
+}
+
+enum SortDirection {
+  SORT_DIRECTION_UNSPECIFIED = 0;
+  SORT_DIRECTION_ASCENDING = 1;
+  SORT_DIRECTION_DESCENDING = 2;
 }
 
 message ListTracksResponse {

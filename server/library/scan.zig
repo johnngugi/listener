@@ -253,7 +253,7 @@ test "scanner traverses nested directories and flushes a partial batch" {
     try std.testing.expectEqual(@as(u64, fixture.len), second.size);
     try std.testing.expect((try db.findFile(check_scan, ignored_path)) == null);
 
-    var page = try db.listTracks(allocator, 0, 10);
+    var page = try db.listTracks(allocator, .{ .limit = 10 });
     defer page.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 2), page.tracks.len);
     try std.testing.expectEqualStrings("flac", page.tracks[0].codec);

@@ -148,6 +148,60 @@ pub const Track = struct {
         allocator.free(self.codec);
         self.* = undefined;
     }
+
+    pub fn pageCursor(self: Track, sort: TrackSort) TrackCursor {
+        const value: TrackSortValue = switch (sort.field) {
+            .database_id => .{ .integer = self.cursor },
+            .track_number => .{ .integer = self.track_number orelse 0 },
+            .title => .{ .text = self.title orelse "" },
+            .duration => .{ .integer = @intCast(self.duration_ms orelse 0) },
+            .album_artist => .{ .text = self.album_artist orelse "" },
+            .album => .{ .text = self.album orelse "" },
+            .release_date => .{ .text = self.release_date orelse "" },
+            .date_added => .{ .integer = self.date_added },
+        };
+        return .{ .value = value, .id = self.cursor };
+    }
+};
+
+pub const TrackSortField = enum {
+    database_id,
+    track_number,
+    title,
+    duration,
+    album_artist,
+    album,
+    release_date,
+    date_added,
+};
+
+pub const SortDirection = enum { ascending, descending };
+
+pub const TrackSort = struct {
+    field: TrackSortField = .database_id,
+    direction: SortDirection = .ascending,
+
+    pub fn eql(self: TrackSort, other: TrackSort) bool {
+        return self.field == other.field and self.direction == other.direction;
+    }
+};
+
+pub const TrackSortValue = union(enum) {
+    integer: i64,
+    text: []const u8,
+};
+
+/// The sort value and database ID of the last row from the previous page.
+/// Including the ID makes ordering deterministic when sort values are equal.
+pub const TrackCursor = struct {
+    value: TrackSortValue,
+    id: i64,
+};
+
+pub const ListTracksQuery = struct {
+    sort: TrackSort = .{},
+    after: ?TrackCursor = null,
+    limit: u32,
 };
 
 pub const TrackSource = struct {
@@ -201,8 +255,7 @@ pub const Database = struct {
         list_tracks: *const fn (
             context: *anyopaque,
             allocator: std.mem.Allocator,
-            after_id: i64,
-            limit: u32,
+            query: ListTracksQuery,
         ) Error!TrackPage,
         get_track_source: *const fn (
             context: *anyopaque,
@@ -258,10 +311,9 @@ pub const Database = struct {
     pub fn listTracks(
         self: Database,
         allocator: std.mem.Allocator,
-        after_id: i64,
-        limit: u32,
+        query: ListTracksQuery,
     ) Error!TrackPage {
-        return self.vtable.list_tracks(self.context, allocator, after_id, limit);
+        return self.vtable.list_tracks(self.context, allocator, query);
     }
 
     pub fn getTrackSource(

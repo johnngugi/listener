@@ -204,6 +204,7 @@ pub const Server = struct {
                 const response_payload = codec.encodeListTracksResponse(
                     allocator,
                     page,
+                    list_request.sort,
                 ) catch {
                     return self.sendStatus(
                         call,

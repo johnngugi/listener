@@ -3,12 +3,27 @@ import 'package:listener_front/src/models/track.dart';
 
 enum LibraryStatus { initial, loadingFirstPage, ready, loadingMore, failure }
 
+enum LibrarySortField {
+  trackNumber,
+  title,
+  duration,
+  albumArtist,
+  album,
+  releaseDate,
+  dateAdded,
+}
+
+enum LibrarySortDirection { ascending, descending }
+
 class LibraryState extends Equatable {
   const LibraryState({
     required this.tracks,
     required this.status,
     required this.nextPageToken,
     required this.totalSize,
+    required this.sortField,
+    required this.sortDirection,
+    required this.isRefreshing,
     this.errorMessage,
   });
 
@@ -18,6 +33,9 @@ class LibraryState extends Equatable {
       status: LibraryStatus.initial,
       nextPageToken: '',
       totalSize: 0,
+      sortField: LibrarySortField.albumArtist,
+      sortDirection: LibrarySortDirection.ascending,
+      isRefreshing: false,
     );
   }
 
@@ -25,6 +43,9 @@ class LibraryState extends Equatable {
   final LibraryStatus status;
   final String nextPageToken;
   final int totalSize;
+  final LibrarySortField sortField;
+  final LibrarySortDirection sortDirection;
+  final bool isRefreshing;
   final String? errorMessage;
 
   LibraryState copyWith({
@@ -32,6 +53,9 @@ class LibraryState extends Equatable {
     LibraryStatus? status,
     String? nextPageToken,
     int? totalSize,
+    LibrarySortField? sortField,
+    LibrarySortDirection? sortDirection,
+    bool? isRefreshing,
     String? errorMessage,
     bool clearError = false,
   }) {
@@ -40,6 +64,9 @@ class LibraryState extends Equatable {
       status: status ?? this.status,
       nextPageToken: nextPageToken ?? this.nextPageToken,
       totalSize: totalSize ?? this.totalSize,
+      sortField: sortField ?? this.sortField,
+      sortDirection: sortDirection ?? this.sortDirection,
+      isRefreshing: isRefreshing ?? this.isRefreshing,
       errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
     );
   }
@@ -56,6 +83,9 @@ class LibraryState extends Equatable {
     status,
     nextPageToken,
     totalSize,
+    sortField,
+    sortDirection,
+    isRefreshing,
     errorMessage,
   ];
 }
