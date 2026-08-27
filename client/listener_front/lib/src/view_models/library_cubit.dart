@@ -172,7 +172,9 @@ List<model_track.Track> mapTracks(pb.PbList<grpc.Track> tracks) {
       id: value.id,
       number: value.hasTrackNumber() ? value.trackNumber.toString() : '—',
       title: value.title,
-      artist: value.albumArtist,
+      artist: value.trackArtist.isNotEmpty
+          ? value.trackArtist
+          : value.albumArtist,
       album: value.album,
       releaseDate: formatReleaseDate(value.releaseDate),
       dateAdded: formatUnixSeconds(value.dateAddedUnixSeconds.toInt()),

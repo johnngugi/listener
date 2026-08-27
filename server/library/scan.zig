@@ -47,6 +47,9 @@ pub fn scanLibrary(
         defer cwd.close(io);
         defer allocator.free(dir);
 
+        var sidecar_artwork = try readSidecarArtwork(allocator, io, cwd, dir);
+        defer if (sidecar_artwork) |*artwork| artwork.deinit(allocator);
+
         var iterator = cwd.iterate();
 
         while (try iterator.next(io)) |entry| {
@@ -89,32 +92,23 @@ pub fn scanLibrary(
                     var artwork_id: ?i64 = null;
 
                     if (metadata.artwork) |artwork| {
-                        var digest: [Sha256.digest_length]u8 = undefined;
-                        Sha256.hash(artwork.bytes, &digest, .{});
-
-                        const storage_key = try artworkStorageKey(allocator, digest, artwork.format);
-                        defer allocator.free(storage_key);
-
-                        const absolute_path = try std.fs.path.join(allocator, &.{
+                        artwork_id = try storeArtwork(
+                            allocator,
+                            io,
+                            db,
+                            scan,
                             artwork_dir,
-                            storage_key,
-                        });
-                        defer allocator.free(absolute_path);
-
-                        const key_dir = std.fs.path.dirname(absolute_path).?;
-                        const name = std.fs.path.basename(absolute_path);
-
-                        try std.Io.Dir.cwd().createDirPath(io, key_dir);
-                        try writeFile(io, key_dir, name, artwork.bytes);
-
-                        artwork_id = try db.upsertArtwork(scan, .{
-                            .sha256 = digest,
-                            .mime_type = artwork.format.mimeType(),
-                            .width = artwork.width,
-                            .height = artwork.height,
-                            .byte_length = artwork.bytes.len,
-                            .storage_key = storage_key,
-                        });
+                            artwork,
+                        );
+                    } else if (sidecar_artwork) |artwork| {
+                        artwork_id = try storeArtwork(
+                            allocator,
+                            io,
+                            db,
+                            scan,
+                            artwork_dir,
+                            artwork,
+                        );
                     }
 
                     if (metadata.artwork) |*artwork| artwork.deinit(allocator);
@@ -159,6 +153,87 @@ pub fn scanLibrary(
     }
 
     try db.finishScan(scan);
+}
+
+fn readSidecarArtwork(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    dir: std.Io.Dir,
+    absolute_dir_path: []const u8,
+) !?track_info.Artwork {
+    var desired_rank: u8 = 0;
+    while (desired_rank < 8) : (desired_rank += 1) {
+        var iterator = dir.iterate();
+        while (try iterator.next(io)) |entry| {
+            if (entry.kind != .file) continue;
+            if ((sidecarRank(entry.name) orelse continue) != desired_rank) continue;
+
+            const path = try std.fs.path.join(
+                allocator,
+                &.{ absolute_dir_path, entry.name },
+            );
+            defer allocator.free(path);
+            if (try track_info.readImage(allocator, path)) |artwork| return artwork;
+        }
+    }
+
+    return null;
+}
+
+fn sidecarRank(name: []const u8) ?u8 {
+    const stem = std.fs.path.stem(name);
+    const base_rank: u8 = if (std.ascii.eqlIgnoreCase(stem, "cover"))
+        0
+    else if (std.ascii.eqlIgnoreCase(stem, "folder"))
+        4
+    else
+        return null;
+
+    const extension = std.fs.path.extension(name);
+    const extension_rank: u8 = if (std.ascii.eqlIgnoreCase(extension, ".jpg"))
+        0
+    else if (std.ascii.eqlIgnoreCase(extension, ".jpeg"))
+        1
+    else if (std.ascii.eqlIgnoreCase(extension, ".png"))
+        2
+    else if (std.ascii.eqlIgnoreCase(extension, ".webp"))
+        3
+    else
+        return null;
+
+    return base_rank + extension_rank;
+}
+
+fn storeArtwork(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    db: database.Database,
+    scan: database.Scan,
+    artwork_dir: []const u8,
+    artwork: track_info.Artwork,
+) !i64 {
+    var digest: [Sha256.digest_length]u8 = undefined;
+    Sha256.hash(artwork.bytes, &digest, .{});
+
+    const storage_key = try artworkStorageKey(allocator, digest, artwork.format);
+    defer allocator.free(storage_key);
+
+    const absolute_path = try std.fs.path.join(allocator, &.{ artwork_dir, storage_key });
+    defer allocator.free(absolute_path);
+
+    const key_dir = std.fs.path.dirname(absolute_path).?;
+    const name = std.fs.path.basename(absolute_path);
+    try std.Io.Dir.cwd().createDirPath(io, key_dir);
+    try writeFile(io, key_dir, name, artwork.bytes);
+
+    return db.upsertArtwork(scan, .{
+        .sha256 = digest,
+        .mime_type = artwork.format.mimeType(),
+        .width = artwork.width,
+        .height = artwork.height,
+        .byte_length = artwork.bytes.len,
+        .storage_key = storage_key,
+    });
 }
 
 fn freeScannedFiles(allocator: std.mem.Allocator, files: []const database.ScannedFile) void {
@@ -223,8 +298,15 @@ test "scanner traverses nested directories and flushes a partial batch" {
 
     try tmp.dir.createDirPath(io, "nested");
     const fixture = @embedFile("../testdata/fixtures/strict-s16le-stereo.flac");
+    const png =
+        "\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52" ++
+        "\x00\x00\x00\x01\x00\x00\x00\x01\x08\x04\x00\x00\x00\xb5\x1c\x0c\x02" ++
+        "\x00\x00\x00\x0b\x49\x44\x41\x54\x78\xda\x63\x64\xf8\x0f\x00\x01\x05\x01" ++
+        "\x01\x27\x18\xe3\x66\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82";
     try tmp.dir.writeFile(io, .{ .sub_path = "one.FLAC", .data = fixture });
     try tmp.dir.writeFile(io, .{ .sub_path = "nested/two.flac", .data = fixture });
+    try tmp.dir.writeFile(io, .{ .sub_path = "nested/cover.jpg", .data = "invalid" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "nested/FOLDER.PNG", .data = png });
     try tmp.dir.writeFile(io, .{ .sub_path = "ignored.txt", .data = "not audio" });
 
     var root_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
@@ -259,4 +341,28 @@ test "scanner traverses nested directories and flushes a partial batch" {
     try std.testing.expectEqualStrings("flac", page.tracks[0].codec);
     try std.testing.expectEqual(@as(u8, 16), page.tracks[0].bits_per_sample);
     try std.testing.expect(page.tracks[0].duration_ms != null);
+
+    var sidecar_track: ?database.Track = null;
+    for (page.tracks) |track| {
+        if (std.mem.eql(u8, track.path, second_path)) sidecar_track = track;
+    }
+    try std.testing.expect(sidecar_track != null);
+    try std.testing.expect(sidecar_track.?.artwork_id != null);
+
+    var stored_artwork = (try db.getArtwork(
+        allocator,
+        sidecar_track.?.artwork_id.?,
+    )).?;
+    defer stored_artwork.deinit(allocator);
+    try std.testing.expectEqualStrings("image/png", stored_artwork.mime_type);
+    try std.testing.expectEqual(@as(u32, 1), stored_artwork.width);
+    try std.testing.expectEqual(@as(u32, 1), stored_artwork.height);
+}
+
+test "sidecar artwork names are ranked case insensitively" {
+    try std.testing.expect(sidecarRank("cover.jpg").? < sidecarRank("folder.jpg").?);
+    try std.testing.expect(sidecarRank("COVER.PNG") != null);
+    try std.testing.expect(sidecarRank("folder.webp") != null);
+    try std.testing.expect(sidecarRank("booklet.jpg") == null);
+    try std.testing.expect(sidecarRank("cover.gif") == null);
 }

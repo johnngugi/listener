@@ -61,6 +61,7 @@ fn linkServerLibraries(module: *std.Build.Module) void {
     module.linkSystemLibrary("avformat", .{});
     module.linkSystemLibrary("avcodec", .{});
     module.linkSystemLibrary("avutil", .{});
+    module.linkSystemLibrary("swscale", .{});
 
     module.linkSystemLibrary("sqlite3", .{});
 

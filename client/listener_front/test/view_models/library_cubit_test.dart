@@ -34,6 +34,23 @@ void main() {
       expect(tracks[1].dateAdded, isEmpty);
     });
 
+    test('prefers track artist and falls back to album artist', () {
+      final response = grpc.ListTracksResponse(
+        tracks: [
+          grpc.Track(trackArtist: 'Track Artist', albumArtist: 'Album Artist'),
+          grpc.Track(albumArtist: 'Album Artist Only'),
+          grpc.Track(trackArtist: 'Track Artist Only'),
+        ],
+      );
+      final tracks = mapTracks(response.tracks);
+
+      expect(tracks.map((track) => track.artist), [
+        'Track Artist',
+        'Album Artist Only',
+        'Track Artist Only',
+      ]);
+    });
+
     test('loads the first page and exposes the server total', () async {
       late grpc.ListTracksRequest request;
       final cubit = LibraryCubit((value) async {

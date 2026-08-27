@@ -5,12 +5,15 @@ const c = @cImport({
     @cInclude("libavformat/avformat.h");
     @cInclude("libavutil/dict.h");
     @cInclude("libavutil/imgutils.h");
+    @cInclude("libswscale/swscale.h");
 });
 
+pub const max_artwork_source_bytes = 32 * 1024 * 1024;
 pub const max_artwork_bytes = 10 * 1024 * 1024;
 pub const max_artwork_width = 6_000;
 pub const max_artwork_height = 6_000;
 pub const max_artwork_pixels = 25_000_000;
+pub const max_stored_artwork_dimension = 1_024;
 
 /// Metadata owned by the caller. All strings remain valid after FFmpeg closes
 /// the input and must be released with `deinit`.
@@ -166,28 +169,67 @@ pub fn read(allocator: std.mem.Allocator, media_path: []const u8) !TrackMetadata
     return result;
 }
 
-/// Returns the first supported, decodable attached picture. Invalid or
-/// oversized artwork is ignored so it cannot prevent the track from scanning.
+/// Returns the preferred supported, decodable attached picture. Large valid
+/// sources are normalized; invalid or excessively large sources are ignored so
+/// they cannot prevent the track from scanning.
 fn readArtwork(
     allocator: std.mem.Allocator,
     format_ctx: [*c]c.AVFormatContext,
+) std.mem.Allocator.Error!?Artwork {
+    if (try readAttachedArtwork(allocator, format_ctx, true)) |artwork| return artwork;
+    return readAttachedArtwork(allocator, format_ctx, false);
+}
+
+fn readAttachedArtwork(
+    allocator: std.mem.Allocator,
+    format_ctx: [*c]c.AVFormatContext,
+    front_cover_only: bool,
 ) std.mem.Allocator.Error!?Artwork {
     var index: usize = 0;
     while (index < format_ctx.*.nb_streams) : (index += 1) {
         const stream = format_ctx.*.streams[index];
         if ((stream.*.disposition & c.AV_DISPOSITION_ATTACHED_PIC) == 0) continue;
+        if (front_cover_only and !isFrontCover(stream)) continue;
 
-        const format = artworkFormat(stream.*.codecpar.*.codec_id) orelse continue;
         const picture = &stream.*.attached_pic;
-        const dimensions = validateArtwork(stream.*.codecpar, picture) orelse continue;
-        const byte_len = std.math.cast(usize, picture.*.size) orelse continue;
+        if (try artworkFromPacket(allocator, stream.*.codecpar, picture)) |artwork| {
+            return artwork;
+        }
+    }
 
-        return .{
-            .format = format,
-            .bytes = try allocator.dupe(u8, picture.*.data[0..byte_len]),
-            .width = dimensions.width,
-            .height = dimensions.height,
-        };
+    return null;
+}
+
+/// Reads and validates a standalone artwork file. The scanner uses this for
+/// conventional album sidecars such as `cover.jpg` and `folder.png`.
+pub fn readImage(allocator: std.mem.Allocator, image_path: []const u8) !?Artwork {
+    const terminated_path = try allocator.dupeSentinel(u8, image_path, 0);
+    defer allocator.free(terminated_path);
+
+    var format_ctx: [*c]c.AVFormatContext = null;
+    if (c.avformat_open_input(&format_ctx, terminated_path.ptr, null, null) < 0) return null;
+    defer c.avformat_close_input(&format_ctx);
+
+    if (c.avformat_find_stream_info(format_ctx, null) < 0) return null;
+
+    const stream_index = c.av_find_best_stream(
+        format_ctx,
+        c.AVMEDIA_TYPE_VIDEO,
+        -1,
+        -1,
+        null,
+        0,
+    );
+    if (stream_index < 0) return null;
+
+    const stream = format_ctx.*.streams[@intCast(stream_index)];
+    const packet = c.av_packet_alloc() orelse return error.OutOfMemory;
+    defer c.av_packet_free(@constCast(&packet));
+
+    while (c.av_read_frame(format_ctx, packet) >= 0) {
+        defer c.av_packet_unref(packet);
+        if (packet.*.stream_index != stream_index) continue;
+        return artworkFromPacket(allocator, stream.*.codecpar, packet);
     }
 
     return null;
@@ -207,16 +249,64 @@ fn artworkFormat(codec_id: c.enum_AVCodecID) ?ArtworkFormat {
     };
 }
 
+fn isFrontCover(stream: [*c]const c.AVStream) bool {
+    const comment = metadataValue(stream.*.metadata, "comment") orelse return false;
+    return std.ascii.eqlIgnoreCase(comment, "Cover (front)") or
+        std.ascii.eqlIgnoreCase(comment, "Front Cover");
+}
+
+fn artworkFromPacket(
+    allocator: std.mem.Allocator,
+    codec_parameters: [*c]const c.AVCodecParameters,
+    picture: [*c]const c.AVPacket,
+) std.mem.Allocator.Error!?Artwork {
+    if (picture.*.data == null or picture.*.size <= 0) return null;
+    if (picture.*.size > max_artwork_source_bytes) return null;
+
+    const format = artworkFormat(codec_parameters.*.codec_id) orelse return null;
+    const decoded = decodeArtwork(codec_parameters, picture) orelse return null;
+    defer c.av_frame_free(@constCast(&decoded));
+
+    const width: u32 = @intCast(decoded.*.width);
+    const height: u32 = @intCast(decoded.*.height);
+    const byte_len = std.math.cast(usize, picture.*.size) orelse return null;
+
+    if (byte_len <= max_artwork_bytes and
+        width <= max_stored_artwork_dimension and
+        height <= max_stored_artwork_dimension)
+    {
+        return .{
+            .format = format,
+            .bytes = try allocator.dupe(u8, picture.*.data[0..byte_len]),
+            .width = width,
+            .height = height,
+        };
+    }
+
+    return normalizeArtwork(allocator, decoded);
+}
+
 /// Performs every resource check before the caller copies the compressed data.
 /// Decoding one frame verifies both the claimed format and actual dimensions.
 fn validateArtwork(
     codec_parameters: [*c]const c.AVCodecParameters,
     picture: [*c]const c.AVPacket,
 ) ?ArtworkDimensions {
+    const frame = decodeArtwork(codec_parameters, picture) orelse return null;
+    defer c.av_frame_free(@constCast(&frame));
+
+    return .{
+        .width = @intCast(frame.*.width),
+        .height = @intCast(frame.*.height),
+    };
+}
+
+fn decodeArtwork(
+    codec_parameters: [*c]const c.AVCodecParameters,
+    picture: [*c]const c.AVPacket,
+) ?[*c]c.AVFrame {
     if (picture.*.data == null or picture.*.size <= 0) return null;
-
-    if (picture.*.size > max_artwork_bytes) return null;
-
+    if (picture.*.size > max_artwork_source_bytes) return null;
     if (artworkFormat(codec_parameters.*.codec_id) == null) return null;
 
     if (codec_parameters.*.width > 0 and codec_parameters.*.height > 0 and
@@ -226,26 +316,155 @@ fn validateArtwork(
     }
 
     const decoder = c.avcodec_find_decoder(codec_parameters.*.codec_id) orelse return null;
-
     var decoder_ctx = c.avcodec_alloc_context3(decoder) orelse return null;
     defer c.avcodec_free_context(&decoder_ctx);
 
     if (c.avcodec_parameters_to_context(decoder_ctx, codec_parameters) < 0) return null;
-
     decoder_ctx.*.max_pixels = max_artwork_pixels;
     if (c.avcodec_open2(decoder_ctx, decoder, null) < 0) return null;
 
     const frame = c.av_frame_alloc() orelse return null;
-    defer c.av_frame_free(@constCast(&frame));
+    if (c.avcodec_send_packet(decoder_ctx, picture) < 0) {
+        c.av_frame_free(@constCast(&frame));
+        return null;
+    }
+    if (c.avcodec_receive_frame(decoder_ctx, frame) < 0) {
+        c.av_frame_free(@constCast(&frame));
+        return null;
+    }
+    if (!dimensionsAllowed(frame.*.width, frame.*.height)) {
+        c.av_frame_free(@constCast(&frame));
+        return null;
+    }
+    return frame;
+}
 
-    if (c.avcodec_send_packet(decoder_ctx, picture) < 0) return null;
-    if (c.avcodec_receive_frame(decoder_ctx, frame) < 0) return null;
-    if (!dimensionsAllowed(frame.*.width, frame.*.height)) return null;
+fn normalizeArtwork(
+    allocator: std.mem.Allocator,
+    source: [*c]const c.AVFrame,
+) std.mem.Allocator.Error!?Artwork {
+    const dimensions = normalizedDimensions(source.*.width, source.*.height) orelse return null;
+    const encoder = c.avcodec_find_encoder(c.AV_CODEC_ID_MJPEG) orelse return null;
+    var encoder_ctx = c.avcodec_alloc_context3(encoder) orelse return null;
+    defer c.avcodec_free_context(&encoder_ctx);
 
+    encoder_ctx.*.width = @intCast(dimensions.width);
+    encoder_ctx.*.height = @intCast(dimensions.height);
+    encoder_ctx.*.time_base = .{ .num = 1, .den = 25 };
+    encoder_ctx.*.pix_fmt = c.AV_PIX_FMT_YUV420P;
+    encoder_ctx.*.color_range = c.AVCOL_RANGE_JPEG;
+    encoder_ctx.*.qmin = 2;
+    encoder_ctx.*.qmax = 5;
+    if (c.avcodec_open2(encoder_ctx, encoder, null) < 0) return null;
+
+    const destination = c.av_frame_alloc() orelse return null;
+    defer c.av_frame_free(@constCast(&destination));
+    destination.*.format = encoder_ctx.*.pix_fmt;
+    destination.*.width = encoder_ctx.*.width;
+    destination.*.height = encoder_ctx.*.height;
+    destination.*.color_range = c.AVCOL_RANGE_JPEG;
+    if (c.av_frame_get_buffer(destination, 32) < 0) return null;
+    if (c.av_frame_make_writable(destination) < 0) return null;
+
+    const source_format = modernPixelFormat(source.*.format);
+    const scaler = c.sws_getContext(
+        source.*.width,
+        source.*.height,
+        source_format,
+        destination.*.width,
+        destination.*.height,
+        encoder_ctx.*.pix_fmt,
+        c.SWS_BICUBIC,
+        null,
+        null,
+        null,
+    ) orelse return null;
+    defer c.sws_freeContext(scaler);
+
+    const coefficients = c.sws_getCoefficients(c.SWS_CS_DEFAULT);
+    const source_full_range: c_int = @intFromBool(
+        isFullRange(source.*.format, source.*.color_range),
+    );
+    if (c.sws_setColorspaceDetails(
+        scaler,
+        coefficients,
+        source_full_range,
+        coefficients,
+        1,
+        0,
+        1 << 16,
+        1 << 16,
+    ) < 0) return null;
+
+    const rows = c.sws_scale(
+        scaler,
+        @ptrCast(&source[0].data[0]),
+        &source[0].linesize[0],
+        0,
+        source.*.height,
+        @ptrCast(&destination[0].data[0]),
+        &destination[0].linesize[0],
+    );
+    if (rows != destination.*.height) return null;
+
+    const packet = c.av_packet_alloc() orelse return null;
+    defer c.av_packet_free(@constCast(&packet));
+    if (c.avcodec_send_frame(encoder_ctx, destination) < 0) return null;
+    if (c.avcodec_receive_packet(encoder_ctx, packet) < 0) return null;
+    if (packet.*.data == null or packet.*.size <= 0 or packet.*.size > max_artwork_bytes) {
+        return null;
+    }
+
+    const byte_len = std.math.cast(usize, packet.*.size) orelse return null;
     return .{
-        .width = @intCast(frame.*.width),
-        .height = @intCast(frame.*.height),
+        .format = .jpeg,
+        .bytes = try allocator.dupe(u8, packet.*.data[0..byte_len]),
+        .width = dimensions.width,
+        .height = dimensions.height,
     };
+}
+
+fn modernPixelFormat(format: c_int) c_int {
+    return switch (format) {
+        c.AV_PIX_FMT_YUVJ420P => c.AV_PIX_FMT_YUV420P,
+        c.AV_PIX_FMT_YUVJ422P => c.AV_PIX_FMT_YUV422P,
+        c.AV_PIX_FMT_YUVJ444P => c.AV_PIX_FMT_YUV444P,
+        c.AV_PIX_FMT_YUVJ440P => c.AV_PIX_FMT_YUV440P,
+        else => format,
+    };
+}
+
+fn isFullRange(format: c_int, color_range: c.enum_AVColorRange) bool {
+    return switch (format) {
+        c.AV_PIX_FMT_YUVJ420P,
+        c.AV_PIX_FMT_YUVJ422P,
+        c.AV_PIX_FMT_YUVJ444P,
+        c.AV_PIX_FMT_YUVJ440P,
+        => true,
+        else => color_range == c.AVCOL_RANGE_JPEG,
+    };
+}
+
+fn normalizedDimensions(width: c_int, height: c_int) ?ArtworkDimensions {
+    if (!dimensionsAllowed(width, height)) return null;
+
+    const width_u32: u32 = @intCast(width);
+    const height_u32: u32 = @intCast(height);
+    const longest = @max(width_u32, height_u32);
+    if (longest <= max_stored_artwork_dimension) {
+        return .{ .width = width_u32, .height = height_u32 };
+    }
+
+    var result_width: u32 = @intCast(
+        (@as(u64, width_u32) * max_stored_artwork_dimension) / longest,
+    );
+    var result_height: u32 = @intCast(
+        (@as(u64, height_u32) * max_stored_artwork_dimension) / longest,
+    );
+    result_width = @max(result_width & ~@as(u32, 1), 2);
+    result_height = @max(result_height & ~@as(u32, 1), 2);
+
+    return .{ .width = result_width, .height = result_height };
 }
 
 fn dimensionsAllowed(width: c_int, height: c_int) bool {
@@ -339,6 +558,65 @@ test "artwork dimension policy rejects oversized and pathological images" {
     try std.testing.expect(!dimensionsAllowed(0, 1_000));
     try std.testing.expect(!dimensionsAllowed(6_001, 1_000));
     try std.testing.expect(!dimensionsAllowed(6_000, 6_000));
+}
+
+test "normalization preserves aspect ratio and uses even JPEG dimensions" {
+    const landscape = normalizedDimensions(2_500, 1_500).?;
+    try std.testing.expectEqual(@as(u32, 1_024), landscape.width);
+    try std.testing.expectEqual(@as(u32, 614), landscape.height);
+
+    const portrait = normalizedDimensions(1_500, 2_500).?;
+    try std.testing.expectEqual(@as(u32, 614), portrait.width);
+    try std.testing.expectEqual(@as(u32, 1_024), portrait.height);
+
+    const small = normalizedDimensions(500, 500).?;
+    try std.testing.expectEqual(@as(u32, 500), small.width);
+    try std.testing.expectEqual(@as(u32, 500), small.height);
+}
+
+test "deprecated JPEG pixel formats retain full range through modern formats" {
+    try std.testing.expectEqual(
+        c.AV_PIX_FMT_YUV420P,
+        modernPixelFormat(c.AV_PIX_FMT_YUVJ420P),
+    );
+    try std.testing.expectEqual(
+        c.AV_PIX_FMT_YUV444P,
+        modernPixelFormat(c.AV_PIX_FMT_YUVJ444P),
+    );
+    try std.testing.expect(isFullRange(
+        c.AV_PIX_FMT_YUVJ420P,
+        c.AVCOL_RANGE_UNSPECIFIED,
+    ));
+    try std.testing.expect(isFullRange(
+        c.AV_PIX_FMT_RGB24,
+        c.AVCOL_RANGE_JPEG,
+    ));
+}
+
+test "normalizes a large decoded frame to a bounded JPEG" {
+    const source = c.av_frame_alloc() orelse return error.OutOfMemory;
+    defer c.av_frame_free(@constCast(&source));
+    source.*.format = c.AV_PIX_FMT_RGB24;
+    source.*.width = 1_500;
+    source.*.height = 1_200;
+    if (c.av_frame_get_buffer(source, 32) < 0) return error.OutOfMemory;
+    if (c.av_frame_make_writable(source) < 0) return error.OutOfMemory;
+
+    var row: usize = 0;
+    while (row < @as(usize, @intCast(source.*.height))) : (row += 1) {
+        const line_size: usize = @intCast(source[0].linesize[0]);
+        @memset(source[0].data[0][row * line_size ..][0..line_size], 96);
+    }
+
+    var artwork = (try normalizeArtwork(std.testing.allocator, source)) orelse
+        return error.ArtworkRejected;
+    defer artwork.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(ArtworkFormat.jpeg, artwork.format);
+    try std.testing.expectEqual(@as(u32, 1_024), artwork.width);
+    try std.testing.expectEqual(@as(u32, 818), artwork.height);
+    try std.testing.expect(artwork.bytes.len > 0);
+    try std.testing.expect(artwork.bytes.len <= max_artwork_bytes);
 }
 
 test "validates a supported image by decoding one frame" {

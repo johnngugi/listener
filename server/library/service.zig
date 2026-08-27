@@ -1,5 +1,6 @@
 const std = @import("std");
 const database = @import("database.zig");
+const track_info = @import("track_info.zig");
 
 pub const service_full_name = "listener.control.v1.ListenerLibrary";
 
@@ -17,7 +18,7 @@ pub const Method = enum {
 
 pub const default_page_size: u32 = 100;
 pub const max_page_size: u32 = 500;
-pub const max_artwork_bytes: u64 = 10 * 1024 * 1024;
+pub const max_artwork_bytes: u64 = track_info.max_artwork_bytes;
 
 pub const ListTracksRequest = struct {
     page_size: u32 = 0,

@@ -80,6 +80,7 @@ fn linkServerLibraries(module: *std.Build.Module) void {
     module.linkSystemLibrary("avformat", .{});
     module.linkSystemLibrary("avcodec", .{});
     module.linkSystemLibrary("avutil", .{});
+    module.linkSystemLibrary("swscale", .{});
 
     module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/include" });
     module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/lib" });
