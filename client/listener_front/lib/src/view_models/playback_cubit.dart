@@ -7,8 +7,7 @@ import 'package:listener_front/src/models/playback_queue.dart';
 import 'package:listener_front/src/models/playback_state.dart';
 import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/services/playback_control.dart';
-import 'package:listener_front/src/services/playback_engine.dart';
-import 'package:listener_front/src/services/playback_engine_event.dart';
+import 'package:listener_engine/listener_engine.dart';
 import 'package:listener_front/src/utils/result.dart';
 
 class PlaybackCubit extends Cubit<PlaybackState> {

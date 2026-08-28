@@ -3,13 +3,12 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const lstn_protocol = b.createModule(.{
-        .root_source_file = b.path("../shared/lstn/protocol.zig"),
+    const lstn_protocol = b.dependency("lstn_protocol", .{
         .target = target,
         .optimize = optimize,
-    });
+    }).module("lstn_protocol");
     const stdout = b.createModule(.{
-        .root_source_file = b.path("../shared/stdout.zig"),
+        .root_source_file = b.path("stdout.zig"),
         .target = target,
         .optimize = optimize,
     });

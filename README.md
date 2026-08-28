@@ -8,6 +8,7 @@ the planned UI and native audio engine pieces.
 
 ```text
 client/   Client workspace and native client engine experiments.
+packages/ Shared, independently testable packages such as the LSTN wire protocol.
 server/   Zig server implementation.
 proto/    Versioned protobuf API definitions.
 docs/     Architecture, protocol, and implementation notes.
@@ -36,4 +37,5 @@ cd server
 zig build test
 ```
 
-The client engine has its own Zig package in `client/engine`.
+The client engine is a Dart Native Assets package in `client/engine`. Its build
+hook compiles the Zig implementation and bundles it with consuming apps.

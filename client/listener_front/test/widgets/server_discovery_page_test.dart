@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:listener_front/src/services/playback_engine_event.dart';
+import 'package:listener_engine/listener_engine.dart';
 import 'package:listener_front/src/widgets/server_discovery_page.dart';
 
 void main() {

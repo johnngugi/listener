@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:listener_front/src/services/playback_engine_event.dart';
+import 'package:listener_engine/listener_engine.dart';
 import 'package:listener_front/src/theme.dart';
 
 typedef ConnectToServer = Future<void> Function(DiscoveredServiceEvent service);

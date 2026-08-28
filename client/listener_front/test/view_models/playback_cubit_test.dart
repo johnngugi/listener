@@ -6,8 +6,7 @@ import 'package:listener_front/src/generated/listener/v1/listener.pbgrpc.dart'
 import 'package:listener_front/src/models/playback_state.dart';
 import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/services/playback_control.dart';
-import 'package:listener_front/src/services/playback_engine.dart';
-import 'package:listener_front/src/services/playback_engine_event.dart';
+import 'package:listener_engine/listener_engine.dart';
 import 'package:listener_front/src/view_models/playback_cubit.dart';
 
 void main() {

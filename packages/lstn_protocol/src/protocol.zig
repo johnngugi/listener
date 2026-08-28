@@ -241,7 +241,6 @@ pub const StartStream = struct {
             return error.InvalidPlaybackId;
         }
     }
-
 };
 
 // Wire layout:

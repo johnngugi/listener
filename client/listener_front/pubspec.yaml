@@ -8,13 +8,14 @@ environment:
 
 dependencies:
   equatable: ^2.1.0
-  ffi: ^2.2.0
   fixnum: ^1.1.1
   flutter:
     sdk: flutter
   flutter_bloc: ^9.1.1
   grpc: ^5.1.0
   intl: ^0.20.3
+  listener_engine:
+    path: ../engine
   protobuf: ^6.0.0
 
 dev_dependencies:

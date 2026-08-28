@@ -1,0 +1,12 @@
+.{
+    .name = .lstn_protocol,
+    .version = "0.1.0",
+    .fingerprint = 0x49358e136a9a28d3, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

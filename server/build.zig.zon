@@ -1,0 +1,12 @@
+.{
+    .name = .listener_server,
+    .version = "0.1.0",
+    .fingerprint = 0xfaff84fcb98e3e47, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .lstn_protocol = .{
+            .path = "../packages/lstn_protocol",
+        },
+    },
+    .paths = .{""},
+}

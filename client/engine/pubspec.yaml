@@ -1,0 +1,17 @@
+name: listener_engine
+description: Native playback engine package for Listener.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  code_assets: ^1.0.0
+  equatable: ^2.1.0
+  ffi: ^2.2.0
+  hooks: ^1.0.2
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.30.0

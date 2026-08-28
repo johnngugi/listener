@@ -2,6 +2,11 @@
     .name = .engine,
     .version = "0.0.1",
     .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .lstn_protocol = .{
+            .path = "../../packages/lstn_protocol",
+        },
+    },
     .paths = .{""},
     .fingerprint = 0xe8a81a8d93f17903,
 }

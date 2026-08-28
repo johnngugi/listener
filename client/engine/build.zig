@@ -3,14 +3,19 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const macos_sdk_path = b.option(
+        []const u8,
+        "macos-sdk-path",
+        "Path to the macOS SDK used for framework linking",
+    );
 
-    const lstn_protocol = b.createModule(.{
-        .root_source_file = b.path("../../shared/lstn/protocol.zig"),
+    const lstn_protocol = b.dependency("lstn_protocol", .{
         .target = target,
         .optimize = optimize,
-    });
+    }).module("lstn_protocol");
+
     const stdout = b.createModule(.{
-        .root_source_file = b.path("../../shared/stdout.zig"),
+        .root_source_file = b.path("stdout.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -47,7 +52,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .dynamic,
         .root_module = root_module,
     });
-    linkSelectedOutputBackend(lib, target);
+    linkSelectedOutputBackend(lib, target, macos_sdk_path);
 
     b.installArtifact(lib);
 
@@ -136,9 +141,21 @@ fn testOutputBackend(
 fn linkSelectedOutputBackend(
     lib: *std.Build.Step.Compile,
     target: std.Build.ResolvedTarget,
+    macos_sdk_path: ?[]const u8,
 ) void {
     switch (target.result.os.tag) {
         .macos => {
+            // Native Assets rewrites the dylib's install name while bundling.
+            // Reserve enough Mach-O header space for the rewritten paths.
+            lib.headerpad_max_install_names = true;
+            if (macos_sdk_path) |sdk_path| {
+                lib.root_module.addFrameworkPath(.{
+                    .cwd_relative = std.fs.path.join(
+                        lib.step.owner.allocator,
+                        &.{ sdk_path, "System/Library/Frameworks" },
+                    ) catch @panic("out of memory"),
+                });
+            }
             lib.root_module.linkFramework("CoreAudio", .{});
             lib.root_module.linkFramework("AudioUnit", .{});
         },
