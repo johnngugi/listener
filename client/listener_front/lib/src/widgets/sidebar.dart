@@ -21,17 +21,12 @@ class Sidebar extends StatelessWidget {
             const SideSection(
               label: 'MY LIBRARY',
               items: [
-                SideItem(Icons.album_outlined, 'Albums'),
-                SideItem(Icons.hub_outlined, 'Artists'),
+                // TODO: Add Albums and Artists navigation after the initial
+                // release.
                 SideItem(Icons.music_note_outlined, 'Tracks', selected: true),
               ],
             ),
-            const Spacer(),
-            const PlaylistHeader(),
-            const SizedBox(height: 18),
-            const Text('Car Vocals', style: _sidebarItemStyle),
-            const SizedBox(height: 24),
-            const Text('Work', style: _sidebarItemStyle),
+            // TODO: Add playlist navigation after the initial release.
           ],
         ),
       ),
@@ -146,45 +141,6 @@ class SideItem extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class PlaylistHeader extends StatelessWidget {
-  const PlaylistHeader({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        const Expanded(
-          child: Row(
-            children: [
-              Flexible(
-                child: Text(
-                  'PLAYLISTS',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: textColor,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
-                  ),
-                ),
-              ),
-              Icon(Icons.chevron_right, color: mutedColor, size: 20),
-            ],
-          ),
-        ),
-        Icon(Icons.add, color: mutedColor.withValues(alpha: .95), size: 22),
-        const SizedBox(width: 16),
-        Icon(
-          Icons.more_horiz,
-          color: mutedColor.withValues(alpha: .95),
-          size: 25,
-        ),
-      ],
     );
   }
 }

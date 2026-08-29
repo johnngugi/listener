@@ -15,8 +15,6 @@ const _favW = 52.0;
 const _lengthW = 104.0;
 const _releaseW = 128.0;
 const _dateW = 128.0;
-const _playsW = 76.0;
-const _moreW = 64.0;
 const _trackFlex = 34;
 const _artistFlex = 17;
 const _albumFlex = 19;
@@ -371,18 +369,7 @@ class LibraryTopBar extends StatelessWidget {
                   icon: const Icon(Icons.menu, color: mutedColor, size: 28),
                 ),
               const Spacer(),
-              const CircleAvatar(
-                radius: 17,
-                backgroundColor: greenColor,
-                child: Text(
-                  'J',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 18,
-                  ),
-                ),
-              ),
+              // TODO: Add profile access after the initial release.
             ],
           ),
         );
@@ -684,14 +671,9 @@ class TrackTableHeader extends StatelessWidget {
                       LibrarySortField.dateAdded,
                     ),
                   ),
-                  const VerticalRule(height: _headerHeight),
-                  const SizedBox(width: _playsW, child: HeaderLabel('Plays')),
-                  const VerticalRule(height: _headerHeight),
+                  // TODO: Add the Plays column after the initial release.
                 ],
-                const SizedBox(
-                  width: _moreW,
-                  child: HeaderIcon(Icons.settings_outlined),
-                ),
+                // TODO: Add table settings after the initial release.
               ],
             ),
           ),
@@ -922,14 +904,11 @@ class TrackRow extends StatelessWidget {
                             width: _dateW,
                             child: BodyCell(track.dateAdded),
                           ),
-                          const SizedBox(width: 1),
-                          SizedBox(
-                            width: _playsW,
-                            child: BodyCell(track.plays),
-                          ),
-                          const SizedBox(width: 1),
+                          // TODO: Add the Plays column after the initial
+                          // release.
                         ],
-                        const _MoreIcon(),
+                        // TODO: Add per-track actions after the initial
+                        // release.
                       ],
                     ),
             ),
@@ -1010,8 +989,7 @@ class TrackRow extends StatelessWidget {
           const SizedBox(width: 10),
           _FavoriteIcon(favorite: track.favorite),
         ],
-        const SizedBox(width: 4),
-        const _MoreIcon(width: 42),
+        // TODO: Add per-track actions after the initial release.
       ],
     );
   }
@@ -1077,23 +1055,6 @@ class _FavoriteIcon extends StatelessWidget {
         favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
         color: favorite ? accentColor : mutedColor,
         size: 22,
-      ),
-    );
-  }
-}
-
-class _MoreIcon extends StatelessWidget {
-  const _MoreIcon({this.width = _moreW});
-
-  final double width;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: width,
-      child: const Tooltip(
-        message: 'More track actions',
-        child: Icon(Icons.more_horiz_rounded, color: mutedColor, size: 25),
       ),
     );
   }
