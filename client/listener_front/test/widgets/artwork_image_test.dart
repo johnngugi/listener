@@ -39,6 +39,38 @@ void main() {
     expect(request.artworkId, Int64(42));
     expect(find.byType(Image), findsOneWidget);
   });
+
+  testWidgets('decodes artwork at its physical display size', (tester) async {
+    final repository = ArtworkRepository((request) async {
+      return grpc.GetArtworkResponse(
+        artworkId: request.artworkId,
+        mimeType: 'image/png',
+        width: 1024,
+        height: 768,
+        data: _transparentPng,
+      );
+    });
+
+    await tester.pumpWidget(
+      RepositoryProvider.value(
+        value: repository,
+        child: const MediaQuery(
+          data: MediaQueryData(devicePixelRatio: 2),
+          child: Directionality(
+            textDirection: TextDirection.ltr,
+            child: ArtworkImage(artworkId: 42, size: 56),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final image = tester.widget<Image>(find.byType(Image));
+    final resizedImage = image.image as ResizeImage;
+
+    expect(resizedImage.width, isNull);
+    expect(resizedImage.height, 112);
+  });
 }
 
 final Uint8List _transparentPng = Uint8List.fromList([

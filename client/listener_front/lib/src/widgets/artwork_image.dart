@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:listener_front/src/models/track.dart';
@@ -64,10 +66,21 @@ class _ArtworkImageState extends State<ArtworkImage> {
 
         switch (artwork) {
           case Ok<ArtworkResponse>():
+            final image = artwork.value;
+            final targetPixels = math.max(
+              1,
+              (widget.size * MediaQuery.devicePixelRatioOf(context)).ceil(),
+            );
+            final (cacheWidth, cacheHeight) = image.width <= image.height
+                ? (math.min(targetPixels, image.width), null)
+                : (null, math.min(targetPixels, image.height));
+
             return Image.memory(
-              artwork.value.data,
+              image.data,
               width: widget.size,
               height: widget.size,
+              cacheWidth: cacheWidth,
+              cacheHeight: cacheHeight,
               fit: BoxFit.cover,
               gaplessPlayback: true,
               errorBuilder: (context, error, stackTrace) {
