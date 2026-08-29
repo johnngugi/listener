@@ -155,8 +155,15 @@ fn linkSelectedOutputBackend(
                         &.{ sdk_path, "System/Library/Frameworks" },
                     ) catch @panic("out of memory"),
                 });
+                lib.root_module.addLibraryPath(.{
+                    .cwd_relative = std.fs.path.join(
+                        lib.step.owner.allocator,
+                        &.{ sdk_path, "usr/lib" },
+                    ) catch @panic("out of memory"),
+                });
             }
             lib.root_module.linkFramework("CoreAudio", .{});
+            lib.root_module.linkFramework("CoreFoundation", .{});
             lib.root_module.linkFramework("AudioUnit", .{});
         },
         else => unreachable,

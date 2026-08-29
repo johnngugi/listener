@@ -5,9 +5,11 @@ import 'dart:convert';
 import 'dart:ffi' as ffi;
 
 import 'package:ffi/ffi.dart';
+import 'package:listener_engine/src/audio_output_device.dart';
 import 'package:listener_engine/src/bindings.dart';
 import 'package:listener_engine/src/playback_engine_event.dart';
 
+export 'src/audio_output_device.dart';
 export 'src/playback_engine_event.dart';
 
 const _listenerEngineAbiVersion = 1;
@@ -42,6 +44,10 @@ abstract interface class PlaybackEngine {
   Stream<PlaybackEngineEvent> get events;
 
   Future<DiscoveredServiceEvent> discoverService();
+
+  List<AudioOutputDevice> outputDevices();
+
+  ListenerStatus selectOutputDevice(String? deviceId);
 
   ListenerStatus startStream({
     required String playbackId,
@@ -114,6 +120,89 @@ final class ListenerEngine implements PlaybackEngine {
 
   @override
   Stream<PlaybackEngineEvent> get events => _events.stream;
+
+  @override
+  List<AudioOutputDevice> outputDevices() {
+    if (_closed) {
+      throw StateError('ListenerEngine is closed');
+    }
+
+    final snapshotOut = calloc<ffi.Pointer<NativeOutputDeviceSnapshot>>();
+    try {
+      final status = ListenerStatus.fromCode(
+        listenerEngineOutputDevices(_engine, snapshotOut),
+      );
+      if (status != ListenerStatus.ok) {
+        throw StateError('Failed to enumerate output devices: ${status.name}');
+      }
+
+      final snapshot = snapshotOut.value;
+      if (snapshot == ffi.nullptr) {
+        throw StateError('Native output device snapshot was null');
+      }
+
+      try {
+        final count = listenerOutputDeviceSnapshotCount(snapshot);
+        final nativeDevice = calloc<NativeOutputDevice>();
+        try {
+          return List<AudioOutputDevice>.generate(count, (index) {
+            final itemStatus = ListenerStatus.fromCode(
+              listenerOutputDeviceSnapshotGet(snapshot, index, nativeDevice),
+            );
+            if (itemStatus != ListenerStatus.ok) {
+              throw StateError(
+                'Failed to read output device $index: ${itemStatus.name}',
+              );
+            }
+
+            final item = nativeDevice.ref;
+            return AudioOutputDevice(
+              id: utf8.decode(item.id.asTypedList(item.idLength)),
+              name: utf8.decode(item.name.asTypedList(item.nameLength)),
+              isDefault: item.isDefault != 0,
+            );
+          }, growable: false);
+        } finally {
+          calloc.free(nativeDevice);
+        }
+      } finally {
+        listenerOutputDeviceSnapshotRelease(snapshot);
+      }
+    } finally {
+      calloc.free(snapshotOut);
+    }
+  }
+
+  @override
+  ListenerStatus selectOutputDevice(String? deviceId) {
+    if (_closed) {
+      throw StateError('ListenerEngine is closed');
+    }
+    if (deviceId != null && deviceId.isEmpty) {
+      throw ArgumentError.value(
+        deviceId,
+        'deviceId',
+        'Device ID cannot be empty',
+      );
+    }
+
+    if (deviceId == null) {
+      return ListenerStatus.fromCode(
+        listenerEngineSelectOutputDevice(_engine, ffi.nullptr, 0),
+      );
+    }
+
+    final bytes = utf8.encode(deviceId);
+    final pointer = malloc<ffi.Uint8>(bytes.length);
+    try {
+      pointer.asTypedList(bytes.length).setAll(0, bytes);
+      return ListenerStatus.fromCode(
+        listenerEngineSelectOutputDevice(_engine, pointer, bytes.length),
+      );
+    } finally {
+      malloc.free(pointer);
+    }
+  }
 
   @override
   Future<DiscoveredServiceEvent> discoverService() {

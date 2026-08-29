@@ -15,7 +15,10 @@ pub export fn listener_engine_abi_version() u32 {
 pub export fn listener_engine_create() ?*Engine {
     const allocator = std.heap.smp_allocator;
     const engine = allocator.create(Engine) catch return null;
-    engine.* = Engine.init(allocator);
+    engine.* = Engine.init(allocator) catch {
+        allocator.destroy(engine);
+        return null;
+    };
     return engine;
 }
 
@@ -116,6 +119,103 @@ pub export fn listener_engine_current_frame(engine_ptr: ?*Engine, out_frame: *u6
     return .ok;
 }
 
+pub const NativeOutputDevice = extern struct {
+    id: [*]const u8,
+    id_len: usize,
+    name: [*]const u8,
+    name_len: usize,
+    is_default: u8,
+};
+
+const OutputDeviceSnapshot = struct {
+    allocator: std.mem.Allocator,
+    devices: []backend.OutputDevice,
+};
+
+pub export fn listener_engine_output_devices(
+    engine_ptr: ?*Engine,
+    out_snapshot: *?*OutputDeviceSnapshot,
+) ListenerStatus {
+    out_snapshot.* = null;
+    const engine = engine_ptr orelse return .null_engine;
+
+    const devices = engine.audio_backend.enumerateDevices(engine.allocator) catch |err| {
+        stdout.print(engine.io(), "listener_engine_output_devices failed: {}\n", .{err});
+        return status_from_error(err);
+    };
+    const snapshot = engine.allocator.create(OutputDeviceSnapshot) catch {
+        backend.deinitOutputDevices(engine.allocator, devices);
+        return .out_of_memory;
+    };
+    snapshot.* = .{
+        .allocator = engine.allocator,
+        .devices = devices,
+    };
+    out_snapshot.* = snapshot;
+    return .ok;
+}
+
+pub export fn listener_engine_select_output_device(
+    engine_ptr: ?*Engine,
+    device_id_ptr: ?[*]const u8,
+    device_id_len: usize,
+) ListenerStatus {
+    const engine = engine_ptr orelse return .null_engine;
+    if (device_id_ptr == null and device_id_len != 0) return .invalid_argument;
+
+    const device_id: ?[]const u8 = if (device_id_ptr) |ptr| id: {
+        if (device_id_len == 0) return .invalid_argument;
+        const id = ptr[0..device_id_len];
+        if (!std.unicode.utf8ValidateSlice(id) or
+            std.mem.findScalar(u8, id, 0) != null)
+        {
+            return .invalid_argument;
+        }
+        break :id id;
+    } else null;
+
+    engine.selectOutputDevice(device_id) catch |err| {
+        stdout.print(engine.io(), "listener_engine_select_output_device failed: {}\n", .{err});
+        return status_from_error(err);
+    };
+    return .ok;
+}
+
+pub export fn listener_output_device_snapshot_count(
+    snapshot_ptr: ?*const OutputDeviceSnapshot,
+) usize {
+    const snapshot = snapshot_ptr orelse return 0;
+    return snapshot.devices.len;
+}
+
+pub export fn listener_output_device_snapshot_get(
+    snapshot_ptr: ?*const OutputDeviceSnapshot,
+    index: usize,
+    out_device: *NativeOutputDevice,
+) ListenerStatus {
+    const snapshot = snapshot_ptr orelse return .invalid_argument;
+    if (index >= snapshot.devices.len) return .invalid_argument;
+
+    const device = snapshot.devices[index];
+    out_device.* = .{
+        .id = device.id.ptr,
+        .id_len = device.id.len,
+        .name = device.name.ptr,
+        .name_len = device.name.len,
+        .is_default = @intFromBool(device.is_default),
+    };
+    return .ok;
+}
+
+pub export fn listener_output_device_snapshot_release(
+    snapshot_ptr: ?*OutputDeviceSnapshot,
+) void {
+    const snapshot = snapshot_ptr orelse return;
+    const allocator = snapshot.allocator;
+    backend.deinitOutputDevices(allocator, snapshot.devices);
+    allocator.destroy(snapshot);
+}
+
 pub export fn listener_engine_seek(engine_ptr: ?*Engine, target_frame: u64) ListenerStatus {
     const engine = engine_ptr orelse return .null_engine;
 
@@ -210,17 +310,14 @@ const Engine = struct {
     discovery_service_thread: ?std.Thread = null,
     discovery_stop_requested: std.atomic.Value(bool) = .init(false),
 
-    pub fn init(allocator: std.mem.Allocator) Engine {
-        var audio_backend = backend.OutputBackend{
-            .name = selected_output.Backend.name,
-            .impl = undefined,
-        };
-        selected_output.Backend.init(&audio_backend.impl);
+    pub fn init(allocator: std.mem.Allocator) !Engine {
+        var io_thread: std.Io.Threaded = .init(allocator, .{});
+        errdefer io_thread.deinit();
 
         return .{
             .allocator = allocator,
-            .io_thread = .init(allocator, .{}),
-            .audio_backend = audio_backend,
+            .io_thread = io_thread,
+            .audio_backend = try selected_output.Backend.init(allocator),
         };
     }
 
@@ -237,6 +334,17 @@ const Engine = struct {
         );
         self.connection_host = host;
         self.connection_port = config.port;
+    }
+
+    pub fn selectOutputDevice(self: *Engine, device_id: ?[]const u8) !void {
+        if (self.active_stream != null or
+            self.playback_buffer != null or
+            self.receive_thread != null or
+            self.receiver_state != null)
+        {
+            return error.AlreadyStreaming;
+        }
+        try self.audio_backend.selectDevice(device_id);
     }
 
     pub fn startStream(self: *Engine, message: protocol.StartStream) !void {
@@ -296,11 +404,11 @@ const Engine = struct {
             self.playback_buffer = null;
         }
 
-        try self.audio_backend.impl.open(
+        try self.audio_backend.open(
             output_format,
             self.playback_buffer.?.outputSource(),
         );
-        errdefer self.audio_backend.impl.close();
+        errdefer self.audio_backend.close();
 
         const receiver_state = try self.allocator.create(ReceiverState);
         receiver_state.* = ReceiverState.init(self.io());
@@ -346,8 +454,8 @@ const Engine = struct {
             return err;
         };
 
-        try self.audio_backend.impl.start();
-        errdefer self.audio_backend.impl.stop() catch {};
+        try self.audio_backend.start();
+        errdefer self.audio_backend.stop() catch {};
 
         receiver_state.enableFailureEvents() catch |err| {
             discard_connection = true;
@@ -402,8 +510,8 @@ const Engine = struct {
             self.receiver_state = null;
         }
 
-        self.audio_backend.impl.stop() catch {};
-        self.audio_backend.impl.close();
+        self.audio_backend.stop() catch {};
+        self.audio_backend.close();
 
         if (self.playback_buffer) |*buffer| {
             buffer.deinit();
@@ -437,7 +545,7 @@ const Engine = struct {
             self.flow_control.last_received_sequence.load(.acquire),
             &self.flow_control.paused,
         );
-        self.audio_backend.impl.pause_playback() catch |err| {
+        self.audio_backend.pausePlayback() catch |err| {
             self.flow_control.paused.store(false, .release);
             conn.sendBufferStatus(
                 started_stream,
@@ -455,7 +563,7 @@ const Engine = struct {
         const buffer = if (self.playback_buffer) |*buffer| buffer else return error.AlreadyStreaming;
 
         if (!self.flow_control.paused.load(.acquire)) return;
-        try self.audio_backend.impl.resume_playback();
+        try self.audio_backend.resumePlayback();
 
         self.flow_control.paused.store(false, .release);
         conn.sendBufferStatus(
@@ -465,7 +573,7 @@ const Engine = struct {
             &self.flow_control.paused,
         ) catch |err| {
             self.flow_control.paused.store(true, .release);
-            self.audio_backend.impl.pause_playback() catch {};
+            self.audio_backend.pausePlayback() catch {};
             return err;
         };
     }
@@ -520,8 +628,9 @@ const Engine = struct {
             self.receiver_state = null;
         }
 
-        self.audio_backend.impl.stop() catch {};
-        self.audio_backend.impl.close();
+        self.audio_backend.stop() catch {};
+        self.audio_backend.close();
+        self.audio_backend.deinit();
 
         if (self.playback_buffer) |*buffer| {
             buffer.deinit();
@@ -776,7 +885,12 @@ const FlowControlState = struct {
 fn status_from_error(err: anyerror) ListenerStatus {
     return switch (err) {
         error.AlreadyConnected => .already_connected,
-        error.InvalidPlaybackId => .invalid_argument,
+        error.InvalidPlaybackId,
+        error.InvalidOutputDeviceId,
+        error.OutputDeviceNotFound,
+        error.NotAnOutputDevice,
+        error.AlreadyStreaming,
+        => .invalid_argument,
 
         error.InvalidEnd,
         error.InvalidCharacter,
@@ -853,12 +967,62 @@ test "engine preserves back-to-back audio frames from one socket write" {
     try expectEngineStreamsNetworkAudio(.back_to_back);
 }
 
+test "output device snapshot exposes portable device data" {
+    const allocator = std.testing.allocator;
+    var engine = try Engine.init(allocator);
+    defer engine.deinit();
+
+    var snapshot: ?*OutputDeviceSnapshot = null;
+    try std.testing.expectEqual(
+        ListenerStatus.ok,
+        listener_engine_output_devices(&engine, &snapshot),
+    );
+    defer listener_output_device_snapshot_release(snapshot);
+
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        listener_output_device_snapshot_count(snapshot),
+    );
+    var device: NativeOutputDevice = undefined;
+    try std.testing.expectEqual(
+        ListenerStatus.ok,
+        listener_output_device_snapshot_get(snapshot, 0, &device),
+    );
+    try std.testing.expectEqualStrings("test-output", device.id[0..device.id_len]);
+    try std.testing.expectEqualStrings("Test Output", device.name[0..device.name_len]);
+    try std.testing.expectEqual(@as(u8, 1), device.is_default);
+}
+
+test "output device selection validates IDs and can restore the default" {
+    const allocator = std.testing.allocator;
+    var engine = try Engine.init(allocator);
+    defer engine.deinit();
+
+    try std.testing.expectEqual(
+        ListenerStatus.invalid_argument,
+        listener_engine_select_output_device(
+            &engine,
+            "missing-output".ptr,
+            "missing-output".len,
+        ),
+    );
+    try std.testing.expectEqual(
+        ListenerStatus.ok,
+        listener_engine_select_output_device(
+            &engine,
+            "test-output".ptr,
+            "test-output".len,
+        ),
+    );
+    try std.testing.expectEqual(
+        ListenerStatus.ok,
+        listener_engine_select_output_device(&engine, null, 0),
+    );
+}
+
 test "pause advertises zero credit and resume restores stream credit" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-
-    selected_output.reset(allocator);
-    defer selected_output.reset(allocator);
 
     var listen_address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
     var listener = try listen_address.listen(io, .{
@@ -875,7 +1039,7 @@ test "pause advertises zero credit and resume restores stream credit" {
     var server_joined = false;
     defer if (!server_joined) server_thread.join();
 
-    var engine = Engine.init(allocator);
+    var engine = try Engine.init(allocator);
     defer engine.deinit();
     try engine.connect(.{
         .host = "127.0.0.1",
@@ -900,9 +1064,6 @@ test "receiver failure during startup is returned and fully cleaned up" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    selected_output.reset(allocator);
-    defer selected_output.reset(allocator);
-
     var listen_address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
     var listener = try listen_address.listen(io, .{
         .mode = std.Io.net.Socket.Mode.stream,
@@ -918,7 +1079,7 @@ test "receiver failure during startup is returned and fully cleaned up" {
     var server_joined = false;
     defer if (!server_joined) server_thread.join();
 
-    var engine = Engine.init(allocator);
+    var engine = try Engine.init(allocator);
     defer engine.deinit();
     try engine.connect(.{
         .host = "127.0.0.1",
@@ -933,7 +1094,7 @@ test "receiver failure during startup is returned and fully cleaned up" {
         }),
     );
 
-    try std.testing.expect(!selected_output.isStarted());
+    try std.testing.expect(!selected_output.isStarted(&engine.audio_backend));
     try std.testing.expect(engine.lstn_connection == null);
     try std.testing.expect(engine.active_stream == null);
     try std.testing.expect(engine.playback_buffer == null);
@@ -948,10 +1109,6 @@ test "receiver failure during startup is returned and fully cleaned up" {
 test "output open failure reconnects before the next stream" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-
-    selected_output.reset(allocator);
-    defer selected_output.reset(allocator);
-    selected_output.failNextOpen();
 
     var listen_address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
     var listener = try listen_address.listen(io, .{
@@ -968,8 +1125,9 @@ test "output open failure reconnects before the next stream" {
     var server_joined = false;
     defer if (!server_joined) server_thread.join();
 
-    var engine = Engine.init(allocator);
+    var engine = try Engine.init(allocator);
     defer engine.deinit();
+    selected_output.failNextOpen(&engine.audio_backend);
     try engine.connect(.{
         .host = "127.0.0.1",
         .port = listener.socket.address.getPort(),
@@ -1005,9 +1163,6 @@ test "receiver failure after startup is reported as an engine event" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    selected_output.reset(allocator);
-    defer selected_output.reset(allocator);
-
     var listen_address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
     var listener = try listen_address.listen(io, .{
         .mode = std.Io.net.Socket.Mode.stream,
@@ -1023,7 +1178,7 @@ test "receiver failure after startup is reported as an engine event" {
     var server_joined = false;
     defer if (!server_joined) server_thread.join();
 
-    var engine = Engine.init(allocator);
+    var engine = try Engine.init(allocator);
     defer engine.deinit();
     var received_event = std.atomic.Value(u32).init(0);
     engine.event_callback = &recordAnyPlaybackEvent;
@@ -1037,7 +1192,7 @@ test "receiver failure after startup is reported as an engine event" {
         .requested_start_frame = 0,
         .playback_id = "runtime-failure-test",
     });
-    try std.testing.expect(selected_output.isStarted());
+    try std.testing.expect(selected_output.isStarted(&engine.audio_backend));
 
     server.release_failure.store(true, .release);
     try waitForAtomicU32(
@@ -1148,7 +1303,7 @@ test "engine reconnects before starting after an idle disconnect" {
     var server_joined = false;
     defer if (!server_joined) server_thread.join();
 
-    var engine = Engine.init(allocator);
+    var engine = try Engine.init(allocator);
     defer engine.deinit();
     try engine.connect(.{
         .host = "127.0.0.1",
@@ -1180,9 +1335,6 @@ test "stopping after a playback disconnect is successful local cleanup" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    selected_output.reset(allocator);
-    defer selected_output.reset(allocator);
-
     var listen_address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
     var listener = try listen_address.listen(io, .{
         .mode = std.Io.net.Socket.Mode.stream,
@@ -1202,7 +1354,7 @@ test "stopping after a playback disconnect is successful local cleanup" {
     var server_joined = false;
     defer if (!server_joined) server_thread.join();
 
-    var engine = Engine.init(allocator);
+    var engine = try Engine.init(allocator);
     defer engine.deinit();
     try engine.connect(.{
         .host = "127.0.0.1",
@@ -1251,9 +1403,6 @@ fn expectEngineStreamsNetworkAudio(audio_delivery: AudioDelivery) !void {
         0x00, 0x01, 0x00, 0x00,
     };
 
-    selected_output.reset(allocator);
-    defer selected_output.reset(allocator);
-
     var listen_address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
     var listener = try listen_address.listen(io, .{
         .mode = std.Io.net.Socket.Mode.stream,
@@ -1261,18 +1410,19 @@ fn expectEngineStreamsNetworkAudio(audio_delivery: AudioDelivery) !void {
     });
     defer listener.deinit(io);
 
+    var engine = try Engine.init(allocator);
+    defer engine.deinit();
+
     var server = FakeLstnServer{
         .io = io,
         .listener = &listener,
         .expected_audio = expected_audio,
         .audio_delivery = audio_delivery,
+        .output = &engine.audio_backend,
     };
     const server_thread = try std.Thread.spawn(.{}, FakeLstnServer.run, .{&server});
     var server_joined = false;
     defer if (!server_joined) server_thread.join();
-
-    var engine = Engine.init(allocator);
-    defer engine.deinit();
 
     var playback_ended = std.atomic.Value(bool).init(false);
     engine.event_callback = &recordPlaybackEvent;
@@ -1287,7 +1437,11 @@ fn expectEngineStreamsNetworkAudio(audio_delivery: AudioDelivery) !void {
         .playback_id = "client-test",
     });
 
-    try selected_output.waitForCapturedBytes(expected_audio.len, 100_000);
+    try selected_output.waitForCapturedBytes(
+        &engine.audio_backend,
+        expected_audio.len,
+        100_000,
+    );
     try waitForPlaybackEnded(&playback_ended, 100_000);
     try engine.stopStream();
 
@@ -1295,7 +1449,7 @@ fn expectEngineStreamsNetworkAudio(audio_delivery: AudioDelivery) !void {
     server_joined = true;
     try server.result;
 
-    const captured = try selected_output.capturedBytes(allocator);
+    const captured = try selected_output.capturedBytes(&engine.audio_backend, allocator);
     defer allocator.free(captured);
 
     try std.testing.expectEqualSlices(u8, expected_audio, captured);
@@ -1862,6 +2016,7 @@ const FakeLstnServer = struct {
     listener: *std.Io.net.Server,
     expected_audio: []const u8,
     audio_delivery: AudioDelivery,
+    output: *backend.OutputBackend,
     result: anyerror!void = {},
 
     fn run(self: *FakeLstnServer) void {
@@ -1977,7 +2132,7 @@ const FakeLstnServer = struct {
 
         // The track is shorter than the startup threshold, so output must
         // remain stopped until STREAM_END releases the startup wait.
-        try std.testing.expect(!selected_output.isStarted());
+        try std.testing.expect(!selected_output.isStarted(self.output));
 
         try sendEmptyServerMessage(
             &writer.interface,

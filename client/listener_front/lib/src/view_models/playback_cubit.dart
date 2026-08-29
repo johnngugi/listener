@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:fixnum/fixnum.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:listener_front/src/generated/listener/v1/listener.pbgrpc.dart'
     as control;
@@ -41,6 +42,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
   bool _isSwitchingTrack = false;
 
   bool _isSeeking = false;
+
+  int _cuedStartFrame = 0;
 
   Future<void> play({Track? selectedTrack, List<Track>? queueTracks}) async {
     if (_isSwitchingTrack) return;
@@ -85,6 +88,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
       return;
     }
 
+    final requestedStartFrame = selectedTrack == null ? _cuedStartFrame : 0;
     String? playbackId;
     _isSwitchingTrack = true;
     try {
@@ -92,20 +96,39 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         await stop();
       }
 
-      emit(PlaybackState(queue: queue, status: PlaybackStatus.starting));
+      emit(
+        PlaybackState(
+          queue: queue,
+          status: PlaybackStatus.starting,
+          currentFrame: requestedStartFrame,
+        ),
+      );
 
       final response = await _control.start(
-        control.StartRequest(trackId: track.id),
+        control.StartRequest(
+          trackId: track.id,
+          startFrame: Int64(requestedStartFrame),
+        ),
       );
       playbackId = response.playbackId;
 
-      final status = _engine.startStream(playbackId: playbackId);
+      final status = _engine.startStream(
+        playbackId: playbackId,
+        requestedStartFrame: requestedStartFrame,
+      );
       if (status != ListenerStatus.ok) {
         throw StateError('Engine start failed: ${status.name}');
       }
 
       _playbackId = playbackId;
-      emit(PlaybackState(queue: queue, status: PlaybackStatus.playing));
+      _cuedStartFrame = 0;
+      emit(
+        PlaybackState(
+          queue: queue,
+          status: PlaybackStatus.playing,
+          currentFrame: requestedStartFrame,
+        ),
+      );
       _startPositionPolling();
     } catch (error) {
       if (playbackId != null && playbackId.isNotEmpty) {
@@ -130,8 +153,12 @@ class PlaybackCubit extends Cubit<PlaybackState> {
 
   Future<void> stop() async {
     _stopPositionPolling();
+    _cuedStartFrame = 0;
     final playbackId = _playbackId;
-    if (playbackId == null) return;
+    if (playbackId == null) {
+      emit(PlaybackState(queue: state.queue, status: PlaybackStatus.stopped));
+      return;
+    }
     _playbackId = null;
 
     try {
@@ -232,9 +259,16 @@ class PlaybackCubit extends Cubit<PlaybackState> {
     if (_isSeeking) return;
 
     final track = state.queue?.currentTrack;
-    if (_playbackId == null || track == null || track.sampleRate <= 0) return;
+    if (track == null || track.sampleRate <= 0) return;
 
     final targetFrame = (milliseconds * track.sampleRate / 1000).round();
+    if (_playbackId == null) {
+      if (state.status == PlaybackStatus.cued) {
+        _cuedStartFrame = targetFrame;
+        emit(state.copyWith(currentFrame: targetFrame));
+      }
+      return;
+    }
     _isSeeking = true;
     _stopPositionPolling();
 
@@ -273,6 +307,46 @@ class PlaybackCubit extends Cubit<PlaybackState> {
       }
     } finally {
       _isSeeking = false;
+    }
+  }
+
+  Future<void> switchOutputDevice(String? deviceId) async {
+    final playbackId = _playbackId;
+    if (playbackId != null) {
+      final position = _engine.currentFrame();
+      if (position.status != ListenerStatus.ok) {
+        throw StateError(
+          'Unable to capture playback position: ${position.status.name}',
+        );
+      }
+
+      _stopPositionPolling();
+      final stopStatus = _engine.stop();
+      if (stopStatus != ListenerStatus.ok) {
+        throw StateError('Engine stop failed: ${stopStatus.name}');
+      }
+
+      _playbackId = null;
+      _cuedStartFrame = position.frame;
+      emit(
+        PlaybackState(
+          queue: state.queue,
+          status: PlaybackStatus.cued,
+          currentFrame: position.frame,
+        ),
+      );
+
+      try {
+        await _control.stop(control.StopRequest(playbackId: playbackId));
+      } catch (_) {
+        // Local playback is already stopped and safe to reconfigure. The
+        // abandoned remote session will be reclaimed by the server.
+      }
+    }
+
+    final selectStatus = _engine.selectOutputDevice(deviceId);
+    if (selectStatus != ListenerStatus.ok) {
+      throw StateError('Unable to select audio output: ${selectStatus.name}');
     }
   }
 
@@ -325,6 +399,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
     final playbackId = _playbackId;
     if (playbackId == null || isClosed) return;
     _playbackId = null;
+    _cuedStartFrame = 0;
     _stopPositionPolling();
 
     final status = _engine.stop();
@@ -355,6 +430,7 @@ class PlaybackCubit extends Cubit<PlaybackState> {
           return;
         case Error<Track>():
           _playbackId = null;
+          _cuedStartFrame = 0;
           _stopPositionPolling();
 
           final status = _engine.stop();

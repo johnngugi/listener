@@ -124,6 +124,60 @@ void main() {
 
       await cubit.close();
     });
+
+    test(
+      'switches output by cueing the current frame until play is pressed',
+      () async {
+        final engine = _FakePlaybackEngine()..currentFrameValue = 42000;
+        final controlClient = _FakePlaybackControl();
+        final cubit = PlaybackCubit.withDependencies(engine, controlClient);
+
+        await cubit.play(selectedTrack: _track(1));
+        await cubit.switchOutputDevice('usb-dac');
+
+        expect(engine.stopCallCount, 1);
+        expect(engine.selectedDeviceIds, ['usb-dac']);
+        expect(controlClient.stoppedPlaybackIds, ['playback-1']);
+        expect(cubit.state.status, PlaybackStatus.cued);
+        expect(cubit.state.currentFrame, 42000);
+        expect(cubit.state.queue?.currentTrack.id, 'track-1');
+
+        await cubit.play();
+
+        expect(controlClient.startedTrackIds, ['track-1', 'track-1']);
+        expect(controlClient.requestedStartFrames, [0, 42000]);
+        expect(engine.requestedStartFrames, [0, 42000]);
+        expect(cubit.state.status, PlaybackStatus.playing);
+
+        await cubit.close();
+      },
+    );
+
+    test(
+      'keeps playback cued when the new output cannot be selected',
+      () async {
+        final engine = _FakePlaybackEngine()
+          ..currentFrameValue = 17000
+          ..selectOutputStatus = ListenerStatus.invalidArgument;
+        final cubit = PlaybackCubit.withDependencies(
+          engine,
+          _FakePlaybackControl(),
+        );
+
+        await cubit.play(selectedTrack: _track(1));
+
+        await expectLater(
+          cubit.switchOutputDevice('missing-device'),
+          throwsA(isA<StateError>()),
+        );
+
+        expect(cubit.state.status, PlaybackStatus.cued);
+        expect(cubit.state.currentFrame, 17000);
+        expect(engine.selectedDeviceIds, ['missing-device']);
+
+        await cubit.close();
+      },
+    );
   });
 }
 
@@ -156,14 +210,26 @@ Track _track(int number) {
 }
 
 final class _FakePlaybackEngine implements PlaybackEngine {
+  @override
+  List<AudioOutputDevice> outputDevices() => const [];
+
+  @override
+  ListenerStatus selectOutputDevice(String? deviceId) {
+    selectedDeviceIds.add(deviceId);
+    return selectOutputStatus;
+  }
+
   final StreamController<PlaybackEngineEvent> _events =
       StreamController<PlaybackEngineEvent>.broadcast();
 
   final List<String> startedPlaybackIds = [];
+  final List<int> requestedStartFrames = [];
+  final List<String?> selectedDeviceIds = [];
   int stopCallCount = 0;
   int currentFrameCallCount = 0;
   int currentFrameValue = 0;
   ListenerStatus seekStatus = ListenerStatus.ok;
+  ListenerStatus selectOutputStatus = ListenerStatus.ok;
   final List<int> soughtFrames = [];
 
   @override
@@ -182,6 +248,7 @@ final class _FakePlaybackEngine implements PlaybackEngine {
     int requestedStartFrame = 0,
   }) {
     startedPlaybackIds.add(playbackId);
+    requestedStartFrames.add(requestedStartFrame);
     return ListenerStatus.ok;
   }
 
@@ -220,6 +287,7 @@ final class _FakePlaybackControl implements PlaybackControl {
 
   final int? failStartCall;
   final List<String> startedTrackIds = [];
+  final List<int> requestedStartFrames = [];
   final List<String> stoppedPlaybackIds = [];
 
   int _startCallCount = 0;
@@ -228,6 +296,7 @@ final class _FakePlaybackControl implements PlaybackControl {
   Future<control.StartResponse> start(control.StartRequest request) async {
     _startCallCount++;
     startedTrackIds.add(request.trackId);
+    requestedStartFrames.add(request.startFrame.toInt());
     if (_startCallCount == failStartCall) {
       throw StateError('start failed');
     }

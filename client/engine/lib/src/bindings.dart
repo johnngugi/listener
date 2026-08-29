@@ -4,6 +4,23 @@ const listenerEngineAssetId = 'package:listener_engine/listener_engine.dart';
 
 final class NativeEngine extends ffi.Opaque {}
 
+final class NativeOutputDeviceSnapshot extends ffi.Opaque {}
+
+final class NativeOutputDevice extends ffi.Struct {
+  external ffi.Pointer<ffi.Uint8> id;
+
+  @ffi.Size()
+  external int idLength;
+
+  external ffi.Pointer<ffi.Uint8> name;
+
+  @ffi.Size()
+  external int nameLength;
+
+  @ffi.Uint8()
+  external int isDefault;
+}
+
 typedef PlaybackEventCallbackNative =
     ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Uint32);
 
@@ -94,6 +111,62 @@ external int listenerEngineResume(ffi.Pointer<NativeEngine> engine);
 external int listenerEngineCurrentFrame(
   ffi.Pointer<NativeEngine> engine,
   ffi.Pointer<ffi.Uint64> frame,
+);
+
+@ffi.Native<
+  ffi.Uint32 Function(
+    ffi.Pointer<NativeEngine>,
+    ffi.Pointer<ffi.Pointer<NativeOutputDeviceSnapshot>>,
+  )
+>(symbol: 'listener_engine_output_devices', assetId: listenerEngineAssetId)
+external int listenerEngineOutputDevices(
+  ffi.Pointer<NativeEngine> engine,
+  ffi.Pointer<ffi.Pointer<NativeOutputDeviceSnapshot>> snapshot,
+);
+
+@ffi.Native<
+  ffi.Uint32 Function(
+    ffi.Pointer<NativeEngine>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+  )
+>(
+  symbol: 'listener_engine_select_output_device',
+  assetId: listenerEngineAssetId,
+)
+external int listenerEngineSelectOutputDevice(
+  ffi.Pointer<NativeEngine> engine,
+  ffi.Pointer<ffi.Uint8> deviceId,
+  int deviceIdLength,
+);
+
+@ffi.Native<ffi.Size Function(ffi.Pointer<NativeOutputDeviceSnapshot>)>(
+  symbol: 'listener_output_device_snapshot_count',
+  assetId: listenerEngineAssetId,
+)
+external int listenerOutputDeviceSnapshotCount(
+  ffi.Pointer<NativeOutputDeviceSnapshot> snapshot,
+);
+
+@ffi.Native<
+  ffi.Uint32 Function(
+    ffi.Pointer<NativeOutputDeviceSnapshot>,
+    ffi.Size,
+    ffi.Pointer<NativeOutputDevice>,
+  )
+>(symbol: 'listener_output_device_snapshot_get', assetId: listenerEngineAssetId)
+external int listenerOutputDeviceSnapshotGet(
+  ffi.Pointer<NativeOutputDeviceSnapshot> snapshot,
+  int index,
+  ffi.Pointer<NativeOutputDevice> device,
+);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<NativeOutputDeviceSnapshot>)>(
+  symbol: 'listener_output_device_snapshot_release',
+  assetId: listenerEngineAssetId,
+)
+external void listenerOutputDeviceSnapshotRelease(
+  ffi.Pointer<NativeOutputDeviceSnapshot> snapshot,
 );
 
 @ffi.Native<ffi.Uint32 Function(ffi.Pointer<NativeEngine>, ffi.Uint64)>(

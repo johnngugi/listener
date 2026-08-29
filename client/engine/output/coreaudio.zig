@@ -8,7 +8,7 @@ const c = @cImport({
 
 pub const Backend = backend.OutputBackendBootstrap{
     .name = "CoreAudio",
-    .init = &coreAudioInit,
+    .init = &create,
 };
 
 const AudioComponent = ?*anyopaque;
@@ -17,6 +17,20 @@ const AudioUnitPropertyID = c.UInt32;
 const AudioUnitScope = c.UInt32;
 const AudioUnitElement = c.UInt32;
 const AudioUnitRenderActionFlags = c.UInt32;
+const AudioObjectID = c.UInt32;
+const AudioDeviceID = AudioObjectID;
+const AudioObjectPropertySelector = c.UInt32;
+const AudioObjectPropertyScope = c.UInt32;
+const AudioObjectPropertyElement = c.UInt32;
+const CFIndex = c_long;
+const CFStringEncoding = c.UInt32;
+const CFStringRef = ?*const anyopaque;
+
+const AudioObjectPropertyAddress = extern struct {
+    mSelector: AudioObjectPropertySelector,
+    mScope: AudioObjectPropertyScope,
+    mElement: AudioObjectPropertyElement,
+};
 
 const AudioComponentDescription = extern struct {
     componentType: c.OSType,
@@ -71,41 +85,345 @@ extern fn AudioOutputUnitStart(in_unit: AudioUnit) callconv(.c) c.OSStatus;
 
 extern fn AudioOutputUnitStop(in_unit: AudioUnit) callconv(.c) c.OSStatus;
 
+extern fn AudioObjectGetPropertyDataSize(
+    in_object_id: AudioObjectID,
+    in_address: *const AudioObjectPropertyAddress,
+    in_qualifier_data_size: c.UInt32,
+    in_qualifier_data: ?*const anyopaque,
+    out_data_size: *c.UInt32,
+) callconv(.c) c.OSStatus;
+
+extern fn AudioObjectGetPropertyData(
+    in_object_id: AudioObjectID,
+    in_address: *const AudioObjectPropertyAddress,
+    in_qualifier_data_size: c.UInt32,
+    in_qualifier_data: ?*const anyopaque,
+    io_data_size: *c.UInt32,
+    out_data: *anyopaque,
+) callconv(.c) c.OSStatus;
+
+extern fn CFRelease(cf: *const anyopaque) callconv(.c) void;
+extern fn CFStringGetLength(string: *const anyopaque) callconv(.c) CFIndex;
+extern fn CFStringGetMaximumSizeForEncoding(
+    length: CFIndex,
+    encoding: CFStringEncoding,
+) callconv(.c) CFIndex;
+extern fn CFStringGetCString(
+    string: *const anyopaque,
+    buffer: [*]u8,
+    buffer_size: CFIndex,
+    encoding: CFStringEncoding,
+) callconv(.c) u8;
+extern fn CFStringCreateWithBytes(
+    allocator: ?*const anyopaque,
+    bytes: [*]const u8,
+    byte_count: CFIndex,
+    encoding: CFStringEncoding,
+    is_external_representation: u8,
+) callconv(.c) CFStringRef;
+
 const kAudioUnitType_Output = fourCC("auou");
-const kAudioUnitSubType_DefaultOutput = fourCC("def ");
+const kAudioUnitSubType_HALOutput = fourCC("ahal");
 const kAudioUnitManufacturer_Apple = fourCC("appl");
 const kAudioUnitProperty_StreamFormat: AudioUnitPropertyID = 8;
 const kAudioUnitProperty_SetRenderCallback: AudioUnitPropertyID = 23;
 const kAudioUnitScope_Input: AudioUnitScope = 1;
+const kAudioUnitScope_Global: AudioUnitScope = 0;
+const kAudioOutputUnitProperty_CurrentDevice: AudioUnitPropertyID = 2000;
+const kAudioObjectUnknown: AudioObjectID = 0;
+const kAudioObjectSystemObject: AudioObjectID = 1;
+const kAudioObjectPropertyScopeGlobal = fourCC("glob");
+const kAudioObjectPropertyScopeOutput = fourCC("outp");
+const kAudioObjectPropertyElementMain: AudioObjectPropertyElement = 0;
+const kAudioObjectPropertyName = fourCC("lnam");
+const kAudioHardwarePropertyDevices = fourCC("dev#");
+const kAudioHardwarePropertyDefaultOutputDevice = fourCC("dOut");
+const kAudioHardwarePropertyTranslateUIDToDevice = fourCC("uidd");
+const kAudioDevicePropertyDeviceUID = fourCC("uid ");
+const kAudioDevicePropertyStreamConfiguration = fourCC("slay");
+const kCFStringEncodingUTF8: CFStringEncoding = 0x08000100;
 
 extern fn getenv(name: [*:0]const u8) callconv(.c) ?[*:0]u8;
 
-fn coreAudioInit(impl: *backend.OutputImpl) void {
-    impl.*.open = &open;
-    impl.*.start = &start;
-    impl.*.stop = &stop;
-    impl.*.pause_playback = &pausePlayback;
-    impl.*.resume_playback = &resumePlayback;
-    impl.*.close = &close;
-}
-
-var output_unit: AudioUnit = null;
-var output_started = false;
-var playback_state = PlaybackState{ .source = undefined };
-
-const PlaybackState = struct {
-    source: backend.OutputSource,
+const State = struct {
+    allocator: std.mem.Allocator,
+    output_unit: AudioUnit = null,
+    output_started: bool = false,
+    source: ?backend.OutputSource = null,
+    selected_device_id: ?[]u8 = null,
 };
 
-fn open(output_format: backend.OutputFormat, output_source: backend.OutputSource) !void {
-    if (output_unit != null) return error.AlreadyOpen;
-    playback_state.source = output_source;
+const vtable = backend.VTable{
+    .enumerate_devices = &enumerateDevices,
+    .select_device = &selectDevice,
+    .open = &open,
+    .start = &start,
+    .stop = &stop,
+    .pause_playback = &pausePlayback,
+    .resume_playback = &resumePlayback,
+    .close = &close,
+    .deinit = &deinit,
+};
+
+fn create(allocator: std.mem.Allocator) !backend.OutputBackend {
+    const state = try allocator.create(State);
+    state.* = .{ .allocator = allocator };
+    return .{
+        .name = Backend.name,
+        .context = state,
+        .vtable = &vtable,
+    };
+}
+
+fn enumerateDevices(_: *anyopaque, allocator: std.mem.Allocator) ![]backend.OutputDevice {
+    const default_device = try defaultOutputDevice();
+    const audio_devices = try allAudioDevices(allocator);
+    defer allocator.free(audio_devices);
+
+    var devices: std.ArrayList(backend.OutputDevice) = .empty;
+    errdefer {
+        for (devices.items) |device| device.deinit(allocator);
+        devices.deinit(allocator);
+    }
+
+    for (audio_devices) |device_id| {
+        if (!try hasOutputChannels(allocator, device_id)) continue;
+
+        const id = try audioObjectString(
+            allocator,
+            device_id,
+            kAudioDevicePropertyDeviceUID,
+        );
+        errdefer allocator.free(id);
+        const name = try audioObjectString(
+            allocator,
+            device_id,
+            kAudioObjectPropertyName,
+        );
+        errdefer allocator.free(name);
+
+        try devices.append(allocator, .{
+            .id = id,
+            .name = name,
+            .is_default = device_id == default_device,
+        });
+    }
+
+    return try devices.toOwnedSlice(allocator);
+}
+
+fn selectDevice(context: *anyopaque, device_id: ?[]const u8) !void {
+    const state = stateFromContext(context);
+    if (state.output_unit != null) return error.AlreadyOpen;
+
+    const selected = if (device_id) |id| selected: {
+        if (id.len == 0) return error.InvalidOutputDeviceId;
+        const audio_device = try audioDeviceForUid(id);
+        if (audio_device == kAudioObjectUnknown) return error.OutputDeviceNotFound;
+        if (!try hasOutputChannels(state.allocator, audio_device)) {
+            return error.NotAnOutputDevice;
+        }
+        break :selected try state.allocator.dupe(u8, id);
+    } else null;
+
+    if (state.selected_device_id) |previous| state.allocator.free(previous);
+    state.selected_device_id = selected;
+}
+
+fn audioDeviceForUid(device_uid: []const u8) !AudioDeviceID {
+    const uid_string = CFStringCreateWithBytes(
+        null,
+        device_uid.ptr,
+        @intCast(device_uid.len),
+        kCFStringEncodingUTF8,
+        0,
+    ) orelse return error.InvalidOutputDeviceId;
+    defer CFRelease(uid_string);
+
+    const address = AudioObjectPropertyAddress{
+        .mSelector = kAudioHardwarePropertyTranslateUIDToDevice,
+        .mScope = kAudioObjectPropertyScopeGlobal,
+        .mElement = kAudioObjectPropertyElementMain,
+    };
+    const qualifier: CFStringRef = uid_string;
+    var device_id: AudioDeviceID = kAudioObjectUnknown;
+    var data_size: c.UInt32 = @sizeOf(AudioDeviceID);
+    try checkStatus(AudioObjectGetPropertyData(
+        kAudioObjectSystemObject,
+        &address,
+        @sizeOf(CFStringRef),
+        @ptrCast(&qualifier),
+        &data_size,
+        &device_id,
+    ));
+    return device_id;
+}
+
+fn defaultOutputDevice() !AudioDeviceID {
+    const address = AudioObjectPropertyAddress{
+        .mSelector = kAudioHardwarePropertyDefaultOutputDevice,
+        .mScope = kAudioObjectPropertyScopeGlobal,
+        .mElement = kAudioObjectPropertyElementMain,
+    };
+    var device_id: AudioDeviceID = kAudioObjectUnknown;
+    var data_size: c.UInt32 = @sizeOf(AudioDeviceID);
+    try checkStatus(AudioObjectGetPropertyData(
+        kAudioObjectSystemObject,
+        &address,
+        0,
+        null,
+        &data_size,
+        &device_id,
+    ));
+    return device_id;
+}
+
+fn allAudioDevices(allocator: std.mem.Allocator) ![]AudioDeviceID {
+    const address = AudioObjectPropertyAddress{
+        .mSelector = kAudioHardwarePropertyDevices,
+        .mScope = kAudioObjectPropertyScopeGlobal,
+        .mElement = kAudioObjectPropertyElementMain,
+    };
+    var data_size: c.UInt32 = 0;
+    try checkStatus(AudioObjectGetPropertyDataSize(
+        kAudioObjectSystemObject,
+        &address,
+        0,
+        null,
+        &data_size,
+    ));
+
+    if (data_size % @sizeOf(AudioDeviceID) != 0) {
+        return error.InvalidAudioDeviceList;
+    }
+    const devices = try allocator.alloc(
+        AudioDeviceID,
+        data_size / @sizeOf(AudioDeviceID),
+    );
+    errdefer allocator.free(devices);
+    try checkStatus(AudioObjectGetPropertyData(
+        kAudioObjectSystemObject,
+        &address,
+        0,
+        null,
+        &data_size,
+        devices.ptr,
+    ));
+    return devices;
+}
+
+fn hasOutputChannels(
+    allocator: std.mem.Allocator,
+    device_id: AudioDeviceID,
+) !bool {
+    const address = AudioObjectPropertyAddress{
+        .mSelector = kAudioDevicePropertyStreamConfiguration,
+        .mScope = kAudioObjectPropertyScopeOutput,
+        .mElement = kAudioObjectPropertyElementMain,
+    };
+    var data_size: c.UInt32 = 0;
+    try checkStatus(AudioObjectGetPropertyDataSize(
+        device_id,
+        &address,
+        0,
+        null,
+        &data_size,
+    ));
+    if (data_size < @sizeOf(c.AudioBufferList)) return false;
+
+    const storage = try allocator.alignedAlloc(
+        u8,
+        .of(c.AudioBufferList),
+        data_size,
+    );
+    defer allocator.free(storage);
+    try checkStatus(AudioObjectGetPropertyData(
+        device_id,
+        &address,
+        0,
+        null,
+        &data_size,
+        storage.ptr,
+    ));
+
+    const buffer_list: *const c.AudioBufferList = @ptrCast(storage.ptr);
+    const buffers = @as(
+        [*]const c.AudioBuffer,
+        @ptrCast(&buffer_list.mBuffers),
+    )[0..buffer_list.mNumberBuffers];
+    for (buffers) |buffer| {
+        if (buffer.mNumberChannels > 0) return true;
+    }
+    return false;
+}
+
+fn audioObjectString(
+    allocator: std.mem.Allocator,
+    object_id: AudioObjectID,
+    selector: AudioObjectPropertySelector,
+) ![]u8 {
+    const address = AudioObjectPropertyAddress{
+        .mSelector = selector,
+        .mScope = kAudioObjectPropertyScopeGlobal,
+        .mElement = kAudioObjectPropertyElementMain,
+    };
+    var value: CFStringRef = null;
+    var data_size: c.UInt32 = @sizeOf(CFStringRef);
+    try checkStatus(AudioObjectGetPropertyData(
+        object_id,
+        &address,
+        0,
+        null,
+        &data_size,
+        @ptrCast(&value),
+    ));
+    const string = value orelse return error.MissingAudioDeviceString;
+    defer CFRelease(string);
+
+    const max_bytes = CFStringGetMaximumSizeForEncoding(
+        CFStringGetLength(string),
+        kCFStringEncodingUTF8,
+    );
+    if (max_bytes < 0) return error.InvalidAudioDeviceString;
+    const buffer = try allocator.alloc(u8, @as(usize, @intCast(max_bytes)) + 1);
+    defer allocator.free(buffer);
+    if (CFStringGetCString(
+        string,
+        buffer.ptr,
+        @intCast(buffer.len),
+        kCFStringEncodingUTF8,
+    ) == 0) {
+        return error.InvalidAudioDeviceString;
+    }
+
+    const length = std.mem.indexOfScalar(u8, buffer, 0) orelse
+        return error.InvalidAudioDeviceString;
+    return try allocator.dupe(u8, buffer[0..length]);
+}
+
+fn open(
+    context: *anyopaque,
+    output_format: backend.OutputFormat,
+    output_source: backend.OutputSource,
+) !void {
+    const state = stateFromContext(context);
+    if (state.output_unit != null) return error.AlreadyOpen;
+    const device_id = if (state.selected_device_id) |selected_id|
+        try audioDeviceForUid(selected_id)
+    else
+        try defaultOutputDevice();
+    if (device_id == kAudioObjectUnknown) return error.OutputDeviceNotFound;
+    if (!try hasOutputChannels(state.allocator, device_id)) {
+        return error.NotAnOutputDevice;
+    }
+    state.source = output_source;
+    errdefer state.source = null;
 
     var stream_format = try makeStreamFormat(output_format);
 
     var description = AudioComponentDescription{
         .componentType = kAudioUnitType_Output,
-        .componentSubType = kAudioUnitSubType_DefaultOutput,
+        .componentSubType = kAudioUnitSubType_HALOutput,
         .componentManufacturer = kAudioUnitManufacturer_Apple,
         .componentFlags = 0,
         .componentFlagsMask = 0,
@@ -122,6 +440,15 @@ fn open(output_format: backend.OutputFormat, output_source: backend.OutputSource
 
     try checkStatus(AudioUnitSetProperty(
         unit,
+        kAudioOutputUnitProperty_CurrentDevice,
+        kAudioUnitScope_Global,
+        0,
+        &device_id,
+        @sizeOf(AudioDeviceID),
+    ));
+
+    try checkStatus(AudioUnitSetProperty(
+        unit,
         kAudioUnitProperty_StreamFormat,
         kAudioUnitScope_Input,
         0,
@@ -131,7 +458,7 @@ fn open(output_format: backend.OutputFormat, output_source: backend.OutputSource
 
     var callback = AURenderCallbackStruct{
         .inputProc = &renderFromSource,
-        .inputProcRefCon = &playback_state,
+        .inputProcRefCon = state,
     };
 
     try checkStatus(AudioUnitSetProperty(
@@ -144,8 +471,8 @@ fn open(output_format: backend.OutputFormat, output_source: backend.OutputSource
     ));
 
     try checkStatus(AudioUnitInitialize(unit));
-    output_unit = unit;
-    output_started = false;
+    state.output_unit = unit;
+    state.output_started = false;
 }
 
 fn renderFromSource(
@@ -157,8 +484,8 @@ fn renderFromSource(
     io_data: [*c]c.AudioBufferList,
 ) callconv(.c) c.OSStatus {
     if (io_data == null) return c.noErr;
-    const state: *PlaybackState = @ptrCast(@alignCast(in_ref_con orelse return c.noErr));
-    const source = state.source;
+    const state: *State = @ptrCast(@alignCast(in_ref_con orelse return c.noErr));
+    const source = state.source orelse return c.noErr;
 
     const buffers = @as(
         [*]c.AudioBuffer,
@@ -187,44 +514,61 @@ fn renderFromSource(
     return c.noErr;
 }
 
-fn start() !void {
-    try startOutputUnit();
+fn start(context: *anyopaque) !void {
+    try startOutputUnit(stateFromContext(context));
 }
 
-fn stop() !void {
-    try stopOutputUnit();
+fn stop(context: *anyopaque) !void {
+    try stopOutputUnit(stateFromContext(context));
 }
 
-fn pausePlayback() !void {
-    try stopOutputUnit();
+fn pausePlayback(context: *anyopaque) !void {
+    try stopOutputUnit(stateFromContext(context));
 }
 
-fn resumePlayback() !void {
-    try startOutputUnit();
+fn resumePlayback(context: *anyopaque) !void {
+    try startOutputUnit(stateFromContext(context));
 }
 
-fn close() void {
-    const opened_unit = output_unit orelse return;
+fn close(context: *anyopaque) void {
+    const state = stateFromContext(context);
+    const opened_unit = state.output_unit orelse {
+        state.source = null;
+        return;
+    };
 
-    stopOutputUnit() catch {};
+    stopOutputUnit(state) catch {};
     _ = AudioUnitUninitialize(opened_unit);
     _ = AudioComponentInstanceDispose(opened_unit);
-    output_unit = null;
-    output_started = false;
+    state.output_unit = null;
+    state.output_started = false;
+    state.source = null;
 }
 
-fn startOutputUnit() !void {
-    if (output_started) return;
-    const opened_unit = output_unit orelse return error.NotOpen;
+fn deinit(context: *anyopaque) void {
+    const state = stateFromContext(context);
+    const allocator = state.allocator;
+    close(context);
+    if (state.selected_device_id) |selected| allocator.free(selected);
+    allocator.destroy(state);
+}
+
+fn startOutputUnit(state: *State) !void {
+    if (state.output_started) return;
+    const opened_unit = state.output_unit orelse return error.NotOpen;
     try checkStatus(AudioOutputUnitStart(opened_unit));
-    output_started = true;
+    state.output_started = true;
 }
 
-fn stopOutputUnit() !void {
-    if (!output_started) return;
-    const opened_unit = output_unit orelse return;
+fn stopOutputUnit(state: *State) !void {
+    if (!state.output_started) return;
+    const opened_unit = state.output_unit orelse return;
     try checkStatus(AudioOutputUnitStop(opened_unit));
-    output_started = false;
+    state.output_started = false;
+}
+
+fn stateFromContext(context: *anyopaque) *State {
+    return @ptrCast(@alignCast(context));
 }
 
 fn makeStreamFormat(
@@ -382,7 +726,8 @@ test "renderFromSource copies available PCM and zero fills underrun" {
     };
 
     var fake = FakeSource{ .bytes = &.{ 1, 2, 3, 4 } };
-    var state = PlaybackState{
+    var state = State{
+        .allocator = std.testing.allocator,
         .source = .{
             .context = &fake,
             .frame_bytes = 4,
@@ -409,18 +754,22 @@ test "renderFromSource copies available PCM and zero fills underrun" {
 }
 
 test "start requires an open output unit" {
-    try std.testing.expectError(error.NotOpen, startOutputUnit());
+    var state = State{ .allocator = std.testing.allocator };
+    try std.testing.expectError(error.NotOpen, startOutputUnit(&state));
 }
 
 test "open compiles without opening the device by default" {
     if (getenv("LISTENER_TEST_COREAUDIO_OPEN") != null) {
+        var output = try create(std.testing.allocator);
+        defer output.deinit();
+
         const FakeSource = struct {
             fn readAvailable(_: *anyopaque, _: usize, output_buffer: []u8) []u8 {
                 return output_buffer[0..0];
             }
         };
         var fake_context: u8 = 0;
-        try open(
+        try output.open(
             .{
                 .sample_format = .pcm_s16le,
                 .sample_rate = 48_000,

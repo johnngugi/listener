@@ -3,10 +3,12 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:listener_front/src/generated/listener/v1/listener.pbgrpc.dart'
     as control;
+import 'package:listener_front/src/models/playback_state.dart';
 import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/services/playback_control.dart';
 import 'package:listener_engine/listener_engine.dart';
 import 'package:listener_front/src/view_models/playback_cubit.dart';
+import 'package:listener_front/src/view_models/output_device_cubit.dart';
 import 'package:listener_front/src/widgets/now_playing_bar.dart';
 
 void main() {
@@ -57,11 +59,14 @@ void main() {
   testWidgets('now playing bar does not overflow at responsive widths', (
     tester,
   ) async {
+    final engine = _FakePlaybackEngine();
     final cubit = PlaybackCubit.withDependencies(
-      _FakePlaybackEngine(),
+      engine,
       _FakePlaybackControl(),
     );
+    final outputCubit = OutputDeviceCubit(engine, cubit);
     addTearDown(cubit.close);
+    addTearDown(outputCubit.close);
 
     for (final width in [320.0, 500.0, 700.0, 1000.0, 1200.0]) {
       await tester.pumpWidget(
@@ -71,8 +76,11 @@ void main() {
               alignment: Alignment.bottomLeft,
               child: SizedBox(
                 width: width,
-                child: BlocProvider.value(
-                  value: cubit,
+                child: MultiBlocProvider(
+                  providers: [
+                    BlocProvider.value(value: cubit),
+                    BlocProvider.value(value: outputCubit),
+                  ],
                   child: const NowPlayingBar(),
                 ),
               ),
@@ -133,6 +141,95 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     }
   });
+
+  testWidgets('selects an external output and restores system output', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final engine = _FakePlaybackEngine(
+      devices: const [
+        AudioOutputDevice(
+          id: 'built-in',
+          name: 'Mac Speakers',
+          isDefault: true,
+        ),
+        AudioOutputDevice(
+          id: 'usb-dac',
+          name: 'Reference USB DAC',
+          isDefault: false,
+        ),
+      ],
+    )..currentFrameValue = 42000;
+    final playbackCubit = PlaybackCubit.withDependencies(
+      engine,
+      _FakePlaybackControl(),
+    );
+    final outputCubit = OutputDeviceCubit(engine, playbackCubit);
+    addTearDown(playbackCubit.close);
+    addTearDown(outputCubit.close);
+    await playbackCubit.play(selectedTrack: _track);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomLeft,
+            child: SizedBox(
+              width: 1200,
+              child: MultiBlocProvider(
+                providers: [
+                  BlocProvider.value(value: playbackCubit),
+                  BlocProvider.value(value: outputCubit),
+                ],
+                child: const NowPlayingBar(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('output-device-picker-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Audio output'), findsOneWidget);
+    expect(
+      find.text('Playback will pause at its current position.'),
+      findsOneWidget,
+    );
+    expect(find.text('Mac Speakers'), findsOneWidget);
+    expect(find.text('Reference USB DAC'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('output-device-option-usb-dac')));
+    await tester.pumpAndSettle();
+
+    expect(engine.selectedDeviceIds, ['usb-dac']);
+    expect(engine.stopCallCount, 1);
+    expect(playbackCubit.state.status, PlaybackStatus.cued);
+    expect(playbackCubit.state.currentFrame, 42000);
+    expect(find.text('Reference USB DAC'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('output-device-picker-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('output-device-option-system')));
+    await tester.pumpAndSettle();
+
+    expect(engine.selectedDeviceIds, ['usb-dac', null]);
+    expect(find.text('System Output'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Play'));
+    await tester.pump();
+
+    expect(engine.requestedStartFrames, [0, 42000]);
+    expect(playbackCubit.state.status, PlaybackStatus.playing);
+
+    await playbackCubit.pause();
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 Widget _timelineHarness(PlaybackCubit cubit) {
@@ -165,7 +262,23 @@ const _track = Track(
 );
 
 final class _FakePlaybackEngine implements PlaybackEngine {
+  _FakePlaybackEngine({this.devices = const []});
+
+  final List<AudioOutputDevice> devices;
+  final List<String?> selectedDeviceIds = [];
+
+  @override
+  List<AudioOutputDevice> outputDevices() => devices;
+
+  @override
+  ListenerStatus selectOutputDevice(String? deviceId) {
+    selectedDeviceIds.add(deviceId);
+    return ListenerStatus.ok;
+  }
+
   int currentFrameValue = 0;
+  int stopCallCount = 0;
+  final List<int> requestedStartFrames = [];
   final List<int> soughtFrames = [];
 
   @override
@@ -180,10 +293,16 @@ final class _FakePlaybackEngine implements PlaybackEngine {
   ListenerStatus startStream({
     required String playbackId,
     int requestedStartFrame = 0,
-  }) => ListenerStatus.ok;
+  }) {
+    requestedStartFrames.add(requestedStartFrame);
+    return ListenerStatus.ok;
+  }
 
   @override
-  ListenerStatus stop() => ListenerStatus.ok;
+  ListenerStatus stop() {
+    stopCallCount++;
+    return ListenerStatus.ok;
+  }
 
   @override
   ListenerStatus pause() => ListenerStatus.ok;

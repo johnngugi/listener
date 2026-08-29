@@ -3,12 +3,12 @@ const backend = @import("audio_backend");
 
 pub const Backend = backend.OutputBackendBootstrap{
     .name = "TestOutput",
-    .init = &init,
+    .init = &create,
 };
 
 const State = struct {
     mutex: std.atomic.Mutex = .unlocked,
-    allocator: ?std.mem.Allocator = null,
+    allocator: std.mem.Allocator,
     source: ?backend.OutputSource = null,
     output_format: ?backend.OutputFormat = null,
     captured: std.ArrayList(u8) = .empty,
@@ -16,52 +16,55 @@ const State = struct {
     started: bool = false,
     stop_requested: bool = false,
     fail_next_open: bool = false,
+    selected_device_id: ?[]u8 = null,
 };
 
-var state: State = .{};
+const vtable = backend.VTable{
+    .enumerate_devices = &enumerateDevices,
+    .select_device = &selectDevice,
+    .open = &open,
+    .start = &start,
+    .stop = &stop,
+    .pause_playback = &pausePlayback,
+    .resume_playback = &resumePlayback,
+    .close = &close,
+    .deinit = &deinit,
+};
 
-pub fn reset(allocator: std.mem.Allocator) void {
-    close();
-    lock();
-    defer unlock();
-
-    state.captured.deinit(allocator);
-    state.allocator = allocator;
-    state.source = null;
-    state.output_format = null;
-    state.captured = .empty;
-    state.render_thread = null;
-    state.started = false;
-    state.stop_requested = false;
-    state.fail_next_open = false;
-}
-
-pub fn failNextOpen() void {
-    lock();
-    defer unlock();
+pub fn failNextOpen(output: *backend.OutputBackend) void {
+    const state = stateFromOutput(output);
+    lock(state);
+    defer unlock(state);
     state.fail_next_open = true;
 }
 
-pub fn capturedBytes(allocator: std.mem.Allocator) ![]u8 {
-    lock();
-    defer unlock();
+pub fn capturedBytes(output: *backend.OutputBackend, allocator: std.mem.Allocator) ![]u8 {
+    const state = stateFromOutput(output);
+    lock(state);
+    defer unlock(state);
 
     return try allocator.dupe(u8, state.captured.items);
 }
 
-pub fn isStarted() bool {
-    lock();
-    defer unlock();
+pub fn isStarted(output: *backend.OutputBackend) bool {
+    const state = stateFromOutput(output);
+    lock(state);
+    defer unlock(state);
 
     return state.started;
 }
 
-pub fn waitForCapturedBytes(expected_len: usize, max_yields: usize) !void {
+pub fn waitForCapturedBytes(
+    output: *backend.OutputBackend,
+    expected_len: usize,
+    max_yields: usize,
+) !void {
+    const state = stateFromOutput(output);
     var remaining = max_yields;
     while (remaining > 0) : (remaining -= 1) {
-        lock();
+        lock(state);
         const enough = state.captured.items.len >= expected_len;
-        unlock();
+        unlock(state);
 
         if (enough) return;
         std.Thread.yield() catch {};
@@ -70,22 +73,59 @@ pub fn waitForCapturedBytes(expected_len: usize, max_yields: usize) !void {
     return error.Timeout;
 }
 
-fn init(impl: *backend.OutputImpl) void {
-    impl.* = .{
-        .open = &open,
-        .start = &start,
-        .stop = &stop,
-        .pause_playback = &pausePlayback,
-        .resume_playback = &resumePlayback,
-        .close = &close,
+fn create(allocator: std.mem.Allocator) !backend.OutputBackend {
+    const state = try allocator.create(State);
+    state.* = .{ .allocator = allocator };
+    return .{
+        .name = Backend.name,
+        .context = state,
+        .vtable = &vtable,
     };
 }
 
-fn open(output_format: backend.OutputFormat, source: backend.OutputSource) !void {
-    lock();
-    defer unlock();
+fn enumerateDevices(_: *anyopaque, allocator: std.mem.Allocator) ![]backend.OutputDevice {
+    const devices = try allocator.alloc(backend.OutputDevice, 1);
+    errdefer allocator.free(devices);
 
-    if (state.allocator == null) return error.TestBackendNotInitialized;
+    const id = try allocator.dupe(u8, "test-output");
+    errdefer allocator.free(id);
+    const name = try allocator.dupe(u8, "Test Output");
+    errdefer allocator.free(name);
+
+    devices[0] = .{
+        .id = id,
+        .name = name,
+        .is_default = true,
+    };
+    return devices;
+}
+
+fn selectDevice(context: *anyopaque, device_id: ?[]const u8) !void {
+    const state = stateFromContext(context);
+    if (device_id) |id| {
+        if (!std.mem.eql(u8, id, "test-output")) return error.OutputDeviceNotFound;
+    }
+
+    const selected = if (device_id) |id|
+        try state.allocator.dupe(u8, id)
+    else
+        null;
+
+    lock(state);
+    defer unlock(state);
+    if (state.selected_device_id) |previous| state.allocator.free(previous);
+    state.selected_device_id = selected;
+}
+
+fn open(
+    context: *anyopaque,
+    output_format: backend.OutputFormat,
+    source: backend.OutputSource,
+) !void {
+    const state = stateFromContext(context);
+    lock(state);
+    defer unlock(state);
+
     if (state.fail_next_open) {
         state.fail_next_open = false;
         return error.TestOutputOpenFailed;
@@ -95,60 +135,72 @@ fn open(output_format: backend.OutputFormat, source: backend.OutputSource) !void
     state.stop_requested = false;
 }
 
-fn start() !void {
-    lock();
-    defer unlock();
+fn start(context: *anyopaque) !void {
+    const state = stateFromContext(context);
+    lock(state);
+    defer unlock(state);
 
     if (state.source == null) return error.NotOpen;
     if (state.started) return;
 
     state.stop_requested = false;
     state.started = true;
-    state.render_thread = try std.Thread.spawn(.{}, renderLoop, .{});
+    state.render_thread = try std.Thread.spawn(.{}, renderLoop, .{state});
 }
 
-fn stop() !void {
+fn stop(context: *anyopaque) !void {
+    const state = stateFromContext(context);
     var thread: ?std.Thread = null;
 
-    lock();
+    lock(state);
     state.stop_requested = true;
     thread = state.render_thread;
     state.render_thread = null;
     state.started = false;
-    unlock();
+    unlock(state);
 
     if (thread) |joined_thread| {
         joined_thread.join();
     }
 }
 
-fn pausePlayback() !void {
-    try stop();
+fn pausePlayback(context: *anyopaque) !void {
+    try stop(context);
 }
 
-fn resumePlayback() !void {
-    try start();
+fn resumePlayback(context: *anyopaque) !void {
+    try start(context);
 }
 
-fn close() void {
-    stop() catch {};
+fn close(context: *anyopaque) void {
+    const state = stateFromContext(context);
+    stop(context) catch {};
 
-    lock();
-    defer unlock();
+    lock(state);
+    defer unlock(state);
 
     state.source = null;
     state.output_format = null;
     state.stop_requested = false;
 }
 
-fn renderLoop() void {
+fn deinit(context: *anyopaque) void {
+    const state = stateFromContext(context);
+    const allocator = state.allocator;
+    close(context);
+    if (state.selected_device_id) |selected| allocator.free(selected);
+    state.captured.deinit(allocator);
+    allocator.destroy(state);
+}
+
+fn renderLoop(state: *State) void {
     var scratch: [1024]u8 = undefined;
 
     while (true) {
-        lock();
+        lock(state);
         const should_stop = state.stop_requested;
         const maybe_source = state.source;
-        unlock();
+        unlock(state);
 
         if (should_stop) return;
         const source = maybe_source orelse return;
@@ -161,27 +213,90 @@ fn renderLoop() void {
         );
 
         if (bytes.len > 0) {
-            lock();
-            const allocator = state.allocator orelse {
-                unlock();
-                return;
-            };
-            state.captured.appendSlice(allocator, bytes) catch {
+            lock(state);
+            state.captured.appendSlice(state.allocator, bytes) catch {
                 state.stop_requested = true;
             };
-            unlock();
+            unlock(state);
         } else {
             std.Thread.yield() catch {};
         }
     }
 }
 
-fn lock() void {
+fn stateFromOutput(output: *backend.OutputBackend) *State {
+    return stateFromContext(output.context);
+}
+
+fn stateFromContext(context: *anyopaque) *State {
+    return @ptrCast(@alignCast(context));
+}
+
+fn lock(state: *State) void {
     while (!state.mutex.tryLock()) {
         std.Thread.yield() catch {};
     }
 }
 
-fn unlock() void {
+fn unlock(state: *State) void {
     state.mutex.unlock();
+}
+
+test "backend instances own independent state" {
+    const allocator = std.testing.allocator;
+    var first = try create(allocator);
+    defer first.deinit();
+    var second = try create(allocator);
+    defer second.deinit();
+
+    const FakeSource = struct {
+        fn readAvailable(_: *anyopaque, _: usize, output_buffer: []u8) []u8 {
+            return output_buffer[0..0];
+        }
+    };
+    var source_context: u8 = 0;
+    const source = backend.OutputSource{
+        .context = &source_context,
+        .frame_bytes = 4,
+        .readAvailable = &FakeSource.readAvailable,
+    };
+    const output_format = backend.OutputFormat{
+        .sample_format = .pcm_s16le,
+        .sample_rate = 48_000,
+        .channels = 2,
+    };
+
+    failNextOpen(&first);
+    try std.testing.expectError(
+        error.TestOutputOpenFailed,
+        first.open(output_format, source),
+    );
+    try second.open(output_format, source);
+}
+
+test "enumerateDevices returns caller-owned portable devices" {
+    const allocator = std.testing.allocator;
+    var output = try create(allocator);
+    defer output.deinit();
+
+    const devices = try output.enumerateDevices(allocator);
+    defer backend.deinitOutputDevices(allocator, devices);
+
+    try std.testing.expectEqual(@as(usize, 1), devices.len);
+    try std.testing.expectEqualStrings("test-output", devices[0].id);
+    try std.testing.expectEqualStrings("Test Output", devices[0].name);
+    try std.testing.expect(devices[0].is_default);
+}
+
+test "selectDevice validates and retains an opaque device ID" {
+    const allocator = std.testing.allocator;
+    var output = try create(allocator);
+    defer output.deinit();
+
+    try std.testing.expectError(
+        error.OutputDeviceNotFound,
+        output.selectDevice("missing-output"),
+    );
+    try output.selectDevice("test-output");
+    try output.selectDevice(null);
 }

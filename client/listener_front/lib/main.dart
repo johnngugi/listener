@@ -7,6 +7,7 @@ import 'package:listener_front/src/repositories/artwork_repository.dart';
 import 'package:listener_front/src/services/listener_grpc.dart';
 import 'package:listener_engine/listener_engine.dart';
 import 'package:listener_front/src/view_models/library_cubit.dart';
+import 'package:listener_front/src/view_models/output_device_cubit.dart';
 import 'package:listener_front/src/view_models/playback_cubit.dart';
 import 'package:listener_front/src/widgets/server_discovery_page.dart';
 
@@ -77,6 +78,10 @@ class _ListenerBootstrapState extends State<_ListenerBootstrap> {
         BlocProvider<PlaybackCubit>(
           create: (_) =>
               PlaybackCubit.connect(widget.engine, listenerGrpc.controlClient),
+        ),
+        BlocProvider<OutputDeviceCubit>(
+          create: (context) =>
+              OutputDeviceCubit(widget.engine, context.read<PlaybackCubit>()),
         ),
         BlocProvider<LibraryCubit>(
           create: (_) => LibraryCubit.connect(listenerGrpc.libraryClient),

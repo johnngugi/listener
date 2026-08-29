@@ -41,4 +41,4 @@ final class PlaybackState extends Equatable {
   List<Object?> get props => [status, queue, currentFrame, errorMessage];
 }
 
-enum PlaybackStatus { starting, playing, stopped, paused, error }
+enum PlaybackStatus { starting, playing, stopped, paused, cued, error }

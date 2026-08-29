@@ -3,7 +3,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:listener_front/src/models/playback_state.dart';
+import 'package:listener_front/src/models/output_device_state.dart';
 import 'package:listener_front/src/theme.dart';
+import 'package:listener_front/src/view_models/output_device_cubit.dart';
 import 'package:listener_front/src/view_models/playback_cubit.dart';
 import 'package:listener_front/src/widgets/artwork_image.dart';
 
@@ -425,7 +427,8 @@ typedef _PlaybackProgressSelection = ({
 
 bool _showsTrack(PlaybackState state) =>
     state.status == PlaybackStatus.playing ||
-    state.status == PlaybackStatus.paused;
+    state.status == PlaybackStatus.paused ||
+    state.status == PlaybackStatus.cued;
 
 _ArtworkSelection _selectArtwork(PlaybackState state) => (
   visible: _showsTrack(state),
@@ -527,48 +530,286 @@ class OutputControl extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: BoxDecoration(
-        color: backgroundColor.withValues(alpha: 0.55),
-        border: Border.all(color: lineColor),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          const Icon(Icons.speaker_outlined, color: mutedColor, size: 24),
-          const SizedBox(width: 9),
-          const Text(
-            'System Output',
-            style: TextStyle(
-              color: textColor,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Container(width: 1, height: 24, color: lineColor),
-          const SizedBox(width: 12),
-          const Tooltip(
-            message: 'Volume 100%',
-            child: Row(
-              children: [
-                Icon(Icons.volume_up_outlined, color: textColor, size: 24),
-                SizedBox(width: 5),
-                Text(
-                  '100',
-                  style: TextStyle(
-                    color: mutedColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
+    return BlocConsumer<OutputDeviceCubit, OutputDeviceState>(
+      listenWhen: (previous, current) =>
+          previous.errorMessage != current.errorMessage &&
+          current.errorMessage != null,
+      listener: (context, state) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(state.errorMessage!)));
+      },
+      builder: (context, outputState) {
+        final playbackStatus = context.select(
+          (PlaybackCubit cubit) => cubit.state.status,
+        );
+        final isSwitching = outputState.status == OutputDeviceStatus.switching;
+        final canChangeOutput =
+            playbackStatus != PlaybackStatus.starting && !isSwitching;
+        final selectedName =
+            outputState.selectedDevice?.name ?? 'System Output';
+
+        return Tooltip(
+          message: canChangeOutput
+              ? 'Choose audio output'
+              : isSwitching
+              ? 'Switching audio output'
+              : 'Wait for playback to start',
+          child: InkWell(
+            key: const Key('output-device-picker-button'),
+            borderRadius: BorderRadius.circular(12),
+            onTap: canChangeOutput ? () => _showOutputPicker(context) : null,
+            child: Container(
+              constraints: const BoxConstraints(minWidth: 238),
+              height: 56,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                color: backgroundColor.withValues(alpha: 0.55),
+                border: Border.all(color: lineColor),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    outputState.selectedDeviceId == null
+                        ? Icons.speaker_outlined
+                        : Icons.speaker_group_outlined,
+                    color: canChangeOutput ? mutedColor : lineColor,
+                    size: 24,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 9),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 126),
+                    child: Text(
+                      selectedName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: canChangeOutput ? textColor : mutedColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  if (outputState.status == OutputDeviceStatus.loading ||
+                      outputState.status == OutputDeviceStatus.switching)
+                    const SizedBox.square(
+                      dimension: 14,
+                      child: CircularProgressIndicator(strokeWidth: 1.5),
+                    )
+                  else
+                    const Icon(
+                      Icons.keyboard_arrow_up_rounded,
+                      color: mutedColor,
+                      size: 20,
+                    ),
+                ],
+              ),
             ),
           ),
-        ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showOutputPicker(BuildContext context) {
+    final playbackStatus = context.read<PlaybackCubit>().state.status;
+    return showDialog<void>(
+      context: context,
+      builder: (_) => BlocProvider.value(
+        value: context.read<OutputDeviceCubit>(),
+        child: _OutputDeviceDialog(
+          willCuePlayback:
+              playbackStatus == PlaybackStatus.playing ||
+              playbackStatus == PlaybackStatus.paused,
+        ),
+      ),
+    );
+  }
+}
+
+class _OutputDeviceDialog extends StatelessWidget {
+  const _OutputDeviceDialog({required this.willCuePlayback});
+
+  final bool willCuePlayback;
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<OutputDeviceCubit, OutputDeviceState>(
+      builder: (context, state) {
+        return AlertDialog(
+          backgroundColor: panelColor,
+          surfaceTintColor: Colors.transparent,
+          titlePadding: const EdgeInsets.fromLTRB(24, 22, 16, 0),
+          contentPadding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
+          title: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Audio output',
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      willCuePlayback
+                          ? 'Playback will pause at its current position.'
+                          : 'Choose where Listener plays music.',
+                      style: const TextStyle(
+                        color: mutedColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Refresh audio outputs',
+                onPressed: state.status == OutputDeviceStatus.switching
+                    ? null
+                    : context.read<OutputDeviceCubit>().refresh,
+                icon: const Icon(Icons.refresh_rounded, color: mutedColor),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 420,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 410),
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  _OutputDeviceTile(
+                    key: const Key('output-device-option-system'),
+                    title: 'System Output',
+                    subtitle: 'Follow the macOS default output',
+                    icon: Icons.computer_rounded,
+                    selected: state.selectedDeviceId == null,
+                    onTap: state.status == OutputDeviceStatus.switching
+                        ? null
+                        : () => _select(context, null),
+                  ),
+                  if (state.devices.isNotEmpty)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(14, 12, 14, 7),
+                      child: Text(
+                        'AVAILABLE OUTPUTS',
+                        style: TextStyle(
+                          color: mutedColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                    ),
+                  for (final device in state.devices)
+                    _OutputDeviceTile(
+                      key: Key('output-device-option-${device.id}'),
+                      title: device.name,
+                      subtitle: device.isDefault
+                          ? 'Current macOS default'
+                          : 'CoreAudio output',
+                      icon: Icons.speaker_group_outlined,
+                      selected: state.selectedDeviceId == device.id,
+                      onTap: state.status == OutputDeviceStatus.switching
+                          ? null
+                          : () => _select(context, device.id),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _select(BuildContext context, String? deviceId) async {
+    if (await context.read<OutputDeviceCubit>().selectDevice(deviceId) &&
+        context.mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+}
+
+class _OutputDeviceTile extends StatelessWidget {
+  const _OutputDeviceTile({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      selected: selected,
+      child: ListTile(
+        selected: selected,
+        onTap: onTap,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        selectedTileColor: accentColor.withValues(alpha: 0.13),
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: selected
+                ? accentColor.withValues(alpha: 0.18)
+                : backgroundColor,
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: Icon(
+            icon,
+            size: 21,
+            color: selected ? accentColor : mutedColor,
+          ),
+        ),
+        title: Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: selected ? textColor : mutedColor,
+            fontSize: 14,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+        subtitle: Text(
+          subtitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: mutedColor, fontSize: 12),
+        ),
+        trailing: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            color: selected ? accentColor : Colors.transparent,
+            shape: BoxShape.circle,
+            border: Border.all(color: selected ? accentColor : lineColor),
+          ),
+          child: selected
+              ? const Icon(Icons.check_rounded, color: textColor, size: 15)
+              : null,
+        ),
       ),
     );
   }
