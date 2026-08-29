@@ -1,176 +1,134 @@
-# Client Architecture
+# Client architecture
 
 ## Overview
 
-The client is split into a Flutter UI, a small Dart FFI wrapper, and a native
-Zig audio engine. Flutter owns user interaction and low-frequency state
-rendering. Zig owns playback, streaming, buffering, and platform audio output.
+The macOS client is split into a Flutter UI, a Dart API/FFI boundary, and a
+native Zig playback engine. Flutter owns presentation and low-frequency state.
+Zig owns network media transport, buffering, the playback lifecycle, and
+CoreAudio output.
 
 ```text
-Flutter UI
-  -> Dart FFI wrapper
-  -> Zig audio engine
-  -> Listener server
-  -> Platform audio backend
+                           gRPC control/library (:5779)
+Flutter UI ─────────────────────────────────────────────> Listener server
+    │                                                          ▲
+    │ Dart API / FFI                                           │
+    ▼                                                          │
+Zig playback engine ───────── LSTN media TCP (:5778) ──────────┘
+    │
+    └── CoreAudio output
 ```
 
-Flutter talks to the Zig engine through Dart FFI. The Zig engine should expose a
-small C ABI surface that Dart can call. High-frequency audio data must stay out
-of Flutter and Dart.
+High-frequency PCM data stays outside Dart and Flutter.
 
-## Responsibilities
+## Flutter application
 
-### Flutter UI
+`client/listener_front` contains the application shell, models, repositories,
+services, cubits, widgets, and generated protobuf types.
 
-- Layout, navigation, widgets, and app presentation.
-- Playback controls such as play, pause, resume, seek, and stop.
-- Library, queue, device, and settings views.
-- Low-frequency playback state rendering.
+At startup, `ListenerBootstrap`:
 
-### Dart FFI Wrapper
+1. opens the native engine;
+2. loads the last successful server from shared preferences;
+3. tries that server or starts Bonjour discovery for `_lstn._tcp`;
+4. opens the engine's LSTN connection and a separate insecure gRPC channel; and
+5. provides playback, output-device, library, and artwork dependencies to the UI.
 
-- Load the native Zig library.
-- Provide Dart-friendly methods for engine commands.
-- Convert Flutter actions into native calls.
-- Subscribe to playback events from the Zig engine.
-- Keep the native boundary small and stable.
+The library loads 200 tracks per request and performs sorting on the server.
+Artwork bytes are fetched lazily through `GetArtwork` and managed by
+`ArtworkRepository`. The layout uses a fixed sidebar at widths of 1100 logical
+pixels or more and a drawer below that breakpoint.
 
-Example command surface:
+`PlaybackCubit` coordinates the two planes. It obtains a `playback_id` with the
+gRPC `Start` method, then passes that ID to the engine's LSTN `START_STREAM`.
+Pause, resume, and stop update both the local engine and gRPC session. Playback
+position is polled from the engine. Seek is currently driven by the engine,
+which replaces the active LSTN generation.
 
-```text
-start(session_or_token, track_id)
-pause()
-resume()
-seek(frame_or_time_position)
-stop()
-select_device(device_id)
-subscribe_events(callback)
-```
+## Dart engine API and FFI
 
-### Zig Audio Engine
+`client/engine/lib/listener_engine.dart` is the public Dart API. It validates the
+native ABI version, owns the native engine handle, maps status codes, exposes
+playback/discovery events, and guarantees native resources are released by
+`close()`.
 
-- Playback state machine.
-- Server stream client.
-- Buffer and credit management.
-- Decode and format conversion when needed.
-- Platform audio backend selection.
-- Device discovery and capability reporting.
-- Real-time audio callback.
+The API supports:
 
-The Zig engine owns the actual playback lifecycle. Flutter asks the engine to
-play; the engine connects to the server, manages the stream, fills buffers, and
-writes frames to the selected audio device.
+- discovery and connection;
+- output-device enumeration, selection, and configuration;
+- start, stop, pause, resume, current position, and seek;
+- software gain; and
+- asynchronous playback and discovery events.
 
-### Server
+Bindings in `lib/src/bindings.dart` use `@Native` with the Native Assets ID
+`package:listener_engine/listener_engine.dart`. Consumers never locate or load a
+dylib themselves.
 
-- Authentication and playback-session validation.
-- Stream source selection.
-- Frame or chunk delivery.
-- Seek and range handling.
-- Optional decoding or transcoding.
+## Native Assets build
 
-## Control And Data Flow
+`client/engine/hook/build.dart` maps the Flutter target to a Zig target, finds
+the macOS SDK with `xcrun`, and invokes the engine's Zig build. The resulting
+`liblistener_engine.dylib` is registered as a bundled dynamic code asset.
 
-Flutter should not directly manage the media data path. It should send playback
-intent to the local Zig engine, then render events reported by the engine.
+The production build selects CoreAudio only for macOS. Other target operating
+systems fail at build time until another audio backend is implemented. Zig unit
+and repository integration tests select the in-memory test backend instead.
 
-```text
-User action
-  -> Flutter control
-  -> Dart FFI call
-  -> Zig playback command
-  -> Server stream request
-  -> Zig buffer
-  -> Platform audio device
-```
+## Zig playback engine
 
-The client should prefer outbound connections from the Zig engine to the server.
-Avoid requiring the server to open inbound connections to the client, because
-that creates firewall, NAT, mobile-network, and sandboxing problems.
+The Zig engine owns:
 
-### LSTN connection lifetime
+- one persistent LSTN connection;
+- a single socket reader from `HELLO_ACK` through shutdown;
+- serialized socket writes for heartbeats, credit, cancellation, and stream
+  requests;
+- playback generations and late-frame rejection;
+- a shared PCM ring buffer;
+- startup prebuffering and ongoing credit-based flow control;
+- CoreAudio device and callback lifecycles; and
+- event delivery across the FFI boundary.
 
-The Zig engine keeps one LSTN TCP connection open across media streams. One
-reader thread owns all socket reads from `HELLO_ACK` until connection shutdown;
-stream workers consume complete frames handed off by that reader and never read
-the socket directly. The reader answers `PING` immediately, including while the
-engine is idle between `STREAM_END` and the next `START_STREAM`.
+The output device opens before network receiving begins. Playback starts after
+half of the negotiated ring-buffer capacity is filled, or when `STREAM_END`
+releases the wait for a short track. A failure before startup is returned by the
+start operation; a later failure is emitted as an engine event.
 
-All socket writes share one outbound mutex so heartbeat replies, flow-control
-updates, cancellation, and new stream requests preserve client sequence order.
-Shutdown first marks the connection closed and performs a socket shutdown to
-wake the blocked reader, then joins the reader before closing the descriptor.
-The engine retains the configured endpoint and reconnects before the next
-`START_STREAM` when the lifetime reader has observed an idle disconnect.
+The real-time callback reads only from the ring buffer and applies the gain
+stage. It does not perform network I/O, allocation, logging, or Dart callbacks.
 
-## Buffering And Flow Control
+## Connection lifetime and recovery
 
-The Zig engine should use a ring buffer for decoded audio frames. The real-time
-audio callback must not wait on network I/O, gRPC, allocation, locks, logging,
-or Dart.
+The engine keeps its LSTN connection open between tracks. The lifetime reader
+answers `PING` while active or idle. All writes share one outbound mutex so
+sequence numbers remain ordered.
 
-Use credit-based flow control between the Zig engine and the server:
+Shutdown marks the connection closed, shuts down the socket to wake its reader,
+and joins the reader before releasing the descriptor. If the server disconnects
+while the engine is idle, the configured endpoint is retained and the engine
+reconnects before the next `START_STREAM`.
 
-```text
-buffer capacity: N frames
-low watermark: request more data
-high watermark: stop granting new credit
-```
+The gRPC channel is owned separately by `ListenerGrpc`. Changing servers creates
+a new engine and channel before closing the previous pair.
 
-The output device is opened before network receiving begins, but it is not
-started with an empty buffer. The receiver first fills half of the negotiated
-ring-buffer capacity. `STREAM_END` also releases this startup wait so short
-tracks can play without reaching the threshold. A receiver failure before the
-threshold is returned by the start operation; a failure after playback starts
-is emitted as a playback failure event and retained for stream cleanup.
+## Buffering, credit, and playback clock
 
-The engine tells the server how many more frames it can accept. The server sends
-only that much data for the current stream generation.
+The client grants an absolute number of frames the server may have outstanding.
+It sends `BUFFER_STATUS` with the buffered count, current credit, next render
+position, last accepted server sequence, and underrun count. The server does not
+send beyond that allowance.
 
-## Playback State
+The native audio device is the authoritative playback clock. UI timers and
+network arrival times are not. The reported position is the generation's start
+frame plus frames consumed by CoreAudio.
 
-The engine should expose simple playback states to Flutter:
+## Current platform and security boundaries
 
-```text
-Idle -> Preparing -> Buffering -> Playing
-Playing -> Paused
-Playing -> Buffering
-Playing -> Draining -> Idle
-Any -> Error
-```
+- macOS/CoreAudio is the only production client target.
+- LSTN and gRPC are plaintext and unauthenticated.
+- Bonjour advertises LSTN port 5778 and a `grpc-port=5779` TXT value, although
+  the Flutter gRPC client currently uses port 5779 directly.
+- The server owns filesystem paths; the client sees UUID track IDs and opaque
+  playback IDs.
+- Multi-zone synchronization is not implemented.
 
-Flutter renders these states, but the Zig engine is authoritative for local
-playback state because it owns device access, stream health, and buffer health.
-
-## Platform Audio
-
-The audio backend should be capability-based rather than assuming every platform
-supports the same features.
-
-Capabilities may include:
-
-- Shared output support.
-- Exclusive or low-level output support.
-- Supported sample rates and formats.
-- Current hardware sample rate.
-- Whether resampling is required.
-- Latency range.
-- Volume control support.
-- Device hotplug support.
-
-Platform backends can then map these capabilities to APIs such as WASAPI,
-CoreAudio, PulseAudio, PipeWire, ALSA, or Android audio APIs.
-
-## Initial Implementation Slice
-
-Start with a small vertical slice before adding full server streaming:
-
-1. Flutter button calls Dart FFI.
-2. Dart FFI calls the Zig engine.
-3. Zig engine plays a generated tone or local PCM buffer.
-4. Zig sends playback events back to Flutter.
-5. Add one platform audio backend.
-6. Add server streaming and flow control after the local engine boundary works.
-
-This keeps the first client milestone focused on the Flutter-to-Zig boundary,
-native playback lifecycle, and event reporting.
+See [the LSTN protocol](protocol.md) and
+[the gRPC adapter](grpc/server.md) for transport details.

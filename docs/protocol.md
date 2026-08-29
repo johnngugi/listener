@@ -2,8 +2,8 @@
 
 ## Status
 
-This document describes version 2 of the Listener media protocol as currently
-implemented by the `lstn_protocol` package in
+This document describes wire-protocol version 1 as currently implemented by the
+`lstn_protocol` package in
 `packages/lstn_protocol/src/protocol.zig`.
 
 The protocol is still under development. The common header and the
@@ -183,8 +183,10 @@ The server binds the header's `stream_id` and `generation_id` to the named
 server-owned media source. A `BUFFER_STATUS` for the active bound stream
 advances the playback session's `current_frame` using `next_render_frame`.
 
-The current server supports only `requested_start_frame = 0`. Other values are
-rejected because seeking is not yet implemented.
+The server seeks the decoder before sending `STREAM_INFO` when
+`requested_start_frame` is nonzero. A request beyond the decodable range or a
+source that cannot seek produces a stream error. The client also uses this field
+when it replaces the active generation during an in-progress seek.
 
 ## `STREAM_INFO`
 
@@ -434,6 +436,5 @@ protocol. Every field must be encoded and decoded explicitly.
   active stream format.
 - Define `channel_layout` values.
 - Define `STREAM_END` reasons.
-- Define stable protocol error codes.
 - Decide authentication and encryption for remote connections.
 - Define compressed FLAC and Opus profiles if remote playback is added.

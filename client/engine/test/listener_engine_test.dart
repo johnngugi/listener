@@ -1,4 +1,5 @@
-// Copyright (c) 2026 Listener contributors. All rights reserved.
+// Copyright (c) 2026 John Ngugi
+// SPDX-License-Identifier: MIT
 
 import 'package:listener_engine/listener_engine.dart';
 import 'package:test/test.dart';

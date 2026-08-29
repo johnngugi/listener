@@ -1,7 +1,10 @@
-# gRPC Server Adapter
+# gRPC server adapter
 
-Listener exposes a separate gRPC control-plane contract in
-`proto/listener/v1/listener.proto`:
+Listener exposes its control and library API from
+`proto/listener/v1/listener.proto`. Both services run on the same insecure HTTP/2
+server at `0.0.0.0:5779`.
+
+The current API is:
 
 ```proto
 service ListenerControl {
@@ -16,112 +19,89 @@ service ListenerControl {
 
 service ListenerLibrary {
   rpc ListTracks(ListTracksRequest) returns (ListTracksResponse);
+  rpc GetArtwork(GetArtworkRequest) returns (GetArtworkResponse);
 }
 ```
 
-Both services are hosted by the same gRPC server on the same port. gRPC routes
-calls by their fully qualified service and method names.
+`Start`, `Stop`, `Pause`, `Resume`, `Seek`, `Status`, `ListTracks`, and
+`GetArtwork` are implemented as unary calls. `Watch` is declared and decoded but
+currently returns gRPC `UNIMPLEMENTED`.
 
-The LSTN TCP protocol remains the media/data plane. It still carries audio
-frames, buffer status, stream generations, heartbeats, and protocol errors on
-its own connections. gRPC does not serialize or deserialize LSTN frames.
+## Separation from LSTN
 
-The gRPC control plane is the authoritative source for user-visible playback
-state such as `starting`, `playing`, `paused`, `stopped`, `ended`, and
-`error`. LSTN stream state is transport state for a specific media generation;
-clients should not treat it as a substitute for `Status` or `Watch`.
+gRPC is the control and library plane. The LSTN TCP protocol on port 5778 is the
+media plane and carries `STREAM_INFO`, PCM audio, flow-control state,
+generations, heartbeats, cancellation, and media-specific protocol errors.
+gRPC does not wrap or serialize LSTN frames.
 
-The gRPC API stays behind `server/grpc/server.zig`; application logic uses the
-transport-neutral types in `server/control.zig` and `server/library/service.zig`.
-The rest of the app should not see `grpc_call`, `grpc_op`, completion-queue tags,
-or serialized protobuf buffers.
+The normal start flow is:
 
-## Current Scaffold
+1. the client calls gRPC `Start(track_id, start_frame)`;
+2. the server resolves the UUID to its private media path and creates a
+   `playback_id`;
+3. the client sends that `playback_id` in LSTN `START_STREAM`;
+4. the server binds the LSTN stream and generation to the playback session; and
+5. LSTN `BUFFER_STATUS` messages update the control session's current frame.
 
-`server/grpc/server.zig` contains the gRPC server lifecycle and call-accept surface:
+Track, playback, and status responses never expose server filesystem paths.
 
-- `grpc_init` / `grpc_shutdown`
-- completion queue creation and draining
-- insecure HTTP/2 server port binding for local development
-- `grpc_server_request_call` for accepting calls
+## Implementation
 
-`server/grpc/codec.zig` decodes Listener-specific protobuf request payloads into
-transport-neutral control or library types. It intentionally does not implement
-a general Zig protobuf or gRPC binding.
+`server/grpc/server.zig` owns gRPC C-core initialization, the completion queue,
+generic call acceptance, unary request/response operations, and gRPC status
+mapping. The server currently uses `grpc_server_request_call`, so Listener's own
+codec dispatches fully qualified method paths.
 
-`server/control.zig` defines the transport-neutral command, response, status, and
-event types. `server/playback.zig` owns playback IDs and state transitions behind
-that boundary. The gRPC serving loop should call the playback controller with
-decoded `control.Command` values and encode the returned `control.Response`
-values back to protobuf.
+`server/grpc/codec.zig` is a deliberately narrow protobuf codec for Listener
+requests and responses; it is not a general Zig protobuf implementation.
+Application code receives transport-neutral types from `server/control.zig` and
+`server/library/service.zig`.
 
-`server/library/service.zig` is the transport-neutral boundary for library
-browsing. `ListTracks` reads bounded pages from SQLite using the last returned
-track ID as a cursor. A page size of zero selects the default of 100 tracks;
-requests above the maximum of 500 are rejected with `INVALID_ARGUMENT`.
-`next_page_token` is empty when no further page exists.
+`server/playback.zig` owns playback IDs, states, positions, generation numbers,
+and the mapping from playback IDs to private media paths. Its supported states
+are `idle`, `starting`, `playing`, `paused`, `stopped`, `ended`, and `error`.
 
-The Listener-specific serving loop:
+## Library calls
 
-1. accepts `listener.control.v1.ListenerControl` and
-   `listener.control.v1.ListenerLibrary` methods;
-2. receives request messages from the gRPC adapter and passes their payloads to the
-   Listener-specific codec;
-3. executes decoded calls through `server/playback.zig` or the library service;
-   and
-4. maps application failures to gRPC status codes.
+`ListTracks` reads from the SQLite catalog populated at server startup.
 
-The TCP media session should report transport-derived progress and terminal
-events back through the playback boundary. For example, `BUFFER_STATUS` can
-advance `current_frame`, a new stream generation can update `generation_id`,
-and end-of-stream can become an `ended` playback state.
+- A page size of zero selects 100 tracks.
+- The maximum page size is 500.
+- Page tokens are opaque, sort-aware cursors.
+- Sorting supports track number, title, duration, album artist, album, release
+  date, and date added in either direction.
+- `total_size` reports the catalog size and `next_page_token` is empty at the end.
 
-## Building The gRPC Adapter
+Each track may contain an `artwork_id`. `GetArtwork` returns the stored original
+image bytes, MIME type, width, and height for that ID. Missing or invalid artwork
+maps to `NOT_FOUND` or another appropriate gRPC failure.
 
-The default build does not require the gRPC C library. To compile the optional
-gRPC adapter, install the C library and run:
+## Error mapping
+
+Malformed protobuf and invalid arguments map to `INVALID_ARGUMENT`. Missing
+tracks, artwork, or playback sessions map to `NOT_FOUND`. Invalid playback state
+maps to `FAILED_PRECONDITION`, and unsupported operations map to `UNIMPLEMENTED`.
+Unexpected application failures map to `INTERNAL`.
+
+LSTN framing and media errors remain on the LSTN connection and are not returned
+as gRPC statuses.
+
+## Build and run
+
+The gRPC adapter is part of the default server build and requires the gRPC C
+library; there is no longer a `-Dgrpc=true` build option.
 
 ```sh
+brew install ffmpeg grpc
 cd server
-zig build test -Dgrpc=true
+zig build
+zig build test
+zig build run
 ```
 
-The optional build links `grpc`. Homebrew's `grpc` library brings in `gpr`
-itself on macOS, so linking `gpr` directly can produce a duplicate-dylib abort.
-If gRPC is installed outside the system library path, add include/library paths
-in `server/build.zig` next to the existing FFmpeg paths.
+`server/build.zig` currently searches `/opt/homebrew/opt/grpc` and
+`/opt/homebrew/opt/ffmpeg`. Change those include and library paths when using a
+different package-manager prefix.
 
-## Protocol Mapping
-
-The gRPC schema models player control, not the LSTN media protocol:
-
-| Control concept | gRPC proto |
-|---|---|
-| Start playback | `Start(StartRequest)` |
-| Stop playback | `Stop(StopRequest)` |
-| Pause playback | `Pause(PauseRequest)` |
-| Resume playback | `Resume(ResumeRequest)` |
-| Seek playback | `Seek(SeekRequest)` |
-| Query state | `Status(StatusRequest)` |
-| Observe changes | `Watch(WatchRequest)` |
-| Browse scanned tracks | `ListTracks(ListTracksRequest)` |
-| Fetch stored album artwork | `GetArtwork(GetArtworkRequest)` |
-
-`ListTracks` exposes an optional `artwork_id` on each track. Clients can pass
-that identifier to `GetArtwork` to receive the original image bytes together
-with their MIME type and pixel dimensions.
-
-Tracks expose UUID identifiers. `StartRequest.track_id` selects a library
-track, and the server resolves that UUID to its private filesystem path before
-creating the playback session. Track and status responses do not expose media
-paths.
-
-Transport-level and control-command failures should become gRPC statuses. LSTN
-protocol errors remain on the TCP media/data connection.
-
-The client calls `Start(track_id)`, uses the returned `playback_id` in the
-LSTN `START_STREAM` body, then open its playback-state subscription through
-`Watch(playback_id)` or query `Status(playback_id)`. The LSTN server binds
-that playback ID to the media header's `stream_id` and `generation_id`, and
-buffer accounting for the active stream reports progress back to the playback
-controller.
+The transport is currently insecure and binds all interfaces. Do not expose port
+5779 to an untrusted network.

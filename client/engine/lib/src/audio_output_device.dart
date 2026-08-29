@@ -1,4 +1,5 @@
-// Copyright (c) 2026 Listener contributors. All rights reserved.
+// Copyright (c) 2026 John Ngugi
+// SPDX-License-Identifier: MIT
 
 /// A local audio output reported by the platform audio backend.
 final class AudioOutputDevice {
