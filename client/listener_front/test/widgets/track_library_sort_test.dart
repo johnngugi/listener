@@ -10,6 +10,20 @@ import 'package:listener_front/src/widgets/sidebar.dart';
 import 'package:listener_front/src/widgets/track_library.dart';
 
 void main() {
+  testWidgets('sidebar settings button invokes its callback', (tester) async {
+    var openedSettings = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: Sidebar(onSettings: () => openedSettings = true)),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('server-settings-button')));
+
+    expect(openedSettings, isTrue);
+  });
+
   testWidgets('compact library top bar opens the navigation drawer', (
     tester,
   ) async {

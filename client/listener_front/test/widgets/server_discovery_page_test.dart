@@ -60,4 +60,24 @@ void main() {
     expect(find.byKey(const Key('server-discovery-error')), findsOneWidget);
     expect(find.textContaining('Bonjour unavailable'), findsOneWidget);
   });
+
+  testWidgets('explains why discovery followed an automatic reconnect', (
+    tester,
+  ) async {
+    final discovery = Completer<DiscoveredServiceEvent>();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: ServerDiscoveryPage(
+          discovery: discovery.future,
+          onConnect: (_) async {},
+          notice: 'The saved server is unavailable.',
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('server-discovery-notice')), findsOneWidget);
+    expect(find.text('The saved server is unavailable.'), findsOneWidget);
+  });
 }

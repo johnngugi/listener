@@ -17,6 +17,7 @@ dependencies:
   listener_engine:
     path: ../engine
   protobuf: ^6.0.0
+  shared_preferences: ^2.5.3
 
 dev_dependencies:
   flutter_test:

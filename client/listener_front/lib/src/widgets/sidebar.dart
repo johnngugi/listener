@@ -2,21 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:listener_front/src/theme.dart';
 
 class Sidebar extends StatelessWidget {
-  const Sidebar({super.key});
+  const Sidebar({super.key, this.onSettings});
+
+  final VoidCallback? onSettings;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: 260,
       color: panelColor,
-      child: const Padding(
+      child: Padding(
         padding: EdgeInsets.fromLTRB(26, 20, 24, 22),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            BrandHeader(),
-            SizedBox(height: 30),
-            SideSection(
+            BrandHeader(onSettings: onSettings),
+            const SizedBox(height: 30),
+            const SideSection(
               label: 'MY LIBRARY',
               items: [
                 SideItem(Icons.album_outlined, 'Albums'),
@@ -24,12 +26,12 @@ class Sidebar extends StatelessWidget {
                 SideItem(Icons.music_note_outlined, 'Tracks', selected: true),
               ],
             ),
-            Spacer(),
-            PlaylistHeader(),
-            SizedBox(height: 18),
-            Text('Car Vocals', style: _sidebarItemStyle),
-            SizedBox(height: 24),
-            Text('Work', style: _sidebarItemStyle),
+            const Spacer(),
+            const PlaylistHeader(),
+            const SizedBox(height: 18),
+            const Text('Car Vocals', style: _sidebarItemStyle),
+            const SizedBox(height: 24),
+            const Text('Work', style: _sidebarItemStyle),
           ],
         ),
       ),
@@ -38,7 +40,9 @@ class Sidebar extends StatelessWidget {
 }
 
 class BrandHeader extends StatelessWidget {
-  const BrandHeader({super.key});
+  const BrandHeader({super.key, this.onSettings});
+
+  final VoidCallback? onSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -59,16 +63,17 @@ class BrandHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 12),
-        Icon(
-          Icons.settings_outlined,
-          size: 22,
-          color: mutedColor.withValues(alpha: .9),
-        ),
-        const SizedBox(width: 16),
-        Icon(
-          Icons.more_horiz,
-          size: 26,
-          color: mutedColor.withValues(alpha: .9),
+        IconButton(
+          key: const Key('server-settings-button'),
+          onPressed: onSettings,
+          tooltip: 'Server settings',
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(width: 30, height: 36),
+          icon: Icon(
+            Icons.settings_outlined,
+            size: 22,
+            color: mutedColor.withValues(alpha: .9),
+          ),
         ),
       ],
     );

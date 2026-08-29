@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:listener_engine/listener_engine.dart';
+import 'package:listener_front/src/models/server_endpoint.dart';
 import 'package:listener_front/src/theme.dart';
 
 typedef ConnectToServer = Future<void> Function(DiscoveredServiceEvent service);
@@ -11,10 +12,12 @@ class ServerDiscoveryPage extends StatefulWidget {
     super.key,
     required this.discovery,
     required this.onConnect,
+    this.notice,
   });
 
   final Future<DiscoveredServiceEvent> discovery;
   final ConnectToServer onConnect;
+  final String? notice;
 
   @override
   State<ServerDiscoveryPage> createState() => _ServerDiscoveryPageState();
@@ -47,6 +50,8 @@ class _ServerDiscoveryPageState extends State<ServerDiscoveryPage> {
       _connecting = true;
       _connectionError = null;
     });
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
 
     try {
       await widget.onConnect(service);
@@ -77,6 +82,10 @@ class _ServerDiscoveryPageState extends State<ServerDiscoveryPage> {
                   child: Column(
                     children: [
                       const _PageIntroduction(),
+                      if (widget.notice != null) ...[
+                        const SizedBox(height: 24),
+                        _DiscoveryNotice(message: widget.notice!),
+                      ],
                       const SizedBox(height: 46),
                       FutureBuilder<DiscoveredServiceEvent>(
                         future: _discovery,
@@ -408,6 +417,39 @@ class _FoundServer extends StatelessWidget {
   }
 }
 
+class _DiscoveryNotice extends StatelessWidget {
+  const _DiscoveryNotice({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('server-discovery-notice'),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: accentColor.withValues(alpha: 0.1),
+        border: Border.all(color: accentColor.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.info_outline_rounded, color: accentColor, size: 20),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Text(
+              message,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: textColor, height: 1.4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ServerDetails extends StatelessWidget {
   const _ServerDetails({required this.service});
 
@@ -415,6 +457,7 @@ class _ServerDetails extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final endpoint = ServerEndpoint.fromDiscovery(service);
     return Row(
       children: [
         Container(
@@ -433,7 +476,7 @@ class _ServerDetails extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                _displayName(service.fullName),
+                endpoint.displayName,
                 key: const Key('found-server-name'),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -444,7 +487,7 @@ class _ServerDetails extends StatelessWidget {
               ),
               const SizedBox(height: 5),
               Text(
-                '${_displayHost(service.host)}:${service.port}',
+                endpoint.address,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -581,8 +624,4 @@ String _displayName(String fullName) {
   const serviceMarker = '._lstn.';
   final markerIndex = fullName.indexOf(serviceMarker);
   return markerIndex == -1 ? fullName : fullName.substring(0, markerIndex);
-}
-
-String _displayHost(String host) {
-  return host.endsWith('.') ? host.substring(0, host.length - 1) : host;
 }
