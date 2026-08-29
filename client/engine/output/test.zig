@@ -17,11 +17,13 @@ const State = struct {
     stop_requested: bool = false,
     fail_next_open: bool = false,
     selected_device_id: ?[]u8 = null,
+    configuration: backend.OutputConfiguration = .{},
 };
 
 const vtable = backend.VTable{
     .enumerate_devices = &enumerateDevices,
     .select_device = &selectDevice,
+    .configure = &configure,
     .open = &open,
     .start = &start,
     .stop = &stop,
@@ -96,8 +98,20 @@ fn enumerateDevices(_: *anyopaque, allocator: std.mem.Allocator) ![]backend.Outp
         .id = id,
         .name = name,
         .is_default = true,
+        .capabilities = .{ .exclusive_mode = true },
     };
     return devices;
+}
+
+fn configure(
+    context: *anyopaque,
+    configuration: backend.OutputConfiguration,
+) !void {
+    const state = stateFromContext(context);
+    lock(state);
+    defer unlock(state);
+    if (state.source != null) return error.AlreadyOpen;
+    state.configuration = configuration;
 }
 
 fn selectDevice(context: *anyopaque, device_id: ?[]const u8) !void {
@@ -286,6 +300,7 @@ test "enumerateDevices returns caller-owned portable devices" {
     try std.testing.expectEqualStrings("test-output", devices[0].id);
     try std.testing.expectEqualStrings("Test Output", devices[0].name);
     try std.testing.expect(devices[0].is_default);
+    try std.testing.expect(devices[0].capabilities.exclusive_mode);
 }
 
 test "selectDevice validates and retains an opaque device ID" {
@@ -299,4 +314,13 @@ test "selectDevice validates and retains an opaque device ID" {
     );
     try output.selectDevice("test-output");
     try output.selectDevice(null);
+}
+
+test "configure stores portable output configuration while closed" {
+    const allocator = std.testing.allocator;
+    var output = try create(allocator);
+    defer output.deinit();
+
+    try output.configure(.{ .exclusive_mode = true });
+    try std.testing.expect(stateFromOutput(&output).configuration.exclusive_mode);
 }

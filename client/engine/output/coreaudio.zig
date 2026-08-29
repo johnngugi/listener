@@ -102,6 +102,21 @@ extern fn AudioObjectGetPropertyData(
     out_data: *anyopaque,
 ) callconv(.c) c.OSStatus;
 
+extern fn AudioObjectIsPropertySettable(
+    in_object_id: AudioObjectID,
+    in_address: *const AudioObjectPropertyAddress,
+    out_is_settable: *u8,
+) callconv(.c) c.OSStatus;
+
+extern fn AudioObjectSetPropertyData(
+    in_object_id: AudioObjectID,
+    in_address: *const AudioObjectPropertyAddress,
+    in_qualifier_data_size: c.UInt32,
+    in_qualifier_data: ?*const anyopaque,
+    in_data_size: c.UInt32,
+    in_data: *const anyopaque,
+) callconv(.c) c.OSStatus;
+
 extern fn CFRelease(cf: *const anyopaque) callconv(.c) void;
 extern fn CFStringGetLength(string: *const anyopaque) callconv(.c) CFIndex;
 extern fn CFStringGetMaximumSizeForEncoding(
@@ -141,9 +156,11 @@ const kAudioHardwarePropertyDefaultOutputDevice = fourCC("dOut");
 const kAudioHardwarePropertyTranslateUIDToDevice = fourCC("uidd");
 const kAudioDevicePropertyDeviceUID = fourCC("uid ");
 const kAudioDevicePropertyStreamConfiguration = fourCC("slay");
+const kAudioDevicePropertyHogMode = fourCC("oink");
 const kCFStringEncodingUTF8: CFStringEncoding = 0x08000100;
 
 extern fn getenv(name: [*:0]const u8) callconv(.c) ?[*:0]u8;
+extern fn getpid() callconv(.c) c_int;
 
 const State = struct {
     allocator: std.mem.Allocator,
@@ -151,11 +168,14 @@ const State = struct {
     output_started: bool = false,
     source: ?backend.OutputSource = null,
     selected_device_id: ?[]u8 = null,
+    configuration: backend.OutputConfiguration = .{},
+    exclusive_device_id: AudioDeviceID = kAudioObjectUnknown,
 };
 
 const vtable = backend.VTable{
     .enumerate_devices = &enumerateDevices,
     .select_device = &selectDevice,
+    .configure = &configure,
     .open = &open,
     .start = &start,
     .stop = &stop,
@@ -206,10 +226,124 @@ fn enumerateDevices(_: *anyopaque, allocator: std.mem.Allocator) ![]backend.Outp
             .id = id,
             .name = name,
             .is_default = device_id == default_device,
+            .capabilities = .{
+                .exclusive_mode = supportsExclusiveMode(device_id),
+            },
         });
     }
 
     return try devices.toOwnedSlice(allocator);
+}
+
+fn configure(
+    context: *anyopaque,
+    configuration: backend.OutputConfiguration,
+) !void {
+    const state = stateFromContext(context);
+    if (state.output_unit != null) return error.AlreadyOpen;
+
+    if (configuration.exclusive_mode) {
+        const device_id = try selectedAudioDevice(state);
+        if (!supportsExclusiveMode(device_id)) {
+            return error.UnsupportedOutputConfiguration;
+        }
+    }
+    state.configuration = configuration;
+}
+
+fn selectedAudioDevice(state: *const State) !AudioDeviceID {
+    const device_id = if (state.selected_device_id) |selected_id|
+        try audioDeviceForUid(selected_id)
+    else
+        try defaultOutputDevice();
+    if (device_id == kAudioObjectUnknown) return error.OutputDeviceNotFound;
+    return device_id;
+}
+
+fn supportsExclusiveMode(device_id: AudioDeviceID) bool {
+    const address = exclusiveModeAddress();
+    var is_settable: u8 = 0;
+    const status = AudioObjectIsPropertySettable(
+        device_id,
+        &address,
+        &is_settable,
+    );
+    return status == c.noErr and is_settable != 0;
+}
+
+fn exclusiveModeAddress() AudioObjectPropertyAddress {
+    return .{
+        .mSelector = kAudioDevicePropertyHogMode,
+        .mScope = kAudioObjectPropertyScopeGlobal,
+        .mElement = kAudioObjectPropertyElementMain,
+    };
+}
+
+fn acquireExclusiveAccess(device_id: AudioDeviceID) !void {
+    const address = exclusiveModeAddress();
+    const process_id = getpid();
+    var owner: c_int = -1;
+    var data_size: c.UInt32 = @sizeOf(c_int);
+    try checkStatus(AudioObjectGetPropertyData(
+        device_id,
+        &address,
+        0,
+        null,
+        &data_size,
+        &owner,
+    ));
+
+    if (owner == process_id) return;
+    if (owner != -1) return error.OutputDeviceInUse;
+
+    // CoreAudio ignores the value and toggles ownership for the caller. It
+    // writes the resulting owner back through the same pointer.
+    owner = process_id;
+    try checkStatus(AudioObjectSetPropertyData(
+        device_id,
+        &address,
+        0,
+        null,
+        @sizeOf(c_int),
+        &owner,
+    ));
+    owner = -1;
+    data_size = @sizeOf(c_int);
+    try checkStatus(AudioObjectGetPropertyData(
+        device_id,
+        &address,
+        0,
+        null,
+        &data_size,
+        &owner,
+    ));
+    if (owner != process_id) return error.OutputDeviceInUse;
+}
+
+fn releaseExclusiveAccess(device_id: AudioDeviceID) void {
+    if (device_id == kAudioObjectUnknown) return;
+
+    const address = exclusiveModeAddress();
+    const process_id = getpid();
+    var owner: c_int = -1;
+    var data_size: c.UInt32 = @sizeOf(c_int);
+    if (AudioObjectGetPropertyData(
+        device_id,
+        &address,
+        0,
+        null,
+        &data_size,
+        &owner,
+    ) != c.noErr or owner != process_id) return;
+
+    _ = AudioObjectSetPropertyData(
+        device_id,
+        &address,
+        0,
+        null,
+        @sizeOf(c_int),
+        &owner,
+    );
 }
 
 fn selectDevice(context: *anyopaque, device_id: ?[]const u8) !void {
@@ -408,14 +542,24 @@ fn open(
 ) !void {
     const state = stateFromContext(context);
     if (state.output_unit != null) return error.AlreadyOpen;
-    const device_id = if (state.selected_device_id) |selected_id|
-        try audioDeviceForUid(selected_id)
-    else
-        try defaultOutputDevice();
-    if (device_id == kAudioObjectUnknown) return error.OutputDeviceNotFound;
+    const device_id = try selectedAudioDevice(state);
     if (!try hasOutputChannels(state.allocator, device_id)) {
         return error.NotAnOutputDevice;
     }
+
+    var acquired_exclusive_access = false;
+    if (state.configuration.exclusive_mode) {
+        if (!supportsExclusiveMode(device_id)) {
+            return error.UnsupportedOutputConfiguration;
+        }
+        try acquireExclusiveAccess(device_id);
+        state.exclusive_device_id = device_id;
+        acquired_exclusive_access = true;
+    }
+    errdefer if (acquired_exclusive_access) {
+        releaseExclusiveAccess(state.exclusive_device_id);
+        state.exclusive_device_id = kAudioObjectUnknown;
+    };
     state.source = output_source;
     errdefer state.source = null;
 
@@ -543,6 +687,8 @@ fn close(context: *anyopaque) void {
     state.output_unit = null;
     state.output_started = false;
     state.source = null;
+    releaseExclusiveAccess(state.exclusive_device_id);
+    state.exclusive_device_id = kAudioObjectUnknown;
 }
 
 fn deinit(context: *anyopaque) void {

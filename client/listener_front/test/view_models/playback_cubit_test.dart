@@ -178,6 +178,32 @@ void main() {
         await cubit.close();
       },
     );
+
+    test(
+      'configures output by cueing the current frame until play is pressed',
+      () async {
+        final engine = _FakePlaybackEngine()..currentFrameValue = 26000;
+        final controlClient = _FakePlaybackControl();
+        final cubit = PlaybackCubit.withDependencies(engine, controlClient);
+
+        await cubit.play(selectedTrack: _track(1));
+        await cubit.configureOutput(
+          const AudioOutputConfiguration(exclusiveMode: true),
+        );
+
+        expect(engine.stopCallCount, 1);
+        expect(engine.configuredOutputs.single.exclusiveMode, isTrue);
+        expect(controlClient.stoppedPlaybackIds, ['playback-1']);
+        expect(cubit.state.status, PlaybackStatus.cued);
+        expect(cubit.state.currentFrame, 26000);
+
+        await cubit.play();
+
+        expect(controlClient.requestedStartFrames, [0, 26000]);
+        expect(engine.requestedStartFrames, [0, 26000]);
+        await cubit.close();
+      },
+    );
   });
 }
 
@@ -219,17 +245,25 @@ final class _FakePlaybackEngine implements PlaybackEngine {
     return selectOutputStatus;
   }
 
+  @override
+  ListenerStatus configureOutput(AudioOutputConfiguration configuration) {
+    configuredOutputs.add(configuration);
+    return configureOutputStatus;
+  }
+
   final StreamController<PlaybackEngineEvent> _events =
       StreamController<PlaybackEngineEvent>.broadcast();
 
   final List<String> startedPlaybackIds = [];
   final List<int> requestedStartFrames = [];
   final List<String?> selectedDeviceIds = [];
+  final List<AudioOutputConfiguration> configuredOutputs = [];
   int stopCallCount = 0;
   int currentFrameCallCount = 0;
   int currentFrameValue = 0;
   ListenerStatus seekStatus = ListenerStatus.ok;
   ListenerStatus selectOutputStatus = ListenerStatus.ok;
+  ListenerStatus configureOutputStatus = ListenerStatus.ok;
   final List<int> soughtFrames = [];
 
   @override

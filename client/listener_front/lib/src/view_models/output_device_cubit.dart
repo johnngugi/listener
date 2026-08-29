@@ -20,6 +20,7 @@ final class OutputDeviceCubit extends Cubit<OutputDeviceState> {
         status: OutputDeviceStatus.loading,
         devices: state.devices,
         selectedDeviceId: state.selectedDeviceId,
+        exclusiveMode: state.exclusiveMode,
       ),
     );
 
@@ -28,10 +29,35 @@ final class OutputDeviceCubit extends Cubit<OutputDeviceState> {
         _engine.outputDevices(),
       );
       var selectedDeviceId = state.selectedDeviceId;
+      var exclusiveMode = state.exclusiveMode;
       if (selectedDeviceId != null &&
           !devices.any((device) => device.id == selectedDeviceId)) {
+        if (exclusiveMode && !_supportsExclusiveMode(devices, null)) {
+          await _playback.configureOutput(const AudioOutputConfiguration());
+          exclusiveMode = false;
+          emit(
+            OutputDeviceState(
+              status: OutputDeviceStatus.loading,
+              devices: devices,
+              selectedDeviceId: selectedDeviceId,
+              exclusiveMode: false,
+            ),
+          );
+        }
         await _playback.switchOutputDevice(null);
         selectedDeviceId = null;
+      } else if (exclusiveMode &&
+          !_supportsExclusiveMode(devices, selectedDeviceId)) {
+        await _playback.configureOutput(const AudioOutputConfiguration());
+        exclusiveMode = false;
+        emit(
+          OutputDeviceState(
+            status: OutputDeviceStatus.loading,
+            devices: devices,
+            selectedDeviceId: selectedDeviceId,
+            exclusiveMode: false,
+          ),
+        );
       }
 
       emit(
@@ -39,6 +65,7 @@ final class OutputDeviceCubit extends Cubit<OutputDeviceState> {
           status: OutputDeviceStatus.ready,
           devices: devices,
           selectedDeviceId: selectedDeviceId,
+          exclusiveMode: exclusiveMode,
         ),
       );
     } catch (error) {
@@ -47,6 +74,7 @@ final class OutputDeviceCubit extends Cubit<OutputDeviceState> {
           status: OutputDeviceStatus.error,
           devices: state.devices,
           selectedDeviceId: state.selectedDeviceId,
+          exclusiveMode: state.exclusiveMode,
           errorMessage: 'Unable to load audio outputs: $error',
         ),
       );
@@ -61,17 +89,73 @@ final class OutputDeviceCubit extends Cubit<OutputDeviceState> {
         status: OutputDeviceStatus.switching,
         devices: state.devices,
         selectedDeviceId: state.selectedDeviceId,
+        exclusiveMode: state.exclusiveMode,
       ),
     );
 
     try {
+      var exclusiveMode = state.exclusiveMode;
+      if (exclusiveMode && !_supportsExclusiveMode(state.devices, deviceId)) {
+        await _playback.configureOutput(const AudioOutputConfiguration());
+        exclusiveMode = false;
+        emit(
+          OutputDeviceState(
+            status: OutputDeviceStatus.switching,
+            devices: state.devices,
+            selectedDeviceId: state.selectedDeviceId,
+            exclusiveMode: false,
+          ),
+        );
+      }
       await _playback.switchOutputDevice(deviceId);
+      emit(
+        OutputDeviceState(
+          status: OutputDeviceStatus.ready,
+          devices: state.devices,
+          selectedDeviceId: deviceId,
+          exclusiveMode: exclusiveMode,
+        ),
+      );
     } catch (error) {
       emit(
         OutputDeviceState(
           status: OutputDeviceStatus.error,
           devices: state.devices,
           selectedDeviceId: state.selectedDeviceId,
+          exclusiveMode: state.exclusiveMode,
+          errorMessage: error.toString(),
+        ),
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  Future<bool> setExclusiveMode(bool enabled) async {
+    if (enabled == state.exclusiveMode) return true;
+    if (enabled && !state.supportsExclusiveMode) return false;
+
+    emit(
+      OutputDeviceState(
+        status: OutputDeviceStatus.switching,
+        devices: state.devices,
+        selectedDeviceId: state.selectedDeviceId,
+        exclusiveMode: state.exclusiveMode,
+      ),
+    );
+
+    try {
+      await _playback.configureOutput(
+        AudioOutputConfiguration(exclusiveMode: enabled),
+      );
+    } catch (error) {
+      emit(
+        OutputDeviceState(
+          status: OutputDeviceStatus.error,
+          devices: state.devices,
+          selectedDeviceId: state.selectedDeviceId,
+          exclusiveMode: state.exclusiveMode,
           errorMessage: error.toString(),
         ),
       );
@@ -82,9 +166,23 @@ final class OutputDeviceCubit extends Cubit<OutputDeviceState> {
       OutputDeviceState(
         status: OutputDeviceStatus.ready,
         devices: state.devices,
-        selectedDeviceId: deviceId,
+        selectedDeviceId: state.selectedDeviceId,
+        exclusiveMode: enabled,
       ),
     );
     return true;
+  }
+
+  bool _supportsExclusiveMode(
+    List<AudioOutputDevice> devices,
+    String? selectedDeviceId,
+  ) {
+    for (final device in devices) {
+      if ((selectedDeviceId == null && device.isDefault) ||
+          device.id == selectedDeviceId) {
+        return device.capabilities.supportsExclusiveMode;
+      }
+    }
+    return false;
   }
 }

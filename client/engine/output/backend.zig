@@ -20,6 +20,13 @@ pub const OutputBackend = struct {
         try self.vtable.select_device(self.context, device_id);
     }
 
+    pub fn configure(
+        self: *OutputBackend,
+        configuration: OutputConfiguration,
+    ) !void {
+        try self.vtable.configure(self.context, configuration);
+    }
+
     pub fn open(
         self: *OutputBackend,
         output_format: OutputFormat,
@@ -62,6 +69,7 @@ pub const OutputBackendBootstrap = struct {
 pub const VTable = struct {
     enumerate_devices: *const fn (*anyopaque, std.mem.Allocator) anyerror![]OutputDevice,
     select_device: *const fn (*anyopaque, ?[]const u8) anyerror!void,
+    configure: *const fn (*anyopaque, OutputConfiguration) anyerror!void,
     open: *const fn (*anyopaque, OutputFormat, OutputSource) anyerror!void,
     start: *const fn (*anyopaque) anyerror!void,
     stop: *const fn (*anyopaque) anyerror!void,
@@ -75,11 +83,20 @@ pub const OutputDevice = struct {
     id: []u8,
     name: []u8,
     is_default: bool,
+    capabilities: OutputCapabilities,
 
     pub fn deinit(self: OutputDevice, allocator: std.mem.Allocator) void {
         allocator.free(self.id);
         allocator.free(self.name);
     }
+};
+
+pub const OutputCapabilities = struct {
+    exclusive_mode: bool = false,
+};
+
+pub const OutputConfiguration = struct {
+    exclusive_mode: bool = false,
 };
 
 pub fn deinitOutputDevices(

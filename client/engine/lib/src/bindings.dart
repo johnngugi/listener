@@ -19,6 +19,14 @@ final class NativeOutputDevice extends ffi.Struct {
 
   @ffi.Uint8()
   external int isDefault;
+
+  @ffi.Uint8()
+  external int supportsExclusiveMode;
+}
+
+final class NativeOutputConfiguration extends ffi.Struct {
+  @ffi.Uint8()
+  external int exclusiveMode;
 }
 
 typedef PlaybackEventCallbackNative =
@@ -138,6 +146,17 @@ external int listenerEngineSelectOutputDevice(
   ffi.Pointer<NativeEngine> engine,
   ffi.Pointer<ffi.Uint8> deviceId,
   int deviceIdLength,
+);
+
+@ffi.Native<
+  ffi.Uint32 Function(
+    ffi.Pointer<NativeEngine>,
+    ffi.Pointer<NativeOutputConfiguration>,
+  )
+>(symbol: 'listener_engine_configure_output', assetId: listenerEngineAssetId)
+external int listenerEngineConfigureOutput(
+  ffi.Pointer<NativeEngine> engine,
+  ffi.Pointer<NativeOutputConfiguration> configuration,
 );
 
 @ffi.Native<ffi.Size Function(ffi.Pointer<NativeOutputDeviceSnapshot>)>(

@@ -311,6 +311,26 @@ class PlaybackCubit extends Cubit<PlaybackState> {
   }
 
   Future<void> switchOutputDevice(String? deviceId) async {
+    await _cuePlaybackForOutputChange();
+
+    final selectStatus = _engine.selectOutputDevice(deviceId);
+    if (selectStatus != ListenerStatus.ok) {
+      throw StateError('Unable to select audio output: ${selectStatus.name}');
+    }
+  }
+
+  Future<void> configureOutput(AudioOutputConfiguration configuration) async {
+    await _cuePlaybackForOutputChange();
+
+    final configureStatus = _engine.configureOutput(configuration);
+    if (configureStatus != ListenerStatus.ok) {
+      throw StateError(
+        'Unable to configure audio output: ${configureStatus.name}',
+      );
+    }
+  }
+
+  Future<void> _cuePlaybackForOutputChange() async {
     final playbackId = _playbackId;
     if (playbackId != null) {
       final position = _engine.currentFrame();
@@ -342,11 +362,6 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         // Local playback is already stopped and safe to reconfigure. The
         // abandoned remote session will be reclaimed by the server.
       }
-    }
-
-    final selectStatus = _engine.selectOutputDevice(deviceId);
-    if (selectStatus != ListenerStatus.ok) {
-      throw StateError('Unable to select audio output: ${selectStatus.name}');
     }
   }
 

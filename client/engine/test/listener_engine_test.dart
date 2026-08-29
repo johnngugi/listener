@@ -23,6 +23,7 @@ void main() {
     for (final device in devices) {
       expect(device.id, isNotEmpty);
       expect(device.name, isNotEmpty);
+      expect(device.capabilities.supportsExclusiveMode, isA<bool>());
     }
     expect(
       devices.where((device) => device.isDefault).length,
@@ -39,5 +40,15 @@ void main() {
       expect(engine.selectOutputDevice(devices.first.id), ListenerStatus.ok);
     }
     expect(engine.selectOutputDevice(null), ListenerStatus.ok);
+  });
+
+  test('configures portable output behavior', () {
+    final engine = ListenerEngine.open();
+    addTearDown(engine.close);
+
+    expect(
+      engine.configureOutput(const AudioOutputConfiguration()),
+      ListenerStatus.ok,
+    );
   });
 }

@@ -8,6 +8,7 @@ final class OutputDeviceState extends Equatable {
     required this.status,
     required this.devices,
     required this.selectedDeviceId,
+    required this.exclusiveMode,
     this.errorMessage,
   });
 
@@ -15,11 +16,13 @@ final class OutputDeviceState extends Equatable {
     : status = OutputDeviceStatus.loading,
       devices = const [],
       selectedDeviceId = null,
+      exclusiveMode = false,
       errorMessage = null;
 
   final OutputDeviceStatus status;
   final List<AudioOutputDevice> devices;
   final String? selectedDeviceId;
+  final bool exclusiveMode;
   final String? errorMessage;
 
   AudioOutputDevice? get selectedDevice {
@@ -31,6 +34,24 @@ final class OutputDeviceState extends Equatable {
     return null;
   }
 
+  AudioOutputDevice? get effectiveDevice {
+    final selected = selectedDevice;
+    if (selected != null) return selected;
+    for (final device in devices) {
+      if (device.isDefault) return device;
+    }
+    return null;
+  }
+
+  bool get supportsExclusiveMode =>
+      effectiveDevice?.capabilities.supportsExclusiveMode ?? false;
+
   @override
-  List<Object?> get props => [status, devices, selectedDeviceId, errorMessage];
+  List<Object?> get props => [
+    status,
+    devices,
+    selectedDeviceId,
+    exclusiveMode,
+    errorMessage,
+  ];
 }

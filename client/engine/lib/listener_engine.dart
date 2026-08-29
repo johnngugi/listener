@@ -26,6 +26,7 @@ enum ListenerStatus {
   outOfMemory(8),
   noActiveStream(9),
   invalidSeekFrame(10),
+  outputUnavailable(14),
   unexpected(255);
 
   const ListenerStatus(this.code);
@@ -48,6 +49,8 @@ abstract interface class PlaybackEngine {
   List<AudioOutputDevice> outputDevices();
 
   ListenerStatus selectOutputDevice(String? deviceId);
+
+  ListenerStatus configureOutput(AudioOutputConfiguration configuration);
 
   ListenerStatus startStream({
     required String playbackId,
@@ -160,6 +163,9 @@ final class ListenerEngine implements PlaybackEngine {
               id: utf8.decode(item.id.asTypedList(item.idLength)),
               name: utf8.decode(item.name.asTypedList(item.nameLength)),
               isDefault: item.isDefault != 0,
+              capabilities: AudioOutputCapabilities(
+                supportsExclusiveMode: item.supportsExclusiveMode != 0,
+              ),
             );
           }, growable: false);
         } finally {
@@ -201,6 +207,25 @@ final class ListenerEngine implements PlaybackEngine {
       );
     } finally {
       malloc.free(pointer);
+    }
+  }
+
+  @override
+  ListenerStatus configureOutput(AudioOutputConfiguration configuration) {
+    if (_closed) {
+      throw StateError('ListenerEngine is closed');
+    }
+
+    final nativeConfiguration = calloc<NativeOutputConfiguration>();
+    try {
+      nativeConfiguration.ref.exclusiveMode = configuration.exclusiveMode
+          ? 1
+          : 0;
+      return ListenerStatus.fromCode(
+        listenerEngineConfigureOutput(_engine, nativeConfiguration),
+      );
+    } finally {
+      calloc.free(nativeConfiguration);
     }
   }
 

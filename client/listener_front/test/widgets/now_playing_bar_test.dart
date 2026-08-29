@@ -161,6 +161,7 @@ void main() {
           id: 'usb-dac',
           name: 'Reference USB DAC',
           isDefault: false,
+          capabilities: AudioOutputCapabilities(supportsExclusiveMode: true),
         ),
       ],
     )..currentFrameValue = 42000;
@@ -215,10 +216,25 @@ void main() {
 
     await tester.tap(find.byKey(const Key('output-device-picker-button')));
     await tester.pumpAndSettle();
+
+    expect(find.text('Exclusive mode'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('exclusive-mode-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(engine.configuredOutputs.single.exclusiveMode, isTrue);
+    expect(outputCubit.state.exclusiveMode, isTrue);
+
     await tester.tap(find.byKey(const Key('output-device-option-system')));
     await tester.pumpAndSettle();
 
     expect(engine.selectedDeviceIds, ['usb-dac', null]);
+    expect(
+      engine.configuredOutputs.map(
+        (configuration) => configuration.exclusiveMode,
+      ),
+      [true, false],
+    );
+    expect(engine.stopCallCount, 1);
     expect(find.text('System Output'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Play'));
@@ -266,6 +282,7 @@ final class _FakePlaybackEngine implements PlaybackEngine {
 
   final List<AudioOutputDevice> devices;
   final List<String?> selectedDeviceIds = [];
+  final List<AudioOutputConfiguration> configuredOutputs = [];
 
   @override
   List<AudioOutputDevice> outputDevices() => devices;
@@ -273,6 +290,12 @@ final class _FakePlaybackEngine implements PlaybackEngine {
   @override
   ListenerStatus selectOutputDevice(String? deviceId) {
     selectedDeviceIds.add(deviceId);
+    return ListenerStatus.ok;
+  }
+
+  @override
+  ListenerStatus configureOutput(AudioOutputConfiguration configuration) {
+    configuredOutputs.add(configuration);
     return ListenerStatus.ok;
   }
 

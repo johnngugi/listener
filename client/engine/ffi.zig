@@ -125,6 +125,11 @@ pub const NativeOutputDevice = extern struct {
     name: [*]const u8,
     name_len: usize,
     is_default: u8,
+    supports_exclusive_mode: u8,
+};
+
+pub const NativeOutputConfiguration = extern struct {
+    exclusive_mode: u8,
 };
 
 const OutputDeviceSnapshot = struct {
@@ -181,6 +186,23 @@ pub export fn listener_engine_select_output_device(
     return .ok;
 }
 
+pub export fn listener_engine_configure_output(
+    engine_ptr: ?*Engine,
+    configuration_ptr: ?*const NativeOutputConfiguration,
+) ListenerStatus {
+    const engine = engine_ptr orelse return .null_engine;
+    const configuration = configuration_ptr orelse return .invalid_argument;
+    if (configuration.exclusive_mode > 1) return .invalid_argument;
+
+    engine.configureOutput(.{
+        .exclusive_mode = configuration.exclusive_mode != 0,
+    }) catch |err| {
+        stdout.print(engine.io(), "listener_engine_configure_output failed: {}\n", .{err});
+        return status_from_error(err);
+    };
+    return .ok;
+}
+
 pub export fn listener_output_device_snapshot_count(
     snapshot_ptr: ?*const OutputDeviceSnapshot,
 ) usize {
@@ -203,6 +225,9 @@ pub export fn listener_output_device_snapshot_get(
         .name = device.name.ptr,
         .name_len = device.name.len,
         .is_default = @intFromBool(device.is_default),
+        .supports_exclusive_mode = @intFromBool(
+            device.capabilities.exclusive_mode,
+        ),
     };
     return .ok;
 }
@@ -345,6 +370,20 @@ const Engine = struct {
             return error.AlreadyStreaming;
         }
         try self.audio_backend.selectDevice(device_id);
+    }
+
+    pub fn configureOutput(
+        self: *Engine,
+        configuration: backend.OutputConfiguration,
+    ) !void {
+        if (self.active_stream != null or
+            self.playback_buffer != null or
+            self.receive_thread != null or
+            self.receiver_state != null)
+        {
+            return error.AlreadyStreaming;
+        }
+        try self.audio_backend.configure(configuration);
     }
 
     pub fn startStream(self: *Engine, message: protocol.StartStream) !void {
@@ -699,6 +738,7 @@ pub const ListenerStatus = enum(u32) {
     service_not_found = 11,
     null_event_context = 12,
     null_event_callback = 13,
+    output_unavailable = 14,
     unexpected = 255,
 };
 
@@ -889,8 +929,11 @@ fn status_from_error(err: anyerror) ListenerStatus {
         error.InvalidOutputDeviceId,
         error.OutputDeviceNotFound,
         error.NotAnOutputDevice,
+        error.UnsupportedOutputConfiguration,
         error.AlreadyStreaming,
         => .invalid_argument,
+
+        error.OutputDeviceInUse => .output_unavailable,
 
         error.InvalidEnd,
         error.InvalidCharacter,
@@ -991,6 +1034,24 @@ test "output device snapshot exposes portable device data" {
     try std.testing.expectEqualStrings("test-output", device.id[0..device.id_len]);
     try std.testing.expectEqualStrings("Test Output", device.name[0..device.name_len]);
     try std.testing.expectEqual(@as(u8, 1), device.is_default);
+    try std.testing.expectEqual(@as(u8, 1), device.supports_exclusive_mode);
+}
+
+test "portable output configuration is forwarded to the backend" {
+    const allocator = std.testing.allocator;
+    var engine = try Engine.init(allocator);
+    defer engine.deinit();
+
+    const invalid = NativeOutputConfiguration{ .exclusive_mode = 2 };
+    try std.testing.expectEqual(
+        ListenerStatus.invalid_argument,
+        listener_engine_configure_output(&engine, &invalid),
+    );
+    const exclusive = NativeOutputConfiguration{ .exclusive_mode = 1 };
+    try std.testing.expectEqual(
+        ListenerStatus.ok,
+        listener_engine_configure_output(&engine, &exclusive),
+    );
 }
 
 test "output device selection validates IDs and can restore the default" {

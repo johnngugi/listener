@@ -684,7 +684,7 @@ class _OutputDeviceDialog extends StatelessWidget {
           content: SizedBox(
             width: 420,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 410),
+              constraints: const BoxConstraints(maxHeight: 500),
               child: ListView(
                 shrinkWrap: true,
                 children: [
@@ -717,13 +717,45 @@ class _OutputDeviceDialog extends StatelessWidget {
                       title: device.name,
                       subtitle: device.isDefault
                           ? 'Current macOS default'
-                          : 'CoreAudio output',
+                          : 'Available audio output',
                       icon: Icons.speaker_group_outlined,
                       selected: state.selectedDeviceId == device.id,
                       onTap: state.status == OutputDeviceStatus.switching
                           ? null
                           : () => _select(context, device.id),
                     ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 14),
+                    child: Divider(color: lineColor, height: 24),
+                  ),
+                  SwitchListTile(
+                    key: const Key('exclusive-mode-toggle'),
+                    value: state.exclusiveMode,
+                    onChanged:
+                        state.status == OutputDeviceStatus.switching ||
+                            !state.supportsExclusiveMode
+                        ? null
+                        : (enabled) => context
+                              .read<OutputDeviceCubit>()
+                              .setExclusiveMode(enabled),
+                    activeTrackColor: accentColor.withValues(alpha: 0.5),
+                    activeThumbColor: accentColor,
+                    title: const Text(
+                      'Exclusive mode',
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      state.supportsExclusiveMode
+                          ? 'Prevent other apps from using this output while '
+                                'Listener is playing.'
+                          : 'Not supported by the selected output.',
+                      style: const TextStyle(color: mutedColor, fontSize: 12),
+                    ),
+                  ),
                 ],
               ),
             ),
