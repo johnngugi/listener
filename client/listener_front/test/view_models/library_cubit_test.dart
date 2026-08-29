@@ -15,7 +15,9 @@ void main() {
           grpc.Track(
             id: '00000000-0000-4000-8000-000000000007',
             artworkId: Int64(42),
+            codec: 'flac',
             sampleRate: 48000,
+            bitsPerSample: 24,
             dateAddedUnixSeconds: Int64(
               DateTime.utc(2026, 3, 18, 12).millisecondsSinceEpoch ~/
                   Duration.millisecondsPerSecond,
@@ -28,7 +30,9 @@ void main() {
       final tracks = mapTracks(response.tracks);
 
       expect(tracks[0].artworkId, 42);
+      expect(tracks[0].codec, 'flac');
       expect(tracks[0].sampleRate, 48000);
+      expect(tracks[0].bitsPerSample, 24);
       expect(tracks[0].dateAdded, '18 Mar 2026');
       expect(tracks[1].artworkId, isNull);
       expect(tracks[1].dateAdded, isEmpty);

@@ -8,7 +8,7 @@ void main() {
     final engine = ListenerEngine.open();
     addTearDown(engine.close);
 
-    expect(engine.abiVersion, 1);
+    expect(engine.abiVersion, 2);
   });
 
   test('maps unknown native status codes to unexpected', () {
@@ -50,5 +50,23 @@ void main() {
       engine.configureOutput(const AudioOutputConfiguration()),
       ListenerStatus.ok,
     );
+  });
+
+  test('maps perceptual volume to linear amplitude gain', () {
+    expect(SoftwareVolume.linearGain(0), 0);
+    expect(SoftwareVolume.decibels(0), double.negativeInfinity);
+    expect(SoftwareVolume.decibels(0.5), -30);
+    expect(SoftwareVolume.linearGain(0.5), closeTo(0.0316227766, 1e-10));
+    expect(SoftwareVolume.linearGain(1), 1);
+    expect(() => SoftwareVolume.linearGain(1.1), throwsRangeError);
+  });
+
+  test('sets software volume through the native engine', () {
+    final engine = ListenerEngine.open();
+    addTearDown(engine.close);
+
+    expect(engine.setVolume(0.5), ListenerStatus.ok);
+    expect(engine.setVolume(0), ListenerStatus.ok);
+    expect(engine.setVolume(1), ListenerStatus.ok);
   });
 }

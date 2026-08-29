@@ -4,10 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:listener_front/src/models/playback_state.dart';
 import 'package:listener_front/src/models/output_device_state.dart';
+import 'package:listener_front/src/models/track.dart';
+import 'package:listener_front/src/models/signal_path.dart';
 import 'package:listener_front/src/theme.dart';
 import 'package:listener_front/src/view_models/output_device_cubit.dart';
 import 'package:listener_front/src/view_models/playback_cubit.dart';
 import 'package:listener_front/src/widgets/artwork_image.dart';
+import 'package:listener_engine/listener_engine.dart';
 
 class NowPlayingBar extends StatelessWidget {
   const NowPlayingBar({super.key});
@@ -41,6 +44,7 @@ class _WideNowPlayingBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final showOutput = width >= 1180;
+    final showInlineVolume = width >= 1450;
 
     return Row(
       children: [
@@ -50,6 +54,11 @@ class _WideNowPlayingBar extends StatelessWidget {
         SizedBox(width: showOutput ? 250 : 210, child: const NowPlayingText()),
         const SizedBox(width: 18),
         const Expanded(child: TransportControls()),
+        const SizedBox(width: 12),
+        const SignalPathButton(),
+        const SizedBox(width: 8),
+        if (showInlineVolume)
+          const SizedBox(width: 190, child: SoftwareVolumeControl()),
         if (showOutput) ...[const SizedBox(width: 18), const OutputControl()],
         const SizedBox(width: 20),
       ],
@@ -118,6 +127,12 @@ class _CompactNowPlayingBar extends StatelessWidget {
                   ],
                 ),
               ),
+              Positioned(
+                right: 12,
+                top: 0,
+                bottom: 0,
+                child: Center(child: SignalPathButton(showLabel: width >= 480)),
+              ),
             ],
           ),
         ),
@@ -129,6 +144,420 @@ class _CompactNowPlayingBar extends StatelessWidget {
       ],
     );
   }
+}
+
+class SignalPathButton extends StatelessWidget {
+  const SignalPathButton({super.key, this.showLabel = true});
+
+  final bool showLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<PlaybackCubit, PlaybackState>(
+      builder: (context, playback) =>
+          BlocBuilder<OutputDeviceCubit, OutputDeviceState>(
+            builder: (context, output) {
+              final signalPath = SignalPath.evaluate(playback, output);
+              final color = _signalPathColor(signalPath.quality);
+              return Tooltip(
+                message: '${signalPath.title}. Open signal path.',
+                child: InkWell(
+                  key: const Key('signal-path-button'),
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: () => _showSignalPathDialog(context),
+                  child: Semantics(
+                    button: true,
+                    label: '${signalPath.title}. Open signal path details.',
+                    excludeSemantics: true,
+                    child: Container(
+                      height: 38,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: showLabel ? 12 : 9,
+                      ),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.1),
+                        border: Border.all(
+                          color: color.withValues(alpha: 0.42),
+                        ),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _signalPathIcon(signalPath.quality),
+                            color: color,
+                            size: 18,
+                          ),
+                          if (showLabel) ...[
+                            const SizedBox(width: 7),
+                            Text(
+                              signalPath.title,
+                              style: TextStyle(
+                                color: color,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+    );
+  }
+}
+
+class SoftwareVolumeControl extends StatelessWidget {
+  const SoftwareVolumeControl({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocSelector<
+      PlaybackCubit,
+      PlaybackState,
+      ({double volume, VolumeMode mode})
+    >(
+      selector: (state) => (volume: state.volume, mode: state.volumeMode),
+      builder: (context, selection) => Row(
+        children: [
+          IconButton(
+            key: const Key('software-volume-mute-button'),
+            tooltip: selection.mode == VolumeMode.fixed
+                ? 'Fixed output'
+                : selection.volume == 0
+                ? 'Unmute'
+                : 'Mute',
+            onPressed: selection.mode == VolumeMode.software
+                ? context.read<PlaybackCubit>().toggleMute
+                : null,
+            icon: Icon(
+              selection.mode == VolumeMode.fixed
+                  ? Icons.lock_outline_rounded
+                  : _volumeIcon(selection.volume),
+              color: selection.mode == VolumeMode.fixed
+                  ? mutedColor
+                  : textColor,
+            ),
+          ),
+          Expanded(
+            child: _SoftwareVolumeSlider(
+              volume: selection.volume,
+              enabled: selection.mode == VolumeMode.software,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SoftwareVolumeSlider extends StatelessWidget {
+  const _SoftwareVolumeSlider({required this.volume, required this.enabled});
+
+  final double volume;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = _formatVolume(volume);
+    return SliderTheme(
+      data: SliderTheme.of(context).copyWith(
+        activeTrackColor: accentColor,
+        inactiveTrackColor: mutedColor.withValues(alpha: 0.25),
+        trackHeight: 3,
+        thumbColor: textColor,
+        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+        overlayColor: accentColor.withValues(alpha: 0.14),
+      ),
+      child: Slider(
+        key: const Key('software-volume-slider'),
+        min: 0,
+        max: 1,
+        divisions: 100,
+        value: volume,
+        label: label,
+        semanticFormatterCallback: (_) => 'Software volume $label',
+        onChanged: enabled ? context.read<PlaybackCubit>().setVolume : null,
+      ),
+    );
+  }
+}
+
+Future<void> _showSignalPathDialog(BuildContext context) {
+  final playbackCubit = context.read<PlaybackCubit>();
+  final outputCubit = context.read<OutputDeviceCubit>();
+  return showDialog<void>(
+    context: context,
+    builder: (context) => MultiBlocProvider(
+      providers: [
+        BlocProvider.value(value: playbackCubit),
+        BlocProvider.value(value: outputCubit),
+      ],
+      child: const _SignalPathDialog(),
+    ),
+  );
+}
+
+class _SignalPathDialog extends StatelessWidget {
+  const _SignalPathDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<PlaybackCubit, PlaybackState>(
+      builder: (context, playback) => BlocBuilder<OutputDeviceCubit, OutputDeviceState>(
+        builder: (context, output) {
+          final signalPath = SignalPath.evaluate(playback, output);
+          final color = _signalPathColor(signalPath.quality);
+          final track = playback.queue?.currentTrack;
+          final outputName = output.effectiveDevice?.name ?? 'System Output';
+
+          return AlertDialog(
+            backgroundColor: panelColor,
+            surfaceTintColor: Colors.transparent,
+            title: const Text('Signal path'),
+            content: SizedBox(
+              width: 430,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 620),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        key: const Key('signal-path-status'),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.1),
+                          border: Border.all(
+                            color: color.withValues(alpha: 0.4),
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  _signalPathIcon(signalPath.quality),
+                                  color: color,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  signalPath.title,
+                                  style: TextStyle(
+                                    color: color,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            for (final reason in signalPath.reasons)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 3),
+                                child: Text(
+                                  reason,
+                                  style: const TextStyle(
+                                    color: textColor,
+                                    fontSize: 13,
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _SignalPathRow(
+                        label: 'Source',
+                        value: track == null
+                            ? 'No active track'
+                            : _formatTrackAudio(track),
+                      ),
+                      _SignalPathRow(
+                        label: 'Output',
+                        value:
+                            '$outputName · ${output.exclusiveMode ? 'Exclusive' : 'Shared'}',
+                      ),
+                      _SignalPathRow(
+                        label: 'Volume',
+                        value: playback.volumeMode == VolumeMode.fixed
+                            ? 'Fixed output · 0 dB'
+                            : 'Software · ${_formatVolume(playback.volume)}',
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Divider(color: lineColor),
+                      ),
+                      const Text(
+                        'VOLUME MODE',
+                        style: TextStyle(
+                          color: mutedColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      _VolumeModeTile(
+                        key: const Key('fixed-volume-mode'),
+                        mode: VolumeMode.fixed,
+                        selected: playback.volumeMode == VolumeMode.fixed,
+                        title: 'Fixed output',
+                        subtitle:
+                            'Unity gain. Control volume on your DAC or amplifier.',
+                      ),
+                      _VolumeModeTile(
+                        key: const Key('software-volume-mode'),
+                        mode: VolumeMode.software,
+                        selected: playback.volumeMode == VolumeMode.software,
+                        title: 'Software volume',
+                        subtitle:
+                            'Convenient, but attenuation changes PCM samples.',
+                      ),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 160),
+                        child: playback.volumeMode == VolumeMode.software
+                            ? const Padding(
+                                key: Key('software-volume-controls'),
+                                padding: EdgeInsets.only(top: 6),
+                                child: SoftwareVolumeControl(),
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 10),
+                        child: Divider(color: lineColor),
+                      ),
+                      SwitchListTile(
+                        key: const Key('signal-path-exclusive-toggle'),
+                        contentPadding: EdgeInsets.zero,
+                        value: output.exclusiveMode,
+                        onChanged:
+                            output.status == OutputDeviceStatus.switching ||
+                                !output.supportsExclusiveMode
+                            ? null
+                            : context
+                                  .read<OutputDeviceCubit>()
+                                  .setExclusiveMode,
+                        title: const Text('Exclusive output'),
+                        subtitle: Text(
+                          output.supportsExclusiveMode
+                              ? 'Lets Listener match the DAC to the track sample rate.'
+                              : 'Not supported by the selected output.',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _SignalPathRow extends StatelessWidget {
+  const _SignalPathRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 70,
+            child: Text(label, style: const TextStyle(color: mutedColor)),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                color: textColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VolumeModeTile extends StatelessWidget {
+  const _VolumeModeTile({
+    super.key,
+    required this.mode,
+    required this.selected,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final VolumeMode mode;
+  final bool selected;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        selected ? Icons.radio_button_checked : Icons.radio_button_off,
+        color: selected ? accentColor : mutedColor,
+      ),
+      title: Text(title),
+      subtitle: Text(subtitle),
+      onTap: selected
+          ? null
+          : () => context.read<PlaybackCubit>().setVolumeMode(mode),
+    );
+  }
+}
+
+Color _signalPathColor(SignalPathQuality quality) {
+  return switch (quality) {
+    SignalPathQuality.inactive => mutedColor,
+    SignalPathQuality.bitPerfect => const Color(0xFF59D69B),
+    SignalPathQuality.processed => const Color(0xFFFFB45C),
+  };
+}
+
+IconData _signalPathIcon(SignalPathQuality quality) {
+  return switch (quality) {
+    SignalPathQuality.inactive => Icons.route_outlined,
+    SignalPathQuality.bitPerfect => Icons.verified_rounded,
+    SignalPathQuality.processed => Icons.tune_rounded,
+  };
+}
+
+IconData _volumeIcon(double volume) {
+  if (volume == 0) return Icons.volume_off_rounded;
+  if (volume < 0.5) return Icons.volume_down_rounded;
+  return Icons.volume_up_rounded;
+}
+
+String _formatVolume(double volume) {
+  if (volume == 0) return 'Muted';
+  final decibels = SoftwareVolume.decibels(volume);
+  return '${decibels.round()} dB';
 }
 
 class _NowPlayingArtwork extends StatelessWidget {
@@ -169,9 +598,10 @@ class NowPlayingText extends StatelessWidget {
               color: textColor,
               fontSize: 16,
               fontWeight: FontWeight.w800,
+              height: 1,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
           Text(
             selection.artist,
             maxLines: 1,
@@ -180,8 +610,25 @@ class NowPlayingText extends StatelessWidget {
               color: mutedColor,
               fontSize: 13,
               fontWeight: FontWeight.w500,
+              height: 1,
             ),
           ),
+          if (selection.format.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              selection.format,
+              key: const Key('now-playing-format'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: accentColor.withValues(alpha: 0.82),
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.2,
+                height: 1,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -418,7 +865,11 @@ const _playbackTimeStyle = TextStyle(
 );
 
 typedef _ArtworkSelection = ({bool visible, int? artworkId});
-typedef _NowPlayingTextSelection = ({String title, String artist});
+typedef _NowPlayingTextSelection = ({
+  String title,
+  String artist,
+  String format,
+});
 typedef _PlaybackProgressSelection = ({
   bool visible,
   double positionMilliseconds,
@@ -436,9 +887,31 @@ _ArtworkSelection _selectArtwork(PlaybackState state) => (
 );
 
 _NowPlayingTextSelection _selectNowPlayingText(PlaybackState state) {
-  if (!_showsTrack(state)) return (title: '', artist: '');
+  if (!_showsTrack(state)) return (title: '', artist: '', format: '');
   final track = state.queue?.currentTrack;
-  return (title: track?.title ?? '', artist: track?.artist ?? '');
+  return (
+    title: track?.title ?? '',
+    artist: track?.artist ?? '',
+    format: track == null ? '' : _formatTrackAudio(track),
+  );
+}
+
+String _formatTrackAudio(Track track) {
+  final parts = <String>[
+    if (track.codec.trim().isNotEmpty) track.codec.trim().toUpperCase(),
+    if (track.bitsPerSample > 0) '${track.bitsPerSample}-bit',
+    if (track.sampleRate > 0) _formatSampleRate(track.sampleRate),
+  ];
+  return parts.join(' · ');
+}
+
+String _formatSampleRate(int sampleRate) {
+  if (sampleRate < 1000) return '$sampleRate Hz';
+
+  final kilohertz = sampleRate / 1000;
+  return kilohertz == kilohertz.roundToDouble()
+      ? '${kilohertz.toInt()} kHz'
+      : '${kilohertz.toStringAsFixed(1)} kHz';
 }
 
 _PlaybackProgressSelection _selectPlaybackProgress(PlaybackState state) {

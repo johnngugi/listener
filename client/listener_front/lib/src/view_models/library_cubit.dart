@@ -181,7 +181,9 @@ List<model_track.Track> mapTracks(pb.PbList<grpc.Track> tracks) {
       plays: '0',
       artworkId: value.hasArtworkId() ? value.artworkId.toInt() : null,
       durationMilliseconds: value.durationMs.toInt(),
+      codec: value.codec,
       sampleRate: value.sampleRate,
+      bitsPerSample: value.bitsPerSample,
     );
 
     store.add(track);

@@ -8,11 +8,13 @@ import 'package:ffi/ffi.dart';
 import 'package:listener_engine/src/audio_output_device.dart';
 import 'package:listener_engine/src/bindings.dart';
 import 'package:listener_engine/src/playback_engine_event.dart';
+import 'package:listener_engine/src/software_volume.dart';
 
 export 'src/audio_output_device.dart';
 export 'src/playback_engine_event.dart';
+export 'src/software_volume.dart';
 
-const _listenerEngineAbiVersion = 1;
+const _listenerEngineAbiVersion = 2;
 
 enum ListenerStatus {
   ok(0),
@@ -51,6 +53,8 @@ abstract interface class PlaybackEngine {
   ListenerStatus selectOutputDevice(String? deviceId);
 
   ListenerStatus configureOutput(AudioOutputConfiguration configuration);
+
+  ListenerStatus setVolume(double volume);
 
   ListenerStatus startStream({
     required String playbackId,
@@ -227,6 +231,16 @@ final class ListenerEngine implements PlaybackEngine {
     } finally {
       calloc.free(nativeConfiguration);
     }
+  }
+
+  @override
+  ListenerStatus setVolume(double volume) {
+    if (_closed) {
+      throw StateError('ListenerEngine is closed');
+    }
+
+    final gain = SoftwareVolume.linearGain(volume);
+    return ListenerStatus.fromCode(listenerEngineSetGain(_engine, gain));
   }
 
   @override

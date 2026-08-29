@@ -45,6 +45,54 @@ class PlaybackCubit extends Cubit<PlaybackState> {
 
   int _cuedStartFrame = 0;
 
+  double _volumeBeforeMute = 1;
+
+  void setVolume(double volume) {
+    if (!volume.isFinite || volume < 0 || volume > 1) {
+      throw RangeError.range(volume, 0, 1, 'volume');
+    }
+    if (state.volumeMode != VolumeMode.software) return;
+
+    final status = _engine.setVolume(volume);
+    if (status != ListenerStatus.ok) {
+      emit(
+        state.copyWith(
+          errorMessage: 'Unable to set software volume: ${status.name}',
+        ),
+      );
+      return;
+    }
+
+    if (volume > 0) _volumeBeforeMute = volume;
+    emit(state.copyWith(volume: volume));
+  }
+
+  void setVolumeMode(VolumeMode mode) {
+    if (mode == state.volumeMode) return;
+
+    final effectiveVolume = mode == VolumeMode.fixed ? 1.0 : state.volume;
+    final status = _engine.setVolume(effectiveVolume);
+    if (status != ListenerStatus.ok) {
+      emit(
+        state.copyWith(
+          errorMessage: 'Unable to change volume mode: ${status.name}',
+        ),
+      );
+      return;
+    }
+    emit(state.copyWith(volumeMode: mode));
+  }
+
+  void toggleMute() {
+    if (state.volumeMode != VolumeMode.software) return;
+    if (state.volume > 0) {
+      _volumeBeforeMute = state.volume;
+      setVolume(0);
+    } else {
+      setVolume(_volumeBeforeMute);
+    }
+  }
+
   Future<void> play({Track? selectedTrack, List<Track>? queueTracks}) async {
     if (_isSwitchingTrack) return;
 
@@ -67,6 +115,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
           PlaybackState(
             queue: state.queue,
             status: PlaybackStatus.error,
+            volume: state.volume,
+            volumeMode: state.volumeMode,
             errorMessage: 'Select a track to play',
           ),
         );
@@ -79,9 +129,11 @@ class PlaybackCubit extends Cubit<PlaybackState> {
     final track = queue?.currentTrack;
     if (track == null) {
       emit(
-        const PlaybackState(
+        PlaybackState(
           queue: null,
           status: PlaybackStatus.error,
+          volume: state.volume,
+          volumeMode: state.volumeMode,
           errorMessage: 'Select a track to play',
         ),
       );
@@ -101,6 +153,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
           queue: queue,
           status: PlaybackStatus.starting,
           currentFrame: requestedStartFrame,
+          volume: state.volume,
+          volumeMode: state.volumeMode,
         ),
       );
 
@@ -127,6 +181,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
           queue: queue,
           status: PlaybackStatus.playing,
           currentFrame: requestedStartFrame,
+          volume: state.volume,
+          volumeMode: state.volumeMode,
         ),
       );
       _startPositionPolling();
@@ -143,6 +199,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         PlaybackState(
           queue: state.queue,
           status: PlaybackStatus.error,
+          volume: state.volume,
+          volumeMode: state.volumeMode,
           errorMessage: error.toString(),
         ),
       );
@@ -156,7 +214,14 @@ class PlaybackCubit extends Cubit<PlaybackState> {
     _cuedStartFrame = 0;
     final playbackId = _playbackId;
     if (playbackId == null) {
-      emit(PlaybackState(queue: state.queue, status: PlaybackStatus.stopped));
+      emit(
+        PlaybackState(
+          queue: state.queue,
+          status: PlaybackStatus.stopped,
+          volume: state.volume,
+          volumeMode: state.volumeMode,
+        ),
+      );
       return;
     }
     _playbackId = null;
@@ -168,12 +233,21 @@ class PlaybackCubit extends Cubit<PlaybackState> {
       }
 
       await _control.stop(control.StopRequest(playbackId: playbackId));
-      emit(PlaybackState(queue: state.queue, status: PlaybackStatus.stopped));
+      emit(
+        PlaybackState(
+          queue: state.queue,
+          status: PlaybackStatus.stopped,
+          volume: state.volume,
+          volumeMode: state.volumeMode,
+        ),
+      );
     } catch (error) {
       emit(
         PlaybackState(
           queue: state.queue,
           status: PlaybackStatus.error,
+          volume: state.volume,
+          volumeMode: state.volumeMode,
           errorMessage: error.toString(),
         ),
       );
@@ -200,6 +274,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         PlaybackState(
           queue: state.queue,
           status: PlaybackStatus.error,
+          volume: state.volume,
+          volumeMode: state.volumeMode,
           errorMessage: error.toString(),
         ),
       );
@@ -225,6 +301,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
         PlaybackState(
           queue: state.queue,
           status: PlaybackStatus.error,
+          volume: state.volume,
+          volumeMode: state.volumeMode,
           errorMessage: error.toString(),
         ),
       );
@@ -293,6 +371,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
           queue: state.queue,
           status: PlaybackStatus.error,
           currentFrame: state.currentFrame,
+          volume: state.volume,
+          volumeMode: state.volumeMode,
           errorMessage: error.toString(),
         ),
       );
@@ -353,6 +433,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
           queue: state.queue,
           status: PlaybackStatus.cued,
           currentFrame: position.frame,
+          volume: state.volume,
+          volumeMode: state.volumeMode,
         ),
       );
 
@@ -422,6 +504,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
       PlaybackState(
         queue: state.queue,
         status: PlaybackStatus.error,
+        volume: state.volume,
+        volumeMode: state.volumeMode,
         errorMessage: 'Audio receiver failed: ${status.name}',
       ),
     );
@@ -454,6 +538,8 @@ class PlaybackCubit extends Cubit<PlaybackState> {
               PlaybackState(
                 queue: null,
                 status: PlaybackStatus.error,
+                volume: state.volume,
+                volumeMode: state.volumeMode,
                 errorMessage: 'Engine cleanup failed: ${status.name}',
               ),
             );
@@ -462,7 +548,14 @@ class PlaybackCubit extends Cubit<PlaybackState> {
       }
     }
 
-    emit(PlaybackState(queue: state.queue, status: PlaybackStatus.stopped));
+    emit(
+      PlaybackState(
+        queue: state.queue,
+        status: PlaybackStatus.stopped,
+        volume: state.volume,
+        volumeMode: state.volumeMode,
+      ),
+    );
 
     try {
       await _control.stop(control.StopRequest(playbackId: playbackId));

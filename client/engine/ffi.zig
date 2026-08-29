@@ -3,13 +3,14 @@ const lstn = @import("lstn/client.zig");
 const protocol = @import("lstn_protocol");
 const backend = @import("audio_backend");
 const ring_buffer = @import("audio_ring_buffer");
+const gain = @import("audio_gain");
 const selected_output = @import("selected_output");
 const stdout = @import("stdout");
 const bonjour = @import("bonjour.zig");
 const playback_event = @import("playback_event.zig");
 
 pub export fn listener_engine_abi_version() u32 {
-    return 1;
+    return 2;
 }
 
 pub export fn listener_engine_create() ?*Engine {
@@ -106,6 +107,15 @@ pub export fn listener_engine_resume(engine_ptr: ?*Engine) ListenerStatus {
         return status_from_error(err);
     };
 
+    return .ok;
+}
+
+pub export fn listener_engine_set_gain(
+    engine_ptr: ?*Engine,
+    gain_value: f64,
+) ListenerStatus {
+    const engine = engine_ptr orelse return .null_engine;
+    engine.setGain(gain_value) catch |err| return status_from_error(err);
     return .ok;
 }
 
@@ -324,6 +334,8 @@ const Engine = struct {
     audio_backend: backend.OutputBackend,
     active_stream: ?lstn.StartedStream = null,
     playback_buffer: ?ring_buffer.SharedPcmRingBuffer = null,
+    gain_stage: ?gain.GainStage = null,
+    software_gain: f64 = 1,
     receive_thread: ?std.Thread = null,
     receiver_state: ?*ReceiverState = null,
     connection_host: ?[]u8 = null,
@@ -364,6 +376,7 @@ const Engine = struct {
     pub fn selectOutputDevice(self: *Engine, device_id: ?[]const u8) !void {
         if (self.active_stream != null or
             self.playback_buffer != null or
+            self.gain_stage != null or
             self.receive_thread != null or
             self.receiver_state != null)
         {
@@ -378,6 +391,7 @@ const Engine = struct {
     ) !void {
         if (self.active_stream != null or
             self.playback_buffer != null or
+            self.gain_stage != null or
             self.receive_thread != null or
             self.receiver_state != null)
         {
@@ -386,9 +400,19 @@ const Engine = struct {
         try self.audio_backend.configure(configuration);
     }
 
+    pub fn setGain(self: *Engine, gain_value: f64) !void {
+        if (!std.math.isFinite(gain_value) or gain_value < 0 or gain_value > 1) {
+            return error.InvalidGain;
+        }
+
+        self.software_gain = gain_value;
+        if (self.gain_stage) |*stage| try stage.setGain(gain_value);
+    }
+
     pub fn startStream(self: *Engine, message: protocol.StartStream) !void {
         if (self.active_stream != null or
             self.playback_buffer != null or
+            self.gain_stage != null or
             self.receive_thread != null or
             self.receiver_state != null)
         {
@@ -443,9 +467,16 @@ const Engine = struct {
             self.playback_buffer = null;
         }
 
-        try self.audio_backend.open(
+        self.gain_stage = gain.GainStage.init(
             output_format,
             self.playback_buffer.?.outputSource(),
+        );
+        errdefer self.gain_stage = null;
+        try self.gain_stage.?.setGain(self.software_gain);
+
+        try self.audio_backend.open(
+            output_format,
+            self.gain_stage.?.outputSource(),
         );
         errdefer self.audio_backend.close();
 
@@ -551,6 +582,7 @@ const Engine = struct {
 
         self.audio_backend.stop() catch {};
         self.audio_backend.close();
+        self.gain_stage = null;
 
         if (self.playback_buffer) |*buffer| {
             buffer.deinit();
@@ -669,6 +701,7 @@ const Engine = struct {
 
         self.audio_backend.stop() catch {};
         self.audio_backend.close();
+        self.gain_stage = null;
         self.audio_backend.deinit();
 
         if (self.playback_buffer) |*buffer| {
@@ -926,6 +959,7 @@ fn status_from_error(err: anyerror) ListenerStatus {
     return switch (err) {
         error.AlreadyConnected => .already_connected,
         error.InvalidPlaybackId,
+        error.InvalidGain,
         error.InvalidOutputDeviceId,
         error.OutputDeviceNotFound,
         error.NotAnOutputDevice,
@@ -1054,6 +1088,30 @@ test "portable output configuration is forwarded to the backend" {
     );
 }
 
+test "software gain validates and persists without an active stream" {
+    const allocator = std.testing.allocator;
+    var engine = try Engine.init(allocator);
+    defer engine.deinit();
+
+    try std.testing.expectEqual(
+        ListenerStatus.null_engine,
+        listener_engine_set_gain(null, 0.5),
+    );
+    try std.testing.expectEqual(
+        ListenerStatus.invalid_argument,
+        listener_engine_set_gain(&engine, -0.1),
+    );
+    try std.testing.expectEqual(
+        ListenerStatus.invalid_argument,
+        listener_engine_set_gain(&engine, std.math.nan(f64)),
+    );
+    try std.testing.expectEqual(
+        ListenerStatus.ok,
+        listener_engine_set_gain(&engine, 0.25),
+    );
+    try std.testing.expectEqual(@as(f64, 0.25), engine.software_gain);
+}
+
 test "output device selection validates IDs and can restore the default" {
     const allocator = std.testing.allocator;
     var engine = try Engine.init(allocator);
@@ -1159,6 +1217,7 @@ test "receiver failure during startup is returned and fully cleaned up" {
     try std.testing.expect(engine.lstn_connection == null);
     try std.testing.expect(engine.active_stream == null);
     try std.testing.expect(engine.playback_buffer == null);
+    try std.testing.expect(engine.gain_stage == null);
     try std.testing.expect(engine.receive_thread == null);
     try std.testing.expect(engine.receiver_state == null);
 
@@ -1208,6 +1267,7 @@ test "output open failure reconnects before the next stream" {
     try std.testing.expect(engine.lstn_connection == null);
     try std.testing.expect(engine.active_stream == null);
     try std.testing.expect(engine.playback_buffer == null);
+    try std.testing.expect(engine.gain_stage == null);
 
     try engine.startStream(.{
         .requested_start_frame = 0,
@@ -1439,6 +1499,7 @@ test "stopping after a playback disconnect is successful local cleanup" {
     try std.testing.expect(engine.lstn_connection == null);
     try std.testing.expect(engine.active_stream == null);
     try std.testing.expect(engine.playback_buffer == null);
+    try std.testing.expect(engine.gain_stage == null);
     try std.testing.expect(engine.receive_thread == null);
     try std.testing.expect(engine.receiver_state == null);
 

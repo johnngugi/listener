@@ -27,7 +27,9 @@ class Track extends Equatable {
     required this.dateAdded,
     required this.plays,
     required this.durationMilliseconds,
+    required this.codec,
     required this.sampleRate,
+    required this.bitsPerSample,
     this.favorite = false,
     this.hasBadge = false,
     this.artwork,
@@ -47,7 +49,9 @@ class Track extends Equatable {
   final Artwork? artwork;
   final int? artworkId;
   final int durationMilliseconds;
+  final String codec;
   final int sampleRate;
+  final int bitsPerSample;
 
   String formatMilliseconds() {
     int totalSeconds = durationMilliseconds ~/ 1000;
@@ -72,7 +76,9 @@ class Track extends Equatable {
     artwork,
     artworkId,
     durationMilliseconds,
+    codec,
     sampleRate,
+    bitsPerSample,
   ];
 }
 

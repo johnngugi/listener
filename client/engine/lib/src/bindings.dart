@@ -159,6 +159,15 @@ external int listenerEngineConfigureOutput(
   ffi.Pointer<NativeOutputConfiguration> configuration,
 );
 
+@ffi.Native<ffi.Uint32 Function(ffi.Pointer<NativeEngine>, ffi.Double)>(
+  symbol: 'listener_engine_set_gain',
+  assetId: listenerEngineAssetId,
+)
+external int listenerEngineSetGain(
+  ffi.Pointer<NativeEngine> engine,
+  double gain,
+);
+
 @ffi.Native<ffi.Size Function(ffi.Pointer<NativeOutputDeviceSnapshot>)>(
   symbol: 'listener_output_device_snapshot_count',
   assetId: listenerEngineAssetId,

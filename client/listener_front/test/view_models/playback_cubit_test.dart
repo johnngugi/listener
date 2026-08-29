@@ -204,6 +204,55 @@ void main() {
         await cubit.close();
       },
     );
+
+    test('sets, mutes, restores, and preserves software volume', () async {
+      final engine = _FakePlaybackEngine();
+      final cubit = PlaybackCubit.withDependencies(
+        engine,
+        _FakePlaybackControl(),
+      );
+
+      expect(cubit.state.volumeMode, VolumeMode.fixed);
+      expect(cubit.state.volume, 1);
+
+      cubit.setVolumeMode(VolumeMode.software);
+      cubit.setVolume(0.65);
+      expect(cubit.state.volume, 0.65);
+
+      cubit.toggleMute();
+      expect(cubit.state.volume, 0);
+
+      cubit.toggleMute();
+      expect(cubit.state.volume, 0.65);
+
+      await cubit.play(selectedTrack: _track(1));
+      await cubit.stop();
+
+      expect(cubit.state.volume, 0.65);
+      expect(cubit.state.volumeMode, VolumeMode.software);
+      expect(engine.volumes, [1, 0.65, 0, 0.65]);
+      await cubit.close();
+    });
+
+    test('fixed output forces unity and remembers software volume', () async {
+      final engine = _FakePlaybackEngine();
+      final cubit = PlaybackCubit.withDependencies(
+        engine,
+        _FakePlaybackControl(),
+      );
+
+      cubit.setVolumeMode(VolumeMode.software);
+      cubit.setVolume(0.4);
+      cubit.setVolumeMode(VolumeMode.fixed);
+
+      expect(cubit.state.volumeMode, VolumeMode.fixed);
+      expect(cubit.state.volume, 0.4);
+      expect(engine.volumes, [1, 0.4, 1]);
+
+      cubit.setVolumeMode(VolumeMode.software);
+      expect(engine.volumes, [1, 0.4, 1, 0.4]);
+      await cubit.close();
+    });
   });
 }
 
@@ -231,7 +280,9 @@ Track _track(int number) {
     dateAdded: 'Today',
     plays: '0',
     durationMilliseconds: 180000,
+    codec: 'flac',
     sampleRate: 1000,
+    bitsPerSample: 24,
   );
 }
 
@@ -258,12 +309,14 @@ final class _FakePlaybackEngine implements PlaybackEngine {
   final List<int> requestedStartFrames = [];
   final List<String?> selectedDeviceIds = [];
   final List<AudioOutputConfiguration> configuredOutputs = [];
+  final List<double> volumes = [];
   int stopCallCount = 0;
   int currentFrameCallCount = 0;
   int currentFrameValue = 0;
   ListenerStatus seekStatus = ListenerStatus.ok;
   ListenerStatus selectOutputStatus = ListenerStatus.ok;
   ListenerStatus configureOutputStatus = ListenerStatus.ok;
+  ListenerStatus setVolumeStatus = ListenerStatus.ok;
   final List<int> soughtFrames = [];
 
   @override
@@ -308,6 +361,12 @@ final class _FakePlaybackEngine implements PlaybackEngine {
   ListenerStatus seek(int targetFrame) {
     soughtFrames.add(targetFrame);
     return seekStatus;
+  }
+
+  @override
+  ListenerStatus setVolume(double volume) {
+    volumes.add(volume);
+    return setVolumeStatus;
   }
 
   @override

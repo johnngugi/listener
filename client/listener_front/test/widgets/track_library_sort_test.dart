@@ -200,5 +200,7 @@ const _responsiveTrack = Track(
   dateAdded: 'Today',
   plays: '120',
   durationMilliseconds: 245000,
+  codec: 'flac',
   sampleRate: 48000,
+  bitsPerSample: 24,
 );

@@ -20,7 +20,9 @@ void main() {
       engine,
       _FakePlaybackControl(),
     );
+    final outputCubit = OutputDeviceCubit(engine, cubit);
     addTearDown(cubit.close);
+    addTearDown(outputCubit.close);
     await cubit.play(selectedTrack: _track);
 
     try {
@@ -31,8 +33,11 @@ void main() {
               alignment: Alignment.bottomLeft,
               child: SizedBox(
                 width: 700,
-                child: BlocProvider.value(
-                  value: cubit,
+                child: MultiBlocProvider(
+                  providers: [
+                    BlocProvider.value(value: cubit),
+                    BlocProvider.value(value: outputCubit),
+                  ],
                   child: const NowPlayingBar(),
                 ),
               ),
@@ -108,6 +113,47 @@ void main() {
     expect(find.byType(Slider), findsNothing);
   });
 
+  testWidgets('shows the current track audio format', (tester) async {
+    final engine = _FakePlaybackEngine();
+    final cubit = PlaybackCubit.withDependencies(
+      engine,
+      _FakePlaybackControl(),
+    );
+    final outputCubit = OutputDeviceCubit(engine, cubit);
+    addTearDown(cubit.close);
+    addTearDown(outputCubit.close);
+    await cubit.play(selectedTrack: _hiResTrack);
+
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.bottomLeft,
+              child: SizedBox(
+                width: 700,
+                child: MultiBlocProvider(
+                  providers: [
+                    BlocProvider.value(value: cubit),
+                    BlocProvider.value(value: outputCubit),
+                  ],
+                  child: const NowPlayingBar(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byKey(const Key('now-playing-format')), findsOneWidget);
+      expect(find.text('FLAC · 24-bit · 96 kHz'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await cubit.pause();
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+  });
+
   testWidgets('updates elapsed time while scrubbing and seeks on release', (
     tester,
   ) async {
@@ -140,6 +186,148 @@ void main() {
       await cubit.pause();
       await tester.pumpWidget(const SizedBox.shrink());
     }
+  });
+
+  testWidgets('opens compact software volume and updates the engine', (
+    tester,
+  ) async {
+    final engine = _FakePlaybackEngine();
+    final cubit = PlaybackCubit.withDependencies(
+      engine,
+      _FakePlaybackControl(),
+    );
+    final outputCubit = OutputDeviceCubit(engine, cubit);
+    addTearDown(cubit.close);
+    addTearDown(outputCubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomLeft,
+            child: SizedBox(
+              width: 700,
+              child: MultiBlocProvider(
+                providers: [
+                  BlocProvider.value(value: cubit),
+                  BlocProvider.value(value: outputCubit),
+                ],
+                child: const NowPlayingBar(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('signal-path-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Signal path'), findsWidgets);
+    final softwareMode = find.byKey(const Key('software-volume-mode'));
+    await tester.scrollUntilVisible(
+      softwareMode,
+      180,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(softwareMode);
+    await tester.pumpAndSettle();
+
+    final slider = tester.widget<Slider>(
+      find.byKey(const Key('software-volume-slider')),
+    );
+    slider.onChanged?.call(0.5);
+    await tester.pump();
+
+    expect(cubit.state.volume, 0.5);
+    expect(engine.volumes, [1, 0.5]);
+    expect(find.byTooltip('Mute'), findsOneWidget);
+  });
+
+  testWidgets('explains bit-perfect and processed signal paths', (
+    tester,
+  ) async {
+    final engine = _FakePlaybackEngine(
+      devices: const [
+        AudioOutputDevice(
+          id: 'usb-dac',
+          name: 'Reference DAC',
+          isDefault: true,
+          capabilities: AudioOutputCapabilities(supportsExclusiveMode: true),
+        ),
+      ],
+    );
+    final cubit = PlaybackCubit.withDependencies(
+      engine,
+      _FakePlaybackControl(),
+    );
+    final outputCubit = OutputDeviceCubit(engine, cubit);
+    addTearDown(cubit.close);
+    addTearDown(outputCubit.close);
+
+    expect(await outputCubit.setExclusiveMode(true), isTrue);
+    await cubit.play(selectedTrack: _hiResTrack);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomLeft,
+            child: SizedBox(
+              width: 700,
+              child: MultiBlocProvider(
+                providers: [
+                  BlocProvider.value(value: cubit),
+                  BlocProvider.value(value: outputCubit),
+                ],
+                child: const NowPlayingBar(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Bit-perfect'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('signal-path-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('FLAC · 24-bit · 96 kHz'), findsWidgets);
+    expect(find.text('Reference DAC · Exclusive'), findsOneWidget);
+    expect(find.text('Fixed output · 0 dB'), findsOneWidget);
+
+    final softwareMode = find.byKey(const Key('software-volume-mode'));
+    await tester.scrollUntilVisible(
+      softwareMode,
+      180,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(softwareMode);
+    await tester.pumpAndSettle();
+    expect(cubit.state.volumeMode, VolumeMode.software);
+    final slider = tester.widget<Slider>(
+      find.byKey(const Key('software-volume-slider')),
+    );
+    expect(slider.onChanged, isNotNull);
+    slider.onChanged?.call(0.5);
+    await tester.pump();
+    expect(cubit.state.volume, 0.5);
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('signal-path-status')),
+      -180,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.pump();
+
+    expect(find.text('Not bit-perfect'), findsWidgets);
+    expect(
+      find.text('Software volume is changing the PCM samples.'),
+      findsOneWidget,
+    );
+
+    await cubit.pause();
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('selects an external output and restores system output', (
@@ -274,7 +462,24 @@ const _track = Track(
   dateAdded: 'Today',
   plays: '0',
   durationMilliseconds: 120000,
+  codec: 'flac',
   sampleRate: 1000,
+  bitsPerSample: 24,
+);
+
+const _hiResTrack = Track(
+  id: 'track-hi-res',
+  number: '2',
+  title: 'High Resolution Track',
+  artist: 'Artist',
+  album: 'Album',
+  releaseDate: '2026',
+  dateAdded: 'Today',
+  plays: '0',
+  durationMilliseconds: 120000,
+  codec: 'flac',
+  sampleRate: 96000,
+  bitsPerSample: 24,
 );
 
 final class _FakePlaybackEngine implements PlaybackEngine {
@@ -283,6 +488,7 @@ final class _FakePlaybackEngine implements PlaybackEngine {
   final List<AudioOutputDevice> devices;
   final List<String?> selectedDeviceIds = [];
   final List<AudioOutputConfiguration> configuredOutputs = [];
+  final List<double> volumes = [];
 
   @override
   List<AudioOutputDevice> outputDevices() => devices;
@@ -340,6 +546,12 @@ final class _FakePlaybackEngine implements PlaybackEngine {
   @override
   ListenerStatus seek(int targetFrame) {
     soughtFrames.add(targetFrame);
+    return ListenerStatus.ok;
+  }
+
+  @override
+  ListenerStatus setVolume(double volume) {
+    volumes.add(volume);
     return ListenerStatus.ok;
   }
 

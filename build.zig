@@ -28,6 +28,13 @@ pub fn build(b: *std.Build) void {
     });
     audio_ring_buffer.addImport("audio_backend", audio_backend);
 
+    const audio_gain = b.createModule(.{
+        .root_source_file = b.path("client/engine/output/gain.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    audio_gain.addImport("audio_backend", audio_backend);
+
     const selected_output = b.createModule(.{
         .root_source_file = b.path("client/engine/output/test.zig"),
         .target = target,
@@ -43,6 +50,7 @@ pub fn build(b: *std.Build) void {
     client_engine.addImport("lstn_protocol", lstn_protocol);
     client_engine.addImport("audio_backend", audio_backend);
     client_engine.addImport("audio_ring_buffer", audio_ring_buffer);
+    client_engine.addImport("audio_gain", audio_gain);
     client_engine.addImport("selected_output", selected_output);
     client_engine.addImport("stdout", stdout);
 
