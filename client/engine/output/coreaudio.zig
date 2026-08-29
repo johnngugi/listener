@@ -32,6 +32,13 @@ const AudioObjectPropertyAddress = extern struct {
     mElement: AudioObjectPropertyElement,
 };
 
+const AudioObjectPropertyListenerProc = *const fn (
+    in_object_id: AudioObjectID,
+    in_number_addresses: c.UInt32,
+    in_addresses: [*]const AudioObjectPropertyAddress,
+    in_client_data: ?*anyopaque,
+) callconv(.c) c.OSStatus;
+
 const AudioComponentDescription = extern struct {
     componentType: c.OSType,
     componentSubType: c.OSType,
@@ -117,6 +124,20 @@ extern fn AudioObjectSetPropertyData(
     in_data: *const anyopaque,
 ) callconv(.c) c.OSStatus;
 
+extern fn AudioObjectAddPropertyListener(
+    in_object_id: AudioObjectID,
+    in_address: *const AudioObjectPropertyAddress,
+    in_listener: AudioObjectPropertyListenerProc,
+    in_client_data: ?*anyopaque,
+) callconv(.c) c.OSStatus;
+
+extern fn AudioObjectRemovePropertyListener(
+    in_object_id: AudioObjectID,
+    in_address: *const AudioObjectPropertyAddress,
+    in_listener: AudioObjectPropertyListenerProc,
+    in_client_data: ?*anyopaque,
+) callconv(.c) c.OSStatus;
+
 extern fn CFRelease(cf: *const anyopaque) callconv(.c) void;
 extern fn CFStringGetLength(string: *const anyopaque) callconv(.c) CFIndex;
 extern fn CFStringGetMaximumSizeForEncoding(
@@ -157,10 +178,12 @@ const kAudioHardwarePropertyTranslateUIDToDevice = fourCC("uidd");
 const kAudioDevicePropertyDeviceUID = fourCC("uid ");
 const kAudioDevicePropertyStreamConfiguration = fourCC("slay");
 const kAudioDevicePropertyHogMode = fourCC("oink");
+const kAudioDevicePropertyNominalSampleRate = fourCC("nsrt");
 const kCFStringEncodingUTF8: CFStringEncoding = 0x08000100;
 
 extern fn getenv(name: [*:0]const u8) callconv(.c) ?[*:0]u8;
 extern fn getpid() callconv(.c) c_int;
+extern fn usleep(microseconds: c_uint) callconv(.c) c_int;
 
 const State = struct {
     allocator: std.mem.Allocator,
@@ -170,6 +193,7 @@ const State = struct {
     selected_device_id: ?[]u8 = null,
     configuration: backend.OutputConfiguration = .{},
     exclusive_device_id: AudioDeviceID = kAudioObjectUnknown,
+    original_device_sample_rate: ?c.Float64 = null,
 };
 
 const vtable = backend.VTable{
@@ -344,6 +368,117 @@ fn releaseExclusiveAccess(device_id: AudioDeviceID) void {
         @sizeOf(c_int),
         &owner,
     );
+}
+
+fn nominalSampleRateAddress() AudioObjectPropertyAddress {
+    return .{
+        .mSelector = kAudioDevicePropertyNominalSampleRate,
+        .mScope = kAudioObjectPropertyScopeGlobal,
+        .mElement = kAudioObjectPropertyElementMain,
+    };
+}
+
+fn deviceSampleRate(device_id: AudioDeviceID) !c.Float64 {
+    const address = nominalSampleRateAddress();
+    var sample_rate: c.Float64 = 0;
+    var data_size: c.UInt32 = @sizeOf(c.Float64);
+    try checkStatusFor("reading the DAC sample rate", AudioObjectGetPropertyData(
+        device_id,
+        &address,
+        0,
+        null,
+        &data_size,
+        &sample_rate,
+    ));
+    if (sample_rate <= 0) return error.InvalidSampleRate;
+    return sample_rate;
+}
+
+const SampleRateChange = struct {
+    notified: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+};
+
+fn sampleRateChanged(
+    _: AudioObjectID,
+    address_count: c.UInt32,
+    addresses: [*]const AudioObjectPropertyAddress,
+    context: ?*anyopaque,
+) callconv(.c) c.OSStatus {
+    const change: *SampleRateChange = @ptrCast(@alignCast(context orelse return c.noErr));
+    for (addresses[0..address_count]) |address| {
+        if (address.mSelector == kAudioDevicePropertyNominalSampleRate and
+            address.mScope == kAudioObjectPropertyScopeGlobal and
+            address.mElement == kAudioObjectPropertyElementMain)
+        {
+            change.notified.store(true, .release);
+            break;
+        }
+    }
+    return c.noErr;
+}
+
+fn setDeviceSampleRate(device_id: AudioDeviceID, sample_rate: c.Float64) !void {
+    if (sample_rate <= 0) return error.InvalidSampleRate;
+
+    const address = nominalSampleRateAddress();
+    var is_settable: u8 = 0;
+    try checkStatusFor("checking whether the DAC sample rate is settable", AudioObjectIsPropertySettable(
+        device_id,
+        &address,
+        &is_settable,
+    ));
+    if (is_settable == 0) return error.UnsupportedSampleRate;
+
+    var change: SampleRateChange = .{};
+    try checkStatusFor("registering the DAC sample-rate listener", AudioObjectAddPropertyListener(
+        device_id,
+        &address,
+        &sampleRateChanged,
+        &change,
+    ));
+    defer {
+        const status = AudioObjectRemovePropertyListener(
+            device_id,
+            &address,
+            &sampleRateChanged,
+            &change,
+        );
+        if (status != c.noErr) {
+            stdout.printGlobal(
+                "removing the DAC sample-rate listener failed with OSStatus {d}\n",
+                .{status},
+            );
+        }
+    }
+
+    try checkStatusFor("setting the DAC sample rate", AudioObjectSetPropertyData(
+        device_id,
+        &address,
+        0,
+        null,
+        @sizeOf(c.Float64),
+        &sample_rate,
+    ));
+
+    // HAL property changes are asynchronous. Do not configure or initialize
+    // the Audio Unit until CoreAudio has notified us that the device finished
+    // applying the requested hardware rate.
+    for (0..2_000) |attempt| {
+        if (attempt == 0 or change.notified.swap(false, .acq_rel)) {
+            if (try deviceSampleRate(device_id) == sample_rate) return;
+        }
+        if (usleep(1_000) != 0) return error.SampleRateChangeWaitFailed;
+    }
+    return error.SampleRateChangeTimedOut;
+}
+
+fn restoreDeviceSampleRate(state: *State) void {
+    const original_sample_rate = state.original_device_sample_rate orelse return;
+    _ = setDeviceSampleRate(
+        state.exclusive_device_id,
+        original_sample_rate,
+    ) catch {};
+    state.original_device_sample_rate = null;
 }
 
 fn selectDevice(context: *anyopaque, device_id: ?[]const u8) !void {
@@ -548,6 +683,11 @@ fn open(
     }
 
     var acquired_exclusive_access = false;
+    errdefer if (acquired_exclusive_access) {
+        restoreDeviceSampleRate(state);
+        releaseExclusiveAccess(state.exclusive_device_id);
+        state.exclusive_device_id = kAudioObjectUnknown;
+    };
     if (state.configuration.exclusive_mode) {
         if (!supportsExclusiveMode(device_id)) {
             return error.UnsupportedOutputConfiguration;
@@ -555,11 +695,14 @@ fn open(
         try acquireExclusiveAccess(device_id);
         state.exclusive_device_id = device_id;
         acquired_exclusive_access = true;
+
+        const original_sample_rate = try deviceSampleRate(device_id);
+        const source_sample_rate: c.Float64 = @floatFromInt(output_format.sample_rate);
+        if (original_sample_rate != source_sample_rate) {
+            try setDeviceSampleRate(device_id, source_sample_rate);
+            state.original_device_sample_rate = original_sample_rate;
+        }
     }
-    errdefer if (acquired_exclusive_access) {
-        releaseExclusiveAccess(state.exclusive_device_id);
-        state.exclusive_device_id = kAudioObjectUnknown;
-    };
     state.source = output_source;
     errdefer state.source = null;
 
@@ -577,12 +720,15 @@ fn open(
         return error.OutputComponentNotFound;
 
     var unit: AudioUnit = null;
-    try checkStatus(AudioComponentInstanceNew(component, &unit));
+    try checkStatusFor(
+        "creating the CoreAudio output unit",
+        AudioComponentInstanceNew(component, &unit),
+    );
     errdefer if (unit) |created_unit| {
         _ = AudioComponentInstanceDispose(created_unit);
     };
 
-    try checkStatus(AudioUnitSetProperty(
+    try checkStatusFor("selecting the CoreAudio output device", AudioUnitSetProperty(
         unit,
         kAudioOutputUnitProperty_CurrentDevice,
         kAudioUnitScope_Global,
@@ -591,7 +737,7 @@ fn open(
         @sizeOf(AudioDeviceID),
     ));
 
-    try checkStatus(AudioUnitSetProperty(
+    try checkStatusFor("setting the CoreAudio stream format", AudioUnitSetProperty(
         unit,
         kAudioUnitProperty_StreamFormat,
         kAudioUnitScope_Input,
@@ -605,7 +751,7 @@ fn open(
         .inputProcRefCon = state,
     };
 
-    try checkStatus(AudioUnitSetProperty(
+    try checkStatusFor("setting the CoreAudio render callback", AudioUnitSetProperty(
         unit,
         kAudioUnitProperty_SetRenderCallback,
         kAudioUnitScope_Input,
@@ -614,7 +760,7 @@ fn open(
         @sizeOf(AURenderCallbackStruct),
     ));
 
-    try checkStatus(AudioUnitInitialize(unit));
+    try checkStatusFor("initializing the CoreAudio output unit", AudioUnitInitialize(unit));
     state.output_unit = unit;
     state.output_started = false;
 }
@@ -687,6 +833,7 @@ fn close(context: *anyopaque) void {
     state.output_unit = null;
     state.output_started = false;
     state.source = null;
+    restoreDeviceSampleRate(state);
     releaseExclusiveAccess(state.exclusive_device_id);
     state.exclusive_device_id = kAudioObjectUnknown;
 }
@@ -792,8 +939,12 @@ fn renderSilence(
 }
 
 fn checkStatus(status: c.OSStatus) !void {
+    return checkStatusFor("CoreAudio call", status);
+}
+
+fn checkStatusFor(comptime operation: []const u8, status: c.OSStatus) !void {
     if (status == c.noErr) return;
-    stdout.printGlobal("CoreAudio call failed with OSStatus {d}\n", .{status});
+    stdout.printGlobal("{s} failed with OSStatus {d}\n", .{ operation, status });
     return error.CoreAudioCallFailed;
 }
 
@@ -838,6 +989,27 @@ test "makeStreamFormat builds high-aligned s24 in s32 PCM format" {
     try std.testing.expectEqual(@as(c.UInt32, 8), stream_format.mBytesPerPacket);
     try std.testing.expectEqual(@as(c.UInt32, 8), stream_format.mBytesPerFrame);
     try std.testing.expectEqual(@as(c.UInt32, 24), stream_format.mBitsPerChannel);
+}
+
+test "sample-rate listener recognizes nominal hardware-rate changes" {
+    var change: SampleRateChange = .{};
+    const unrelated_address = AudioObjectPropertyAddress{
+        .mSelector = kAudioDevicePropertyStreamConfiguration,
+        .mScope = kAudioObjectPropertyScopeGlobal,
+        .mElement = kAudioObjectPropertyElementMain,
+    };
+    try std.testing.expectEqual(
+        c.noErr,
+        sampleRateChanged(1, 1, @ptrCast(&unrelated_address), &change),
+    );
+    try std.testing.expect(!change.notified.load(.acquire));
+
+    const sample_rate_address = nominalSampleRateAddress();
+    try std.testing.expectEqual(
+        c.noErr,
+        sampleRateChanged(1, 1, @ptrCast(&sample_rate_address), &change),
+    );
+    try std.testing.expect(change.notified.load(.acquire));
 }
 
 test "renderSilence clears output buffers" {
