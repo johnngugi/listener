@@ -175,7 +175,9 @@ Responsibilities:
 
 Implement the macOS backend using ImageIO and CoreGraphics. Both embedded artwork and sidecar artwork must pass through the same interface.
 
-JPEG and PNG are required. WebP behavior must be covered by a fixture and documented according to the formats supported by the minimum macOS version.
+JPEG and PNG are required. The project's minimum supported macOS version is
+12.0, where ImageIO also decodes the WebP fixture. JPEG, PNG, and WebP inputs
+are therefore accepted; artwork requiring normalization is encoded as JPEG.
 
 ### Exit criteria
 

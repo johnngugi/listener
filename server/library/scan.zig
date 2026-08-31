@@ -74,7 +74,7 @@ pub fn scanLibrary(
                         allocator.free(full_path);
                         return error.TimestampOutOfRange;
                     };
-                    var metadata = track_info.read(allocator, full_path) catch |err| {
+                    var metadata = track_info.read(allocator, io, full_path) catch |err| {
                         allocator.free(full_path);
                         return err;
                     };
@@ -173,7 +173,7 @@ fn readSidecarArtwork(
                 &.{ absolute_dir_path, entry.name },
             );
             defer allocator.free(path);
-            if (try track_info.readImage(allocator, path)) |artwork| return artwork;
+            if (try track_info.readImage(allocator, io, path)) |artwork| return artwork;
         }
     }
 
