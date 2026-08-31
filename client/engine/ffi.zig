@@ -30,6 +30,13 @@ pub export fn listener_engine_destroy(engine_ptr: ?*Engine) void {
     allocator.destroy(engine);
 }
 
+/// Exposes the engine-owned output backend to Zig integration tests.
+/// This is not part of the exported C ABI.
+pub fn outputBackendForTesting(engine_ptr: ?*Engine) ?*backend.OutputBackend {
+    const engine = engine_ptr orelse return null;
+    return &engine.audio_backend;
+}
+
 pub export fn listener_engine_connect(
     engine_ptr: ?*Engine,
     host_ptr: [*]const u8,

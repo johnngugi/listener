@@ -366,3 +366,29 @@ test "sidecar artwork names are ranked case insensitively" {
     try std.testing.expect(sidecarRank("booklet.jpg") == null);
     try std.testing.expect(sidecarRank("cover.gif") == null);
 }
+
+test "sidecar artwork selection uses name then format ranking" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const jpeg = @embedFile("../testdata/fixtures/baseline-cover.jpg");
+    const png = @embedFile("../testdata/fixtures/baseline-cover.png");
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "folder.jpg", .data = jpeg });
+    try tmp.dir.writeFile(io, .{ .sub_path = "COVER.PNG", .data = png });
+    try tmp.dir.writeFile(io, .{ .sub_path = "cover.jpg", .data = jpeg });
+
+    var root_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buffer);
+    var artwork = (try readSidecarArtwork(
+        allocator,
+        io,
+        tmp.dir,
+        root_buffer[0..root_len],
+    )) orelse return error.ArtworkRejected;
+    defer artwork.deinit(allocator);
+
+    try std.testing.expectEqual(track_info.ArtworkFormat.jpeg, artwork.format);
+    try std.testing.expectEqualSlices(u8, jpeg, artwork.bytes);
+}
