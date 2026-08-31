@@ -528,3 +528,218 @@ fn validBitsPerSample(
 
     return sample_format.bits();
 }
+
+const DecodedFixture = struct {
+    pcm: []u8,
+    info: TrackInfo,
+
+    fn deinit(self: *DecodedFixture, allocator: std.mem.Allocator) void {
+        allocator.free(self.pcm);
+        self.* = undefined;
+    }
+};
+
+fn decodeFixture(
+    allocator: std.mem.Allocator,
+    encoded: []const u8,
+    chunk_size: usize,
+) !DecodedFixture {
+    std.debug.assert(chunk_size > 0);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "fixture.flac", .data = encoded });
+
+    var root_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(std.testing.io, &root_buffer);
+    const path = try std.fs.path.join(
+        allocator,
+        &.{ root_buffer[0..root_len], "fixture.flac" },
+    );
+    defer allocator.free(path);
+    const terminated_path = try allocator.dupeSentinel(u8, path, 0);
+    defer allocator.free(terminated_path);
+
+    var decoder = try AudioDecoder.open(allocator, terminated_path, .{});
+    defer decoder.deinit();
+
+    var pcm: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer pcm.deinit(allocator);
+    const buffer = try allocator.alloc(u8, chunk_size);
+    defer allocator.free(buffer);
+
+    var read_calls: usize = 0;
+    while (true) {
+        const result = try decoder.read(buffer);
+        read_calls += 1;
+        try std.testing.expectEqual(result.bytes / decoder.info.bytesPerFrame(), result.frames);
+        try pcm.appendSlice(allocator, buffer[0..result.bytes]);
+        if (result.end_of_stream) break;
+        if (read_calls > 100_000) return error.DecoderDidNotReachEndOfStream;
+    }
+
+    const after_eof = try decoder.read(buffer);
+    try std.testing.expectEqual(@as(usize, 0), after_eof.bytes);
+    try std.testing.expectEqual(@as(usize, 0), after_eof.frames);
+    try std.testing.expect(after_eof.end_of_stream);
+
+    return .{
+        .pcm = try pcm.toOwnedSlice(allocator),
+        .info = decoder.trackInfo(),
+    };
+}
+
+fn expectFixtureDecoded(
+    encoded: []const u8,
+    expected_pcm: []const u8,
+    chunk_size: usize,
+    expected_sample_rate: u32,
+    expected_channels: u32,
+    expected_valid_bits: u16,
+) !void {
+    var decoded = try decodeFixture(std.testing.allocator, encoded, chunk_size);
+    defer decoded.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualSlices(u8, expected_pcm, decoded.pcm);
+    try std.testing.expectEqual(expected_sample_rate, decoded.info.sample_rate);
+    try std.testing.expectEqual(expected_channels, decoded.info.channels);
+    try std.testing.expectEqual(expected_valid_bits, decoded.info.valid_bits_per_sample);
+    if (expected_pcm.len == 0) {
+        // FFmpeg reports an unknown duration for a valid zero-frame FLAC.
+        try std.testing.expectEqual(@as(?u64, null), decoded.info.duration_frames);
+    } else {
+        try std.testing.expectEqual(
+            @as(?u64, @intCast(expected_pcm.len / decoded.info.bytesPerFrame())),
+            decoded.info.duration_frames,
+        );
+    }
+}
+
+test "FFmpeg baseline decodes supported sample widths rates and channel counts exactly" {
+    try expectFixtureDecoded(
+        @embedFile("testdata/fixtures/strict-s16le-stereo.flac"),
+        @embedFile("testdata/fixtures/strict-s16le-stereo.expected.pcm"),
+        16,
+        44_100,
+        2,
+        16,
+    );
+    try expectFixtureDecoded(
+        @embedFile("testdata/fixtures/baseline-s16le-mono-22050.flac"),
+        @embedFile("testdata/fixtures/baseline-s16le-mono-22050.expected.pcm"),
+        6,
+        22_050,
+        1,
+        16,
+    );
+    try expectFixtureDecoded(
+        @embedFile("testdata/fixtures/strict-s24le-stereo.flac"),
+        @embedFile("testdata/fixtures/strict-s24le-stereo.expected-24in32.pcm"),
+        24,
+        96_000,
+        2,
+        24,
+    );
+}
+
+test "FFmpeg baseline handles empty one-frame and block-boundary streams" {
+    try expectFixtureDecoded(
+        @embedFile("testdata/fixtures/baseline-empty-s16le-stereo.flac"),
+        @embedFile("testdata/fixtures/baseline-empty-s16le-stereo.expected.pcm"),
+        4,
+        44_100,
+        2,
+        16,
+    );
+    try expectFixtureDecoded(
+        @embedFile("testdata/fixtures/baseline-one-frame-s16le-mono.flac"),
+        @embedFile("testdata/fixtures/baseline-one-frame-s16le-mono.expected.pcm"),
+        2,
+        48_000,
+        1,
+        16,
+    );
+    try expectFixtureDecoded(
+        @embedFile("testdata/fixtures/baseline-block-boundary-s16le-stereo.flac"),
+        @embedFile("testdata/fixtures/baseline-block-boundary-s16le-stereo.expected.pcm"),
+        18_432,
+        48_000,
+        2,
+        16,
+    );
+}
+
+test "FFmpeg baseline output is independent of caller read size" {
+    const encoded = @embedFile("testdata/fixtures/baseline-block-boundary-s16le-stereo.flac");
+    const expected = @embedFile("testdata/fixtures/baseline-block-boundary-s16le-stereo.expected.pcm");
+
+    // One frame, one decoded FLAC block, and more than one decoded block.
+    for ([_]usize{ 4, 18_432, 20_000 }) |chunk_size| {
+        var decoded = try decodeFixture(std.testing.allocator, encoded, chunk_size);
+        defer decoded.deinit(std.testing.allocator);
+        try std.testing.expectEqualSlices(u8, expected, decoded.pcm);
+    }
+}
+
+test "FFmpeg baseline seeks to frames boundaries final frame and EOF" {
+    const allocator = std.testing.allocator;
+    const encoded = @embedFile("testdata/fixtures/seekable-s16le-stereo.flac");
+    const expected = @embedFile("testdata/fixtures/seekable-s16le-stereo.expected.pcm");
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "fixture.flac", .data = encoded });
+    var root_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(std.testing.io, &root_buffer);
+    const path = try std.fs.path.join(allocator, &.{ root_buffer[0..root_len], "fixture.flac" });
+    defer allocator.free(path);
+    const terminated_path = try allocator.dupeSentinel(u8, path, 0);
+    defer allocator.free(terminated_path);
+
+    for ([_]u64{ 0, 4_608, 4_609, 6_000, 9_216, 11_024, 11_025 }) |target| {
+        var decoder = try AudioDecoder.open(allocator, terminated_path, .{});
+        defer decoder.deinit();
+        try decoder.seekToFrame(target);
+        const bytes_per_frame = decoder.trackInfo().bytesPerFrame();
+
+        var actual: std.ArrayListUnmanaged(u8) = .empty;
+        defer actual.deinit(allocator);
+        var buffer: [28]u8 = undefined;
+        while (true) {
+            const result = try decoder.read(&buffer);
+            try actual.appendSlice(allocator, buffer[0..result.bytes]);
+            if (result.end_of_stream) break;
+        }
+
+        const byte_offset: usize = @intCast(target * bytes_per_frame);
+        try std.testing.expectEqualSlices(u8, expected[byte_offset..], actual.items);
+    }
+
+    var boundary_decoder = try AudioDecoder.open(allocator, terminated_path, .{});
+    defer boundary_decoder.deinit();
+    // This records an FFmpeg demuxer edge case immediately before the first
+    // block boundary; the boundary itself and all later targets are exact.
+    try std.testing.expectError(error.SeekFailed, boundary_decoder.seekToFrame(4_607));
+    try std.testing.expectError(error.SeekOutOfRange, boundary_decoder.seekToFrame(11_026));
+}
+
+test "FFmpeg baseline rejects truncated and malformed input" {
+    const malformed = "fLaC\x80\xff\xff\xfftruncated";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "malformed.flac", .data = malformed });
+    var root_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(std.testing.io, &root_buffer);
+    const path = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ root_buffer[0..root_len], "malformed.flac" },
+    );
+    defer std.testing.allocator.free(path);
+    const terminated_path = try std.testing.allocator.dupeSentinel(u8, path, 0);
+    defer std.testing.allocator.free(terminated_path);
+
+    try std.testing.expectError(
+        error.CouldNotOpenInput,
+        AudioDecoder.open(std.testing.allocator, terminated_path, .{}),
+    );
+}

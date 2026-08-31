@@ -549,6 +549,7 @@ fn freeOptional(allocator: std.mem.Allocator, value: ?[]u8) void {
 test "parses track and disc numbers with optional totals" {
     try std.testing.expectEqual(@as(?u16, 3), parseNumber("3/12"));
     try std.testing.expectEqual(@as(?u16, 2), parseNumber(" 2 "));
+    try std.testing.expectEqual(@as(?u16, 7), parseNumber("7/9"));
     try std.testing.expectEqual(@as(?u16, null), parseNumber("unknown"));
     try std.testing.expectEqual(@as(?u16, null), parseNumber(null));
 }
@@ -663,5 +664,128 @@ test "reads technical information from a FLAC file" {
     try std.testing.expect(metadata.sample_rate > 0);
     try std.testing.expectEqual(@as(u8, 16), metadata.bits_per_sample);
     try std.testing.expect(metadata.duration_ms != null);
+    try std.testing.expect(metadata.title == null);
+    try std.testing.expect(metadata.track_artist == null);
+    try std.testing.expect(metadata.album_artist == null);
+    try std.testing.expect(metadata.album == null);
+    try std.testing.expect(metadata.track_number == null);
+    try std.testing.expect(metadata.disc_number == null);
+    try std.testing.expect(metadata.release_date == null);
     try std.testing.expect(metadata.artwork == null);
+}
+
+fn readFixtureMetadata(encoded: []const u8) !TrackMetadata {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "fixture.flac", .data = encoded });
+
+    var root_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(std.testing.io, &root_buffer);
+    const path = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ root_buffer[0..root_len], "fixture.flac" },
+    );
+    defer std.testing.allocator.free(path);
+    return read(std.testing.allocator, path);
+}
+
+fn readFixtureImage(encoded: []const u8, extension: []const u8) !?Artwork {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const name = try std.fmt.allocPrint(std.testing.allocator, "fixture.{s}", .{extension});
+    defer std.testing.allocator.free(name);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = name, .data = encoded });
+
+    var root_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(std.testing.io, &root_buffer);
+    const path = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ root_buffer[0..root_len], name },
+    );
+    defer std.testing.allocator.free(path);
+    return readImage(std.testing.allocator, path);
+}
+
+test "FFmpeg baseline preserves populated duplicated and mixed-case FLAC tags" {
+    var metadata = try readFixtureMetadata(
+        @embedFile("../testdata/fixtures/baseline-metadata.flac"),
+    );
+    defer metadata.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("Baseline Title", metadata.title.?);
+    try std.testing.expectEqualStrings("Track Artist", metadata.track_artist.?);
+    try std.testing.expectEqualStrings(
+        "Preferred Album Artist;Fallback Album Artist",
+        metadata.album_artist.?,
+    );
+    try std.testing.expectEqualStrings("Baseline Album", metadata.album.?);
+    try std.testing.expectEqual(@as(?u16, 3), metadata.track_number);
+    try std.testing.expectEqual(@as(?u16, 2), metadata.disc_number);
+    try std.testing.expectEqualStrings("2026-08-31", metadata.release_date.?);
+    try std.testing.expect(metadata.artwork == null);
+}
+
+test "FFmpeg baseline reads JPEG PNG and WebP sidecar artwork" {
+    const cases = .{
+        .{ @embedFile("../testdata/fixtures/baseline-cover.jpg"), "jpg", ArtworkFormat.jpeg },
+        .{ @embedFile("../testdata/fixtures/baseline-cover.png"), "png", ArtworkFormat.png },
+        .{ @embedFile("../testdata/fixtures/baseline-cover.webp"), "webp", ArtworkFormat.webp },
+    };
+
+    inline for (cases) |case| {
+        var artwork = (try readFixtureImage(case[0], case[1])) orelse
+            return error.ArtworkRejected;
+        defer artwork.deinit(std.testing.allocator);
+        try std.testing.expectEqual(case[2], artwork.format);
+        try std.testing.expectEqual(@as(u32, 4), artwork.width);
+        try std.testing.expectEqual(@as(u32, 2), artwork.height);
+        try std.testing.expectEqualSlices(u8, case[0], artwork.bytes);
+    }
+}
+
+test "FFmpeg baseline reads embedded JPEG PNG and WebP artwork" {
+    const cases = .{
+        .{ @embedFile("../testdata/fixtures/baseline-embedded-jpg.flac"), ArtworkFormat.jpeg },
+        .{ @embedFile("../testdata/fixtures/baseline-embedded-png.flac"), ArtworkFormat.png },
+        .{ @embedFile("../testdata/fixtures/baseline-embedded-webp.flac"), ArtworkFormat.webp },
+    };
+
+    inline for (cases) |case| {
+        var metadata = try readFixtureMetadata(case[0]);
+        defer metadata.deinit(std.testing.allocator);
+        const artwork = metadata.artwork orelse return error.ArtworkRejected;
+        try std.testing.expectEqual(case[1], artwork.format);
+        try std.testing.expectEqual(@as(u32, 4), artwork.width);
+        try std.testing.expectEqual(@as(u32, 2), artwork.height);
+    }
+}
+
+test "FFmpeg baseline rejects oversized truncated and malformed metadata and artwork" {
+    const claimed_oversized_metadata = "fLaC\x84\xff\xff\xfftruncated";
+    if (readFixtureMetadata(claimed_oversized_metadata)) |value| {
+        var metadata = value;
+        metadata.deinit(std.testing.allocator);
+        return error.ExpectedMetadataRejection;
+    } else |_| {}
+
+    try std.testing.expect((try readFixtureImage("not an image", "jpg")) == null);
+    try std.testing.expect((try readFixtureImage(
+        @embedFile("../testdata/fixtures/baseline-cover.png")[0..24],
+        "png",
+    )) == null);
+
+    var codec_parameters = c.avcodec_parameters_alloc() orelse return error.OutOfMemory;
+    defer c.avcodec_parameters_free(&codec_parameters);
+    codec_parameters.*.codec_type = c.AVMEDIA_TYPE_VIDEO;
+    codec_parameters.*.codec_id = c.AV_CODEC_ID_PNG;
+
+    var packet = c.av_packet_alloc() orelse return error.OutOfMemory;
+    defer c.av_packet_free(&packet);
+    packet.*.size = max_artwork_source_bytes + 1;
+    packet.*.data = null;
+    try std.testing.expect((try artworkFromPacket(
+        std.testing.allocator,
+        codec_parameters,
+        packet,
+    )) == null);
 }

@@ -29,3 +29,29 @@ ffmpeg -hide_banner -loglevel error -y \
 
 Do not overwrite the expected PCM files unless the intended decoder contract has
 also changed. Run `cd server && zig build test` after regenerating fixtures.
+
+## Native migration baseline
+
+The `baseline-*` corpus freezes FFmpeg behavior before the native macOS media
+backend is introduced:
+
+- 16-bit mono at 22.05 kHz, including a one-frame file;
+- an empty 16-bit stereo stream;
+- 8,193 stereo frames spanning the encoder's 4,608-frame FLAC block boundary;
+- exact PCM for caller reads smaller than, equal to, and larger than a block;
+- populated, mixed-case, and duplicate-equivalent Vorbis comments;
+- standalone and embedded JPEG, PNG, and WebP covers.
+
+`seekable-s16le-stereo.flac` supplies the seek oracle at frame zero, middle
+frames, FLAC block boundaries, the final frame, and EOF. The tests also record
+FFmpeg's existing `SeekFailed` result at frame 4,607, immediately before the
+first block boundary.
+
+Regenerate the baseline audio, PCM, tag, and artwork files with:
+
+```sh
+server/testdata/fixtures/regenerate-baseline.sh
+```
+
+The script requires `ffmpeg` and `cwebp`. Regeneration intentionally replaces
+the golden files and should only be committed when reviewing an oracle change.

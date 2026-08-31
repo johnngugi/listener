@@ -7,9 +7,6 @@ const server = @import("server");
 test "client engine streams PCM from requested start frame" {
     const allocator = std.testing.allocator;
 
-    selected_output.reset(allocator);
-    defer selected_output.reset(allocator);
-
     var server_io_thread: std.Io.Threaded = .init(allocator, .{});
     defer server_io_thread.deinit();
 
@@ -67,6 +64,8 @@ test "client engine streams PCM from requested start frame" {
     const engine = client_engine.listener_engine_create() orelse return error.EngineCreateFailed;
     var engine_destroyed = false;
     defer if (!engine_destroyed) client_engine.listener_engine_destroy(engine);
+    const output = client_engine.outputBackendForTesting(engine) orelse
+        return error.OutputBackendUnavailable;
 
     try expectStatusOk(client_engine.listener_engine_connect(
         engine,
@@ -82,10 +81,10 @@ test "client engine streams PCM from requested start frame" {
         "integration-playback".len,
     ));
 
-    try selected_output.waitForCapturedBytes(expected_seeked_pcm.len, 1_000_000);
+    try selected_output.waitForCapturedBytes(output, expected_seeked_pcm.len, 1_000_000);
     try expectStatusOk(client_engine.listener_engine_stop(engine));
 
-    const actual_pcm = try selected_output.capturedBytes(allocator);
+    const actual_pcm = try selected_output.capturedBytes(output, allocator);
     defer allocator.free(actual_pcm);
 
     try std.testing.expectEqualSlices(u8, expected_seeked_pcm, actual_pcm);
