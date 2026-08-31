@@ -89,6 +89,10 @@ fn linkServerLibraries(module: *std.Build.Module) void {
     module.linkSystemLibrary("avutil", .{});
     module.linkSystemLibrary("swscale", .{});
 
+    module.linkFramework("CoreFoundation", .{});
+    module.linkFramework("CoreGraphics", .{});
+    module.linkFramework("ImageIO", .{});
+
     module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/include" });
     module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/lib" });
     module.linkSystemLibrary("grpc", .{});

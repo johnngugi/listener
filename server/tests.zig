@@ -12,6 +12,7 @@ test "server modules are included from the server source root" {
     _ = @import("library/service.zig");
     _ = @import("library/track_info.zig");
     _ = @import("media/decoder.zig");
+    _ = @import("media/artwork.zig");
     _ = @import("media/flac/metadata.zig");
     _ = @import("media/types.zig");
 }

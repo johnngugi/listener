@@ -72,13 +72,29 @@ pub fn build(b: *std.Build) void {
     });
     const run_flac_metadata_tests = b.addRunArtifact(flac_metadata_tests);
 
+    // Artwork has its own native backend test target so validation and
+    // normalization remain demonstrably independent of FFmpeg.
+    const artwork_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("artwork_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    linkArtworkBackend(artwork_tests.root_module);
+    const run_artwork_tests = b.addRunArtifact(artwork_tests);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_server_tests.step);
     test_step.dependOn(&run_media_types_tests.step);
     test_step.dependOn(&run_flac_metadata_tests.step);
+    test_step.dependOn(&run_artwork_tests.step);
 }
 
 fn linkServerLibraries(module: *std.Build.Module) void {
+    linkArtworkBackend(module);
+
     module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/include" });
     module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/lib" });
     module.linkSystemLibrary("avformat", .{});
@@ -91,4 +107,10 @@ fn linkServerLibraries(module: *std.Build.Module) void {
     module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/include" });
     module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/lib" });
     module.linkSystemLibrary("grpc", .{});
+}
+
+fn linkArtworkBackend(module: *std.Build.Module) void {
+    module.linkFramework("CoreFoundation", .{});
+    module.linkFramework("CoreGraphics", .{});
+    module.linkFramework("ImageIO", .{});
 }

@@ -41,6 +41,7 @@ backend is introduced:
 - exact PCM for caller reads smaller than, equal to, and larger than a block;
 - populated, mixed-case, and duplicate-equivalent Vorbis comments;
 - standalone and embedded JPEG, PNG, and WebP covers.
+- a 1500x1200 JPEG used to verify 1024-pixel artwork normalization.
 
 `seekable-s16le-stereo.flac` supplies the seek oracle at frame zero, middle
 frames, FLAC block boundaries, the final frame, and EOF. The tests also record
