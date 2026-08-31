@@ -61,9 +61,21 @@ pub fn build(b: *std.Build) void {
     });
     const run_media_types_tests = b.addRunArtifact(media_types_tests);
 
+    // The FLAC metadata parser is also platform-neutral and must remain
+    // independently testable without FFmpeg or Apple framework linkage.
+    const flac_metadata_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("flac_metadata_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_flac_metadata_tests = b.addRunArtifact(flac_metadata_tests);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_server_tests.step);
     test_step.dependOn(&run_media_types_tests.step);
+    test_step.dependOn(&run_flac_metadata_tests.step);
 }
 
 fn linkServerLibraries(module: *std.Build.Module) void {
