@@ -50,8 +50,20 @@ pub fn build(b: *std.Build) void {
     linkServerLibraries(server_tests.root_module);
     const run_server_tests = b.addRunArtifact(server_tests);
 
+    // Keep the shared media contract independently compilable: this target
+    // deliberately receives no FFmpeg include paths or linked libraries.
+    const media_types_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("media/types.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_media_types_tests = b.addRunArtifact(media_types_tests);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_server_tests.step);
+    test_step.dependOn(&run_media_types_tests.step);
 }
 
 fn linkServerLibraries(module: *std.Build.Module) void {

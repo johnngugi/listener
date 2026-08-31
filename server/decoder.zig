@@ -1,4 +1,12 @@
 const std = @import("std");
+const types = @import("media/types.zig");
+
+pub const Options = types.Options;
+pub const SampleFormat = types.SampleFormat;
+pub const TrackInfo = types.TrackInfo;
+pub const ReadResult = types.ReadResult;
+pub const PcmLayout = types.PcmLayout;
+pub const DecoderError = types.DecoderError;
 
 const c = @cImport({
     @cInclude("libavcodec/avcodec.h");
@@ -92,7 +100,7 @@ pub const AudioDecoder = struct {
         // Mostly useful if you care about timestamps later.
         codec_ctx.*.pkt_timebase = audio_stream.*.time_base;
         if (options.sample_format) |sample_format| {
-            codec_ctx.*.request_sample_fmt = sample_format.toAv();
+            codec_ctx.*.request_sample_fmt = sampleFormatToAv(sample_format);
         }
 
         // Open/initialize the decoder.
@@ -112,7 +120,7 @@ pub const AudioDecoder = struct {
         if (frame == null) return error.CouldNotAllocateFrame;
         errdefer c.av_frame_free(&frame);
 
-        const native_sample_fmt = try SampleFormat.fromAv(codec_ctx.*.sample_fmt);
+        const native_sample_fmt = try sampleFormatFromAv(codec_ctx.*.sample_fmt);
         const output_sample_fmt = options.sample_format orelse native_sample_fmt;
         if (native_sample_fmt != output_sample_fmt) {
             return error.UnsupportedSampleFormatConversion;
@@ -436,74 +444,20 @@ pub const AudioDecoder = struct {
     }
 };
 
-pub const Options = struct {
-    sample_format: ?SampleFormat = null,
-    layout: PcmLayout = .interleaved,
-};
+fn sampleFormatFromAv(sample_fmt: c.enum_AVSampleFormat) !SampleFormat {
+    return switch (sample_fmt) {
+        c.AV_SAMPLE_FMT_S16, c.AV_SAMPLE_FMT_S16P => .s16,
+        c.AV_SAMPLE_FMT_S32, c.AV_SAMPLE_FMT_S32P => .s32,
+        else => error.UnsupportedSampleFormat,
+    };
+}
 
-pub const SampleFormat = enum {
-    s16,
-    s32,
-
-    fn fromAv(sample_fmt: c.enum_AVSampleFormat) !SampleFormat {
-        return switch (sample_fmt) {
-            c.AV_SAMPLE_FMT_S16, c.AV_SAMPLE_FMT_S16P => .s16,
-            c.AV_SAMPLE_FMT_S32, c.AV_SAMPLE_FMT_S32P => .s32,
-            else => error.UnsupportedSampleFormat,
-        };
-    }
-
-    fn bytes(self: SampleFormat) usize {
-        return switch (self) {
-            .s16 => 2,
-            .s32 => 4,
-        };
-    }
-
-    fn bits(self: SampleFormat) u16 {
-        return @intCast(self.bytes() * 8);
-    }
-
-    fn toAv(self: SampleFormat) c.enum_AVSampleFormat {
-        return switch (self) {
-            .s16 => c.AV_SAMPLE_FMT_S16,
-            .s32 => c.AV_SAMPLE_FMT_S32,
-        };
-    }
-};
-
-pub const TrackInfo = struct {
-    sample_rate: u32,
-    channels: u32,
-    duration_frames: ?u64 = null,
-    valid_bits_per_sample: u16,
-
-    native_sample_format: SampleFormat,
-    output_sample_format: SampleFormat,
-    output_layout: PcmLayout,
-
-    pub fn bytesPerFrame(self: TrackInfo) usize {
-        return @as(usize, self.channels) * self.output_sample_format.bytes();
-    }
-};
-
-pub const ReadResult = struct {
-    /// Number of audio frames written.
-    /// One frame = one sample per channel.
-    frames: usize,
-
-    /// Number of bytes written into the caller-provided buffer.
-    bytes: usize,
-
-    /// True when no more PCM will be produced after this result.
-    end_of_stream: bool = false,
-};
-
-pub const PcmLayout = enum {
-    /// Samples alternate by channel:
-    /// stereo: L R L R L R ...
-    interleaved,
-};
+fn sampleFormatToAv(sample_format: SampleFormat) c.enum_AVSampleFormat {
+    return switch (sample_format) {
+        .s16 => c.AV_SAMPLE_FMT_S16,
+        .s32 => c.AV_SAMPLE_FMT_S32,
+    };
+}
 
 fn durationFrames(stream: [*c]c.AVStream, sample_rate: c_int) ?u64 {
     if (stream.*.duration == c.AV_NOPTS_VALUE or sample_rate <= 0) return null;

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const decoder = @import("../decoder.zig");
+const decoder = @import("../media/decoder.zig");
 const protocol = @import("lstn_protocol");
 const request = @import("request.zig");
 
