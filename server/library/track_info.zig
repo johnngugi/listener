@@ -151,7 +151,7 @@ fn freeOptional(allocator: std.mem.Allocator, value: ?[]u8) void {
     if (value) |text| allocator.free(text);
 }
 
-test "reads technical information from a FLAC file without FFmpeg" {
+test "reads technical information from a FLAC file" {
     const fixture = @embedFile("../testdata/fixtures/strict-s16le-stereo.flac");
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
