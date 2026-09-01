@@ -8,6 +8,8 @@ const MediaBackend = enum {
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    requireSupportedServerTarget(target);
+
     const media_backend = b.option(
         MediaBackend,
         "media-backend",
@@ -86,7 +88,7 @@ pub fn build(b: *std.Build) void {
     integration_tests.root_module.addImport("client_engine", client_engine);
     integration_tests.root_module.addImport("selected_output", selected_output);
     integration_tests.root_module.addImport("server", server);
-    linkServerLibraries(integration_tests.root_module, media_backend);
+    linkServerLibraries(integration_tests.root_module, target, media_backend);
 
     const run_integration_tests = b.addRunArtifact(integration_tests);
 
@@ -94,24 +96,44 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_integration_tests.step);
 }
 
-fn linkServerLibraries(module: *std.Build.Module, media_backend: MediaBackend) void {
-    switch (media_backend) {
-        .ffmpeg => {
-            module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/include" });
-            module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/lib" });
-            module.linkSystemLibrary("avformat", .{});
-            module.linkSystemLibrary("avcodec", .{});
-            module.linkSystemLibrary("avutil", .{});
-            module.linkSystemLibrary("swscale", .{});
-        },
-        .native => module.linkFramework("AudioToolbox", .{}),
+fn requireSupportedServerTarget(target: std.Build.ResolvedTarget) void {
+    switch (target.result.os.tag) {
+        .macos => {},
+        else => std.debug.panic(
+            "unsupported server media target OS: {s}; only macOS is implemented",
+            .{@tagName(target.result.os.tag)},
+        ),
+    }
+}
+
+fn linkServerLibraries(
+    module: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    media_backend: MediaBackend,
+) void {
+    switch (target.result.os.tag) {
+        .macos => linkMacosMediaLibraries(module, media_backend),
+        else => unreachable,
+    }
+
+    module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/include" });
+    module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/lib" });
+    module.linkSystemLibrary("grpc", .{});
+}
+
+fn linkMacosMediaLibraries(module: *std.Build.Module, media_backend: MediaBackend) void {
+    if (media_backend == .ffmpeg) {
+        module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/include" });
+        module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/lib" });
+        module.linkSystemLibrary("avformat", .{});
+        module.linkSystemLibrary("avcodec", .{});
+        module.linkSystemLibrary("avutil", .{});
+        module.linkSystemLibrary("swscale", .{});
+    } else {
+        module.linkFramework("AudioToolbox", .{});
     }
 
     module.linkFramework("CoreFoundation", .{});
     module.linkFramework("CoreGraphics", .{});
     module.linkFramework("ImageIO", .{});
-
-    module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/include" });
-    module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/lib" });
-    module.linkSystemLibrary("grpc", .{});
 }

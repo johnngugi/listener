@@ -8,6 +8,8 @@ const MediaBackend = enum {
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    requireSupportedTarget(target);
+
     const media_backend = b.option(
         MediaBackend,
         "media-backend",
@@ -38,7 +40,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("stdout", stdout);
     exe.root_module.addOptions("media_backend_options", media_backend_options);
 
-    linkServerLibraries(exe.root_module, media_backend);
+    linkServerLibraries(exe.root_module, target, media_backend);
 
     b.installArtifact(exe);
 
@@ -61,7 +63,7 @@ pub fn build(b: *std.Build) void {
     server_tests.root_module.addImport("lstn_protocol", lstn_protocol);
     server_tests.root_module.addImport("stdout", stdout);
     server_tests.root_module.addOptions("media_backend_options", media_backend_options);
-    linkServerLibraries(server_tests.root_module, media_backend);
+    linkServerLibraries(server_tests.root_module, target, media_backend);
     const run_server_tests = b.addRunArtifact(server_tests);
 
     // Keep the shared media contract independently compilable: this target
@@ -96,7 +98,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
-    linkArtworkBackend(artwork_tests.root_module);
+    linkArtworkBackend(artwork_tests.root_module, target);
     const run_artwork_tests = b.addRunArtifact(artwork_tests);
 
     // Exercise the AudioToolbox backend directly, independently of the selected
@@ -109,8 +111,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
-    native_decoder_tests.root_module.linkFramework("AudioToolbox", .{});
-    native_decoder_tests.root_module.linkFramework("CoreFoundation", .{});
+    linkNativeDecoderBackend(native_decoder_tests.root_module, target);
     const run_native_decoder_tests = b.addRunArtifact(native_decoder_tests);
 
     // Run both temporary implementations against the same fixtures. This target
@@ -123,7 +124,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
-    linkDecoderBackends(decoder_parity_tests.root_module);
+    linkDecoderBackends(decoder_parity_tests.root_module, target);
     const run_decoder_parity_tests = b.addRunArtifact(decoder_parity_tests);
 
     const test_step = b.step("test", "Run tests");
@@ -135,10 +136,24 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_decoder_parity_tests.step);
 }
 
-fn linkServerLibraries(module: *std.Build.Module, media_backend: MediaBackend) void {
-    linkArtworkBackend(module);
+fn requireSupportedTarget(target: std.Build.ResolvedTarget) void {
+    switch (target.result.os.tag) {
+        .macos => {},
+        else => std.debug.panic(
+            "unsupported server media target OS: {s}; only macOS is implemented",
+            .{@tagName(target.result.os.tag)},
+        ),
+    }
+}
 
-    linkDecoderBackend(module, media_backend);
+fn linkServerLibraries(
+    module: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    media_backend: MediaBackend,
+) void {
+    linkArtworkBackend(module, target);
+
+    linkDecoderBackend(module, target, media_backend);
 
     module.linkSystemLibrary("sqlite3", .{});
 
@@ -147,20 +162,35 @@ fn linkServerLibraries(module: *std.Build.Module, media_backend: MediaBackend) v
     module.linkSystemLibrary("grpc", .{});
 }
 
-fn linkDecoderBackend(module: *std.Build.Module, media_backend: MediaBackend) void {
-    switch (media_backend) {
-        .ffmpeg => linkFfmpegBackend(module),
-        .native => {
-            module.linkFramework("AudioToolbox", .{});
-            module.linkFramework("CoreFoundation", .{});
+fn linkDecoderBackend(
+    module: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    media_backend: MediaBackend,
+) void {
+    switch (target.result.os.tag) {
+        .macos => switch (media_backend) {
+            .ffmpeg => linkFfmpegBackend(module),
+            .native => linkNativeDecoderBackend(module, target),
         },
+        else => unreachable,
     }
 }
 
-fn linkDecoderBackends(module: *std.Build.Module) void {
-    module.linkFramework("AudioToolbox", .{});
-    module.linkFramework("CoreFoundation", .{});
+fn linkNativeDecoderBackend(
+    module: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+) void {
+    switch (target.result.os.tag) {
+        .macos => {
+            module.linkFramework("AudioToolbox", .{});
+            module.linkFramework("CoreFoundation", .{});
+        },
+        else => unreachable,
+    }
+}
 
+fn linkDecoderBackends(module: *std.Build.Module, target: std.Build.ResolvedTarget) void {
+    linkNativeDecoderBackend(module, target);
     linkFfmpegBackend(module);
 }
 
@@ -173,8 +203,13 @@ fn linkFfmpegBackend(module: *std.Build.Module) void {
     module.linkSystemLibrary("swscale", .{});
 }
 
-fn linkArtworkBackend(module: *std.Build.Module) void {
-    module.linkFramework("CoreFoundation", .{});
-    module.linkFramework("CoreGraphics", .{});
-    module.linkFramework("ImageIO", .{});
+fn linkArtworkBackend(module: *std.Build.Module, target: std.Build.ResolvedTarget) void {
+    switch (target.result.os.tag) {
+        .macos => {
+            module.linkFramework("CoreFoundation", .{});
+            module.linkFramework("CoreGraphics", .{});
+            module.linkFramework("ImageIO", .{});
+        },
+        else => unreachable,
+    }
 }
