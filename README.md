@@ -82,8 +82,6 @@ The current implementation targets macOS and requires:
 - Zig 0.16.0 or later.
 - Flutter with Dart 3.12.2 or later.
 - Xcode command-line tools and the macOS SDK.
-- FFmpeg shared libraries (`libavformat`, `libavcodec`, `libavutil`, and
-  `libswscale`).
 - The gRPC C library and SQLite 3.
 
 The Zig build files use Homebrew paths under `/opt/homebrew`, so they work as
@@ -91,13 +89,8 @@ written on Apple Silicon Homebrew installations. Install the native dependencies
 with:
 
 ```sh
-brew install ffmpeg grpc
+brew install grpc
 ```
-
-Homebrew's `ffmpeg` formula is GPL-3.0-or-later. Listener currently publishes
-source rather than a compiled server distribution; users install FFmpeg and
-compile Listener locally. The licensing of the exact FFmpeg build must be
-reviewed before adding compiled server releases.
 
 ## Run Listener
 
@@ -142,8 +135,8 @@ cd client/engine && dart test && zig build test
 cd client/listener_front && flutter test && flutter analyze
 ```
 
-The root integration build and the server build both require the FFmpeg and
-gRPC native libraries.
+The root integration build and the server build require the gRPC native
+library. Media decoding and artwork processing use macOS system frameworks.
 
 ## Documentation
 
@@ -153,5 +146,5 @@ gRPC native libraries.
 
 ## License
 
-Listener is available under the [MIT License](LICENSE). Third-party components,
-including FFmpeg, retain their own licenses.
+Listener is available under the [MIT License](LICENSE). Third-party components
+retain their own licenses.

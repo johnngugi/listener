@@ -1,3 +1,3 @@
-test "artwork module is tested without FFmpeg" {
+test "artwork module uses the native backend" {
     _ = @import("media/artwork.zig");
 }

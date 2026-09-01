@@ -80,7 +80,7 @@ pub const Server = struct {
         while (true) {
             const event = c.grpc_completion_queue_next(
                 self.cq,
-                c.gpr_inf_future(c.GPR_CLOCK_REALTIME),
+                infiniteFuture(c.GPR_CLOCK_REALTIME),
                 null,
             );
             if (event.type == c.GRPC_OP_COMPLETE and event.tag == shutdown_tag_ptr) {
@@ -97,7 +97,7 @@ pub const Server = struct {
         while (true) {
             const event = c.grpc_completion_queue_next(
                 self.cq,
-                c.gpr_inf_future(c.GPR_CLOCK_REALTIME),
+                infiniteFuture(c.GPR_CLOCK_REALTIME),
                 null,
             );
             if (event.type == c.GRPC_QUEUE_SHUTDOWN) break;
@@ -383,7 +383,7 @@ pub const Server = struct {
         tag: *anyopaque,
     ) ControlLoopError!c.grpc_event {
         while (true) {
-            const event = self.next(c.gpr_inf_future(c.GPR_CLOCK_REALTIME));
+            const event = self.next(infiniteFuture(c.GPR_CLOCK_REALTIME));
             switch (event.type) {
                 c.GRPC_OP_COMPLETE => {
                     if (event.tag == tag) return event;
@@ -464,6 +464,14 @@ fn receiveUnaryPayloadOps(
 
 fn zeroedGrpcOps(comptime count: usize) [count]c.grpc_op {
     return [_]c.grpc_op{std.mem.zeroes(c.grpc_op)} ** count;
+}
+
+fn infiniteFuture(clock_type: c.gpr_clock_type) c.gpr_timespec {
+    return .{
+        .tv_sec = std.math.maxInt(i64),
+        .tv_nsec = 0,
+        .clock_type = clock_type,
+    };
 }
 
 fn readByteBuffer(

@@ -92,16 +92,15 @@ The gRPC adapter is part of the default server build and requires the gRPC C
 library; there is no longer a `-Dgrpc=true` build option.
 
 ```sh
-brew install ffmpeg grpc
+brew install grpc
 cd server
 zig build
 zig build test
 zig build run
 ```
 
-`server/build.zig` currently searches `/opt/homebrew/opt/grpc` and
-`/opt/homebrew/opt/ffmpeg`. Change those include and library paths when using a
-different package-manager prefix.
+`server/build.zig` currently searches `/opt/homebrew/opt/grpc`. Change that
+include and library path when using a different package-manager prefix.
 
 The transport is currently insecure and binds all interfaces. Do not expose port
 5779 to an untrusted network.

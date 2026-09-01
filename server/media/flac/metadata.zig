@@ -375,8 +375,7 @@ fn selectPicture(
 fn durationMs(total_samples: u64, sample_rate: u32) ?u64 {
     if (total_samples == 0) return null;
     const milliseconds = std.math.mul(u64, total_samples, 1000) catch return null;
-    // Match FFmpeg's AV_ROUND_NEAR_INF duration conversion for positive
-    // stream durations so migration does not change stored millisecond values.
+    // Round positive stream durations to the nearest millisecond.
     return (milliseconds + sample_rate / 2) / sample_rate;
 }
 
