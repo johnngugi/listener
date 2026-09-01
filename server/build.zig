@@ -85,11 +85,26 @@ pub fn build(b: *std.Build) void {
     linkArtworkBackend(artwork_tests.root_module);
     const run_artwork_tests = b.addRunArtifact(artwork_tests);
 
+    // Exercise the Phase 5 AudioToolbox backend directly. Backend selection is
+    // intentionally deferred to Phase 6, so the FFmpeg baseline remains active.
+    const native_decoder_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("native_decoder_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    native_decoder_tests.root_module.linkFramework("AudioToolbox", .{});
+    native_decoder_tests.root_module.linkFramework("CoreFoundation", .{});
+    const run_native_decoder_tests = b.addRunArtifact(native_decoder_tests);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_server_tests.step);
     test_step.dependOn(&run_media_types_tests.step);
     test_step.dependOn(&run_flac_metadata_tests.step);
     test_step.dependOn(&run_artwork_tests.step);
+    test_step.dependOn(&run_native_decoder_tests.step);
 }
 
 fn linkServerLibraries(module: *std.Build.Module) void {
