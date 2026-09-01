@@ -260,6 +260,11 @@ Accepted differences:
 
 ## Phase 7: Update the build
 
+Status: implemented. Both repository-level integration tests and the
+standalone server build select the same native-by-default backend for the
+requested macOS target. Unsupported target operating systems fail during build
+configuration with an explicit diagnostic.
+
 Update both the repository and standalone server build definitions.
 
 Link the macOS frameworks required by the native implementation:
