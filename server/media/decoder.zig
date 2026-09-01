@@ -1,8 +1,12 @@
-const backend = @import("../decoder.zig");
+const backend_options = @import("media_backend_options");
+const backend = switch (backend_options.media_backend) {
+    .ffmpeg => @import("../decoder.zig"),
+    .native => @import("macos/decoder.zig"),
+};
 const types = @import("types.zig");
 
-// Phase 2 keeps FFmpeg as the active backend while media consumers move to
-// this platform-neutral facade. Platform selection will live here later.
+/// The implementation is selected at build time. Native is the macOS default;
+/// FFmpeg remains temporarily available as the Phase 6 parity oracle.
 pub const AudioDecoder = backend.AudioDecoder;
 
 pub const Options = types.Options;

@@ -1,8 +1,20 @@
 const std = @import("std");
 
+const MediaBackend = enum {
+    ffmpeg,
+    native,
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const media_backend = b.option(
+        MediaBackend,
+        "media-backend",
+        "Select the temporary macOS decoder backend (ffmpeg or native)",
+    ) orelse .native;
+    const media_backend_options = b.addOptions();
+    media_backend_options.addOption(MediaBackend, "media_backend", media_backend);
 
     const lstn_protocol = b.dependency("lstn_protocol", .{
         .target = target,
@@ -61,6 +73,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     server.addImport("lstn_protocol", lstn_protocol);
+    server.addOptions("media_backend_options", media_backend_options);
 
     const integration_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -73,7 +86,7 @@ pub fn build(b: *std.Build) void {
     integration_tests.root_module.addImport("client_engine", client_engine);
     integration_tests.root_module.addImport("selected_output", selected_output);
     integration_tests.root_module.addImport("server", server);
-    linkServerLibraries(integration_tests.root_module);
+    linkServerLibraries(integration_tests.root_module, media_backend);
 
     const run_integration_tests = b.addRunArtifact(integration_tests);
 
@@ -81,13 +94,18 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_integration_tests.step);
 }
 
-fn linkServerLibraries(module: *std.Build.Module) void {
-    module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/include" });
-    module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/lib" });
-    module.linkSystemLibrary("avformat", .{});
-    module.linkSystemLibrary("avcodec", .{});
-    module.linkSystemLibrary("avutil", .{});
-    module.linkSystemLibrary("swscale", .{});
+fn linkServerLibraries(module: *std.Build.Module, media_backend: MediaBackend) void {
+    switch (media_backend) {
+        .ffmpeg => {
+            module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/include" });
+            module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/lib" });
+            module.linkSystemLibrary("avformat", .{});
+            module.linkSystemLibrary("avcodec", .{});
+            module.linkSystemLibrary("avutil", .{});
+            module.linkSystemLibrary("swscale", .{});
+        },
+        .native => module.linkFramework("AudioToolbox", .{}),
+    }
 
     module.linkFramework("CoreFoundation", .{});
     module.linkFramework("CoreGraphics", .{});

@@ -216,6 +216,9 @@ The implementation must:
 
 ## Phase 6: Add temporary backend selection and parity tests
 
+Status: implemented. `native` is the default on macOS; pass
+`-Dmedia-backend=ffmpeg` to select the temporary FFmpeg oracle explicitly.
+
 Add a temporary development option such as:
 
 ```text
@@ -235,6 +238,19 @@ Use it to run both implementations against identical fixtures. Compare:
 - artwork dimensions, MIME types, and normalized content expectations.
 
 If AudioToolbox produces an intentional difference, document it and add an explicit test before accepting it.
+
+Accepted differences:
+
+- AudioToolbox reports `duration_frames = 0` for the valid empty FLAC fixture,
+  while FFmpeg reports an unknown duration (`null`). Both report final-read EOF
+  with no PCM bytes.
+- AudioToolbox can seek to frame 4,607 in the seek fixture. FFmpeg's demuxer
+  rejects that target immediately before its first 4,608-frame block boundary.
+  All common seek targets produce identical PCM.
+- For bytes that are neither valid FLAC nor another supported media container,
+  FFmpeg may reach codec inspection and return `UnsupportedSampleFormat`, while
+  AudioToolbox rejects the file during open with `CouldNotOpenInput`. Both reject
+  the input before decoding or allocating PCM state.
 
 ### Exit criteria
 

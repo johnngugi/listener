@@ -1,8 +1,20 @@
 const std = @import("std");
 
+const MediaBackend = enum {
+    ffmpeg,
+    native,
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const media_backend = b.option(
+        MediaBackend,
+        "media-backend",
+        "Select the temporary macOS decoder backend (ffmpeg or native)",
+    ) orelse .native;
+    const media_backend_options = b.addOptions();
+    media_backend_options.addOption(MediaBackend, "media_backend", media_backend);
     const lstn_protocol = b.dependency("lstn_protocol", .{
         .target = target,
         .optimize = optimize,
@@ -24,8 +36,9 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("lstn_protocol", lstn_protocol);
     exe.root_module.addImport("stdout", stdout);
+    exe.root_module.addOptions("media_backend_options", media_backend_options);
 
-    linkServerLibraries(exe.root_module);
+    linkServerLibraries(exe.root_module, media_backend);
 
     b.installArtifact(exe);
 
@@ -47,7 +60,8 @@ pub fn build(b: *std.Build) void {
     });
     server_tests.root_module.addImport("lstn_protocol", lstn_protocol);
     server_tests.root_module.addImport("stdout", stdout);
-    linkServerLibraries(server_tests.root_module);
+    server_tests.root_module.addOptions("media_backend_options", media_backend_options);
+    linkServerLibraries(server_tests.root_module, media_backend);
     const run_server_tests = b.addRunArtifact(server_tests);
 
     // Keep the shared media contract independently compilable: this target
@@ -85,8 +99,8 @@ pub fn build(b: *std.Build) void {
     linkArtworkBackend(artwork_tests.root_module);
     const run_artwork_tests = b.addRunArtifact(artwork_tests);
 
-    // Exercise the Phase 5 AudioToolbox backend directly. Backend selection is
-    // intentionally deferred to Phase 6, so the FFmpeg baseline remains active.
+    // Exercise the AudioToolbox backend directly, independently of the selected
+    // production backend.
     const native_decoder_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("native_decoder_tests.zig"),
@@ -99,29 +113,64 @@ pub fn build(b: *std.Build) void {
     native_decoder_tests.root_module.linkFramework("CoreFoundation", .{});
     const run_native_decoder_tests = b.addRunArtifact(native_decoder_tests);
 
+    // Run both temporary implementations against the same fixtures. This target
+    // deliberately imports each backend directly rather than using the facade.
+    const decoder_parity_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("decoder_parity_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    linkDecoderBackends(decoder_parity_tests.root_module);
+    const run_decoder_parity_tests = b.addRunArtifact(decoder_parity_tests);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_server_tests.step);
     test_step.dependOn(&run_media_types_tests.step);
     test_step.dependOn(&run_flac_metadata_tests.step);
     test_step.dependOn(&run_artwork_tests.step);
     test_step.dependOn(&run_native_decoder_tests.step);
+    test_step.dependOn(&run_decoder_parity_tests.step);
 }
 
-fn linkServerLibraries(module: *std.Build.Module) void {
+fn linkServerLibraries(module: *std.Build.Module, media_backend: MediaBackend) void {
     linkArtworkBackend(module);
 
-    module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/include" });
-    module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/lib" });
-    module.linkSystemLibrary("avformat", .{});
-    module.linkSystemLibrary("avcodec", .{});
-    module.linkSystemLibrary("avutil", .{});
-    module.linkSystemLibrary("swscale", .{});
+    linkDecoderBackend(module, media_backend);
 
     module.linkSystemLibrary("sqlite3", .{});
 
     module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/include" });
     module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/grpc/lib" });
     module.linkSystemLibrary("grpc", .{});
+}
+
+fn linkDecoderBackend(module: *std.Build.Module, media_backend: MediaBackend) void {
+    switch (media_backend) {
+        .ffmpeg => linkFfmpegBackend(module),
+        .native => {
+            module.linkFramework("AudioToolbox", .{});
+            module.linkFramework("CoreFoundation", .{});
+        },
+    }
+}
+
+fn linkDecoderBackends(module: *std.Build.Module) void {
+    module.linkFramework("AudioToolbox", .{});
+    module.linkFramework("CoreFoundation", .{});
+
+    linkFfmpegBackend(module);
+}
+
+fn linkFfmpegBackend(module: *std.Build.Module) void {
+    module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/include" });
+    module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/lib" });
+    module.linkSystemLibrary("avformat", .{});
+    module.linkSystemLibrary("avcodec", .{});
+    module.linkSystemLibrary("avutil", .{});
+    module.linkSystemLibrary("swscale", .{});
 }
 
 fn linkArtworkBackend(module: *std.Build.Module) void {
