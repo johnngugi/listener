@@ -10,6 +10,10 @@ class PlaybackQueue extends Equatable {
 
   Track get currentTrack => tracks[currentIndex];
 
+  bool get hasPrevious => currentIndex > 0;
+
+  bool get hasNext => currentIndex < tracks.length - 1;
+
   Result<Track> get previousTrack {
     if (currentIndex == 0) {
       return Result.error(Exception('No previous track'));
@@ -24,6 +28,41 @@ class PlaybackQueue extends Equatable {
     }
 
     return Result.ok(tracks[currentIndex + 1]);
+  }
+
+  PlaybackQueue reorder(int oldIndex, int newIndex) {
+    RangeError.checkValidIndex(oldIndex, tracks, 'oldIndex');
+    RangeError.checkValidIndex(newIndex, tracks, 'newIndex');
+
+    final reordered = tracks.toList();
+    final movedTrack = reordered.removeAt(oldIndex);
+    reordered.insert(newIndex, movedTrack);
+
+    var nextCurrentIndex = currentIndex;
+    if (oldIndex == currentIndex) {
+      nextCurrentIndex = newIndex;
+    } else {
+      if (oldIndex < nextCurrentIndex) nextCurrentIndex--;
+      if (newIndex <= nextCurrentIndex) nextCurrentIndex++;
+    }
+
+    return PlaybackQueue(
+      tracks: List<Track>.unmodifiable(reordered),
+      currentIndex: nextCurrentIndex,
+    );
+  }
+
+  PlaybackQueue removeAt(int index) {
+    RangeError.checkValidIndex(index, tracks, 'index');
+    if (index == currentIndex) {
+      throw StateError('The current track cannot be removed from the queue');
+    }
+
+    final remaining = tracks.toList()..removeAt(index);
+    return PlaybackQueue(
+      tracks: List<Track>.unmodifiable(remaining),
+      currentIndex: index < currentIndex ? currentIndex - 1 : currentIndex,
+    );
   }
 
   @override

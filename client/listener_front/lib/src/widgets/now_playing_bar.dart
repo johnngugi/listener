@@ -127,11 +127,29 @@ class _CompactNowPlayingBar extends StatelessWidget {
                   ],
                 ),
               ),
+              if (width < 480)
+                const Positioned(
+                  left: 12,
+                  top: 0,
+                  bottom: 0,
+                  child: Center(child: PlaybackQueueButton()),
+                ),
               Positioned(
                 right: 12,
                 top: 0,
                 bottom: 0,
-                child: Center(child: SignalPathButton(showLabel: width >= 480)),
+                child: Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (width >= 480) ...[
+                        const PlaybackQueueButton(),
+                        const SizedBox(width: 2),
+                      ],
+                      SignalPathButton(showLabel: width >= 560),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),
@@ -668,19 +686,224 @@ class TransportControls extends StatelessWidget {
               onPressed: () => context.read<PlaybackCubit>().next(),
             ),
             const SizedBox(width: 18),
-            const Tooltip(
-              message: 'Playback queue',
-              child: Icon(
-                Icons.queue_music_rounded,
-                color: mutedColor,
-                size: 22,
-              ),
-            ),
+            const PlaybackQueueButton(),
           ],
         ),
         const SizedBox(height: 4),
         const PlaybackTimeline(),
       ],
+    );
+  }
+}
+
+class PlaybackQueueButton extends StatelessWidget {
+  const PlaybackQueueButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final itemCount = context.select(
+      (PlaybackCubit cubit) => cubit.state.queue?.tracks.length ?? 0,
+    );
+    return IconButton(
+      key: const Key('playback-queue-button'),
+      tooltip: itemCount == 0
+          ? 'Playback queue'
+          : 'Playback queue ($itemCount)',
+      onPressed: () => _showPlaybackQueue(context),
+      icon: const Icon(Icons.queue_music_rounded, color: mutedColor, size: 22),
+    );
+  }
+}
+
+Future<void> _showPlaybackQueue(BuildContext context) {
+  final playbackCubit = context.read<PlaybackCubit>();
+  return showDialog<void>(
+    context: context,
+    builder: (context) => BlocProvider.value(
+      value: playbackCubit,
+      child: const _PlaybackQueueDialog(),
+    ),
+  );
+}
+
+class _PlaybackQueueDialog extends StatelessWidget {
+  const _PlaybackQueueDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 620),
+        child: BlocBuilder<PlaybackCubit, PlaybackState>(
+          builder: (context, state) {
+            final queue = state.queue;
+            final tracks = queue?.tracks ?? const <Track>[];
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 18, 12, 14),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Playback queue',
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      if (tracks.isNotEmpty)
+                        Text(
+                          '${tracks.length} ${tracks.length == 1 ? 'track' : 'tracks'}',
+                          style: const TextStyle(color: mutedColor),
+                        ),
+                      IconButton(
+                        tooltip: 'Close',
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1, color: lineColor),
+                if (queue == null || tracks.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 54, horizontal: 28),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.queue_music_rounded,
+                          color: mutedColor,
+                          size: 36,
+                        ),
+                        SizedBox(height: 12),
+                        Text(
+                          'Your queue is empty',
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        SizedBox(height: 5),
+                        Text(
+                          'Play a track from the library to start a queue.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: mutedColor),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: ReorderableListView.builder(
+                      buildDefaultDragHandles: false,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      itemCount: tracks.length,
+                      onReorderItem: context.read<PlaybackCubit>().reorderQueue,
+                      itemBuilder: (context, index) {
+                        final track = tracks[index];
+                        final isCurrent = index == queue.currentIndex;
+                        return _PlaybackQueueRow(
+                          key: ValueKey(track.id),
+                          track: track,
+                          index: index,
+                          isCurrent: isCurrent,
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _PlaybackQueueRow extends StatelessWidget {
+  const _PlaybackQueueRow({
+    super.key,
+    required this.track,
+    required this.index,
+    required this.isCurrent,
+  });
+
+  final Track track;
+  final int index;
+  final bool isCurrent;
+
+  @override
+  Widget build(BuildContext context) {
+    final cubit = context.read<PlaybackCubit>();
+    return Material(
+      color: isCurrent
+          ? accentColor.withValues(alpha: 0.08)
+          : Colors.transparent,
+      child: ListTile(
+        key: Key('playback-queue-item-${track.id}'),
+        contentPadding: const EdgeInsets.only(left: 18, right: 8),
+        onTap: isCurrent
+            ? null
+            : () async {
+                Navigator.of(context).pop();
+                await cubit.playQueueItem(index);
+              },
+        leading: SizedBox(
+          width: 28,
+          child: Center(
+            child: isCurrent
+                ? const Icon(
+                    Icons.graphic_eq_rounded,
+                    color: accentColor,
+                    size: 21,
+                  )
+                : Text(
+                    '${index + 1}',
+                    style: const TextStyle(color: mutedColor),
+                  ),
+          ),
+        ),
+        title: Text(
+          track.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: isCurrent ? accentColor : textColor,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        subtitle: Text(
+          isCurrent
+              ? 'Now playing · ${track.artist}'
+              : '${track.artist} · ${track.album}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: mutedColor),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              key: Key('remove-queue-item-${track.id}'),
+              tooltip: isCurrent ? 'Current track' : 'Remove from queue',
+              onPressed: isCurrent ? null : () => cubit.removeQueueItem(index),
+              icon: const Icon(Icons.close_rounded, size: 19),
+            ),
+            ReorderableDragStartListener(
+              index: index,
+              child: const Padding(
+                padding: EdgeInsets.all(12),
+                child: Icon(Icons.drag_handle_rounded, color: mutedColor),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

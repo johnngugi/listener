@@ -113,6 +113,94 @@ void main() {
     expect(find.byType(Slider), findsNothing);
   });
 
+  testWidgets('opens and edits the playback queue', (tester) async {
+    final engine = _FakePlaybackEngine();
+    final cubit = PlaybackCubit.withDependencies(
+      engine,
+      _FakePlaybackControl(),
+    );
+    final outputCubit = OutputDeviceCubit(engine, cubit);
+    addTearDown(cubit.close);
+    addTearDown(outputCubit.close);
+    final tracks = [_track, _hiResTrack];
+    await cubit.play(selectedTrack: tracks.first, queueTracks: tracks);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 1000,
+            child: MultiBlocProvider(
+              providers: [
+                BlocProvider.value(value: cubit),
+                BlocProvider.value(value: outputCubit),
+              ],
+              child: const NowPlayingBar(),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('playback-queue-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Playback queue'), findsOneWidget);
+    expect(find.text('2 tracks'), findsOneWidget);
+    expect(find.text('Now playing · Artist'), findsOneWidget);
+    expect(find.text('High Resolution Track'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('remove-queue-item-track-hi-res')));
+    await tester.pump();
+
+    expect(cubit.state.queue?.tracks, [_track]);
+    expect(find.text('1 track'), findsOneWidget);
+
+    await cubit.pause();
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('plays an item selected from the playback queue', (tester) async {
+    final engine = _FakePlaybackEngine();
+    final cubit = PlaybackCubit.withDependencies(
+      engine,
+      _FakePlaybackControl(),
+    );
+    final outputCubit = OutputDeviceCubit(engine, cubit);
+    addTearDown(cubit.close);
+    addTearDown(outputCubit.close);
+    final tracks = [_track, _hiResTrack];
+    await cubit.play(selectedTrack: tracks.first, queueTracks: tracks);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 1000,
+            child: MultiBlocProvider(
+              providers: [
+                BlocProvider.value(value: cubit),
+                BlocProvider.value(value: outputCubit),
+              ],
+              child: const NowPlayingBar(),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('playback-queue-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('playback-queue-item-track-hi-res')));
+    await tester.pumpAndSettle();
+
+    expect(cubit.state.queue?.currentTrack, _hiResTrack);
+    expect(find.text('Playback queue'), findsNothing);
+
+    await cubit.pause();
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('shows the current track audio format', (tester) async {
     final engine = _FakePlaybackEngine();
     final cubit = PlaybackCubit.withDependencies(

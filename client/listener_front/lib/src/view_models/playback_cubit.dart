@@ -93,7 +93,11 @@ class PlaybackCubit extends Cubit<PlaybackState> {
     }
   }
 
-  Future<void> play({Track? selectedTrack, List<Track>? queueTracks}) async {
+  Future<void> play({
+    Track? selectedTrack,
+    List<Track>? queueTracks,
+    int? queueIndex,
+  }) async {
     if (_isSwitchingTrack) return;
 
     PlaybackQueue? queue = state.queue;
@@ -106,11 +110,13 @@ class PlaybackCubit extends Cubit<PlaybackState> {
 
       final tracks = List<Track>.unmodifiable(queueTracks ?? [selectedTrack]);
 
-      final selectedIndex = tracks.indexWhere(
-        (track) => track.id == selectedTrack.id,
-      );
+      final selectedIndex =
+          queueIndex ??
+          tracks.indexWhere((track) => track.id == selectedTrack.id);
 
-      if (selectedIndex == -1) {
+      if (selectedIndex < 0 ||
+          selectedIndex >= tracks.length ||
+          tracks[selectedIndex].id != selectedTrack.id) {
         emit(
           PlaybackState(
             queue: state.queue,
@@ -319,6 +325,29 @@ class PlaybackCubit extends Cubit<PlaybackState> {
       case Error<Track>():
         return;
     }
+  }
+
+  Future<void> playQueueItem(int index) async {
+    final queue = state.queue;
+    if (queue == null) return;
+    RangeError.checkValidIndex(index, queue.tracks, 'index');
+    await play(
+      selectedTrack: queue.tracks[index],
+      queueTracks: queue.tracks,
+      queueIndex: index,
+    );
+  }
+
+  void reorderQueue(int oldIndex, int newIndex) {
+    final queue = state.queue;
+    if (queue == null) return;
+    emit(state.copyWith(queue: queue.reorder(oldIndex, newIndex)));
+  }
+
+  void removeQueueItem(int index) {
+    final queue = state.queue;
+    if (queue == null || index == queue.currentIndex) return;
+    emit(state.copyWith(queue: queue.removeAt(index)));
   }
 
   Future<void> next() async {

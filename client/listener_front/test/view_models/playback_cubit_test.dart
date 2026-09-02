@@ -63,6 +63,42 @@ void main() {
       await cubit.close();
     });
 
+    test('plays a selected queue item by index', () async {
+      final engine = _FakePlaybackEngine();
+      final controlClient = _FakePlaybackControl();
+      final cubit = PlaybackCubit.withDependencies(engine, controlClient);
+      final tracks = [_track(1), _track(2), _track(3)];
+
+      await cubit.play(selectedTrack: tracks.first, queueTracks: tracks);
+      await cubit.playQueueItem(2);
+
+      expect(cubit.state.queue?.currentIndex, 2);
+      expect(cubit.state.queue?.currentTrack, tracks.last);
+      expect(controlClient.startedTrackIds, ['track-1', 'track-3']);
+
+      await cubit.close();
+    });
+
+    test('edits the queue without changing the active track', () async {
+      final cubit = PlaybackCubit.withDependencies(
+        _FakePlaybackEngine(),
+        _FakePlaybackControl(),
+      );
+      final tracks = [_track(1), _track(2), _track(3)];
+
+      await cubit.play(selectedTrack: tracks[1], queueTracks: tracks);
+      cubit.reorderQueue(0, 2);
+      cubit.removeQueueItem(1);
+
+      expect(cubit.state.queue?.tracks, [tracks[1], tracks[0]]);
+      expect(cubit.state.queue?.currentTrack, tracks[1]);
+
+      cubit.removeQueueItem(cubit.state.queue!.currentIndex);
+      expect(cubit.state.queue?.currentTrack, tracks[1]);
+
+      await cubit.close();
+    });
+
     test('stops when the final track ends', () async {
       final engine = _FakePlaybackEngine();
       final controlClient = _FakePlaybackControl();
