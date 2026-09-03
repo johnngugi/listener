@@ -101,6 +101,19 @@ void main() {
       grpc.SortDirection.SORT_DIRECTION_DESCENDING,
     );
     expect(find.byIcon(Icons.arrow_drop_down), findsOneWidget);
+
+    await tester.tap(find.text('Date added'));
+    await tester.pump();
+
+    expect(requests, hasLength(3));
+    expect(
+      requests.last.sortField,
+      grpc.TrackSortField.TRACK_SORT_FIELD_DATE_ADDED,
+    );
+    expect(
+      requests.last.sortDirection,
+      grpc.SortDirection.SORT_DIRECTION_ASCENDING,
+    );
   });
 
   testWidgets('library content does not overflow at responsive widths', (
@@ -141,7 +154,47 @@ void main() {
       );
 
       expect(tester.takeException(), isNull, reason: 'overflowed at $width px');
+      expect(find.byIcon(Icons.favorite_rounded), findsNothing);
+      expect(find.byIcon(Icons.favorite_border_rounded), findsNothing);
     }
+  });
+
+  testWidgets('medium library layout displays the date added value', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1100, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final cubit = LibraryCubit(
+      (_) async => grpc.ListTracksResponse(totalSize: Int64(1)),
+    );
+    addTearDown(cubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BlocProvider.value(
+            value: cubit,
+            child: const SizedBox(
+              width: 1100,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TrackTableHeader(),
+                  TrackRow(track: _responsiveTrack),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Date added'), findsOneWidget);
+    expect(find.text('Today'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('library toolbar reports search text and offers sorting', (

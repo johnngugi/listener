@@ -11,7 +11,6 @@ import 'package:listener_front/src/widgets/artwork_image.dart';
 // Shared column geometry so the header and every row line up exactly.
 const _hPad = 32.0;
 const _numW = 52.0;
-const _favW = 52.0;
 const _lengthW = 104.0;
 const _releaseW = 128.0;
 const _dateW = 128.0;
@@ -626,13 +625,6 @@ class TrackTableHeader extends StatelessWidget {
                   flex: _trackFlex,
                   child: SortableHeader('Track', LibrarySortField.title),
                 ),
-                if (showDetails) ...[
-                  const SizedBox(
-                    width: _favW,
-                    child: HeaderIcon(Icons.favorite_border_rounded),
-                  ),
-                  const VerticalRule(height: _headerHeight),
-                ],
                 if (showLength) ...[
                   const SizedBox(
                     width: _lengthW,
@@ -664,6 +656,8 @@ class TrackTableHeader extends StatelessWidget {
                     ),
                   ),
                   const VerticalRule(height: _headerHeight),
+                ],
+                if (showDetails)
                   const SizedBox(
                     width: _dateW,
                     child: SortableHeader(
@@ -671,8 +665,7 @@ class TrackTableHeader extends StatelessWidget {
                       LibrarySortField.dateAdded,
                     ),
                   ),
-                  // TODO: Add the Plays column after the initial release.
-                ],
+                // TODO: Add the Plays column after the initial release.
                 // TODO: Add table settings after the initial release.
               ],
             ),
@@ -766,17 +759,6 @@ class HeaderLabel extends StatelessWidget {
   }
 }
 
-class HeaderIcon extends StatelessWidget {
-  const HeaderIcon(this.icon, {super.key});
-
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(child: Icon(icon, color: mutedColor, size: 25));
-  }
-}
-
 class VerticalRule extends StatelessWidget {
   const VerticalRule({super.key, this.height});
 
@@ -836,7 +818,7 @@ class TrackRow extends StatelessWidget {
               ),
               padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
               child: usesMediaRow
-                  ? _mediaRow(layout, artworkSize)
+                  ? _mediaRow(artworkSize)
                   : Row(
                       children: [
                         if (showNumber) ...[
@@ -868,13 +850,6 @@ class TrackRow extends StatelessWidget {
                             ),
                           ),
                         ),
-                        if (showDetails) ...[
-                          SizedBox(
-                            width: _favW,
-                            child: _FavoriteIcon(favorite: track.favorite),
-                          ),
-                          const SizedBox(width: 1),
-                        ],
                         if (showLength) ...[
                           SizedBox(
                             width: _lengthW,
@@ -900,13 +875,14 @@ class TrackRow extends StatelessWidget {
                             child: BodyCell(track.releaseDate),
                           ),
                           const SizedBox(width: 1),
+                        ],
+                        if (showDetails)
                           SizedBox(
                             width: _dateW,
                             child: BodyCell(track.dateAdded),
                           ),
-                          // TODO: Add the Plays column after the initial
-                          // release.
-                        ],
+                        // TODO: Add the Plays column after the initial
+                        // release.
                         // TODO: Add per-track actions after the initial
                         // release.
                       ],
@@ -918,8 +894,7 @@ class TrackRow extends StatelessWidget {
     );
   }
 
-  Widget _mediaRow(_LibraryLayout layout, double artworkSize) {
-    final minimal = layout == _LibraryLayout.minimal;
+  Widget _mediaRow(double artworkSize) {
     final metadata = [
       if (track.artist.isNotEmpty) track.artist,
       if (track.album.isNotEmpty) track.album,
@@ -985,10 +960,6 @@ class TrackRow extends StatelessWidget {
             fontWeight: FontWeight.w600,
           ),
         ),
-        if (!minimal) ...[
-          const SizedBox(width: 10),
-          _FavoriteIcon(favorite: track.favorite),
-        ],
         // TODO: Add per-track actions after the initial release.
       ],
     );
@@ -1037,24 +1008,6 @@ class _PlayingIndicator extends StatelessWidget {
         isPlaying ? Icons.graphic_eq_rounded : Icons.play_arrow_rounded,
         color: accentColor,
         size: 20,
-      ),
-    );
-  }
-}
-
-class _FavoriteIcon extends StatelessWidget {
-  const _FavoriteIcon({required this.favorite});
-
-  final bool favorite;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: favorite ? 'Remove from favorites' : 'Add to favorites',
-      child: Icon(
-        favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-        color: favorite ? accentColor : mutedColor,
-        size: 22,
       ),
     );
   }
