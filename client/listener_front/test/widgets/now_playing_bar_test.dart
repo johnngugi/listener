@@ -388,8 +388,6 @@ void main() {
     final outputCubit = OutputDeviceCubit(engine, cubit);
     addTearDown(cubit.close);
     addTearDown(outputCubit.close);
-    cubit.setVolumeMode(VolumeMode.software);
-
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -434,7 +432,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(cubit.state.volume, 0.5);
-    expect(engine.volumes, [1, 0.5]);
+    expect(engine.volumes, [0.5]);
     expect(find.text('50%'), findsOneWidget);
     expect(find.byTooltip('Mute'), findsOneWidget);
   });
@@ -490,7 +488,7 @@ void main() {
 
     expect(find.text('FLAC · 24-bit · 96 kHz'), findsWidgets);
     expect(find.text('Reference DAC · Exclusive'), findsOneWidget);
-    expect(find.text('Fixed output · 0 dB'), findsOneWidget);
+    expect(find.text('Software · 100%'), findsOneWidget);
 
     final softwareMode = find.byKey(const Key('software-volume-mode'));
     await tester.scrollUntilVisible(
@@ -498,8 +496,6 @@ void main() {
       180,
       scrollable: find.byType(Scrollable).last,
     );
-    await tester.tap(softwareMode);
-    await tester.pumpAndSettle();
     expect(cubit.state.volumeMode, VolumeMode.software);
     final slider = tester.widget<Slider>(
       find.byKey(const Key('software-volume-slider')),

@@ -45,7 +45,7 @@ void main() {
 
 PlaybackState _playback({
   String codec = 'flac',
-  VolumeMode volumeMode = VolumeMode.fixed,
+  VolumeMode volumeMode = VolumeMode.software,
   double volume = 1,
 }) {
   final track = Track(

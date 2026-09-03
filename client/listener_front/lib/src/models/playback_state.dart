@@ -14,7 +14,7 @@ final class PlaybackState extends Equatable {
     required this.queue,
     this.currentFrame = 0,
     this.volume = 1,
-    this.volumeMode = VolumeMode.fixed,
+    this.volumeMode = VolumeMode.software,
     this.errorMessage,
   });
 
@@ -24,7 +24,7 @@ final class PlaybackState extends Equatable {
       queue: null,
       currentFrame: 0,
       volume: 1,
-      volumeMode: VolumeMode.fixed,
+      volumeMode: VolumeMode.software,
       errorMessage: null,
     );
   }

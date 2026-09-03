@@ -248,10 +248,9 @@ void main() {
         _FakePlaybackControl(),
       );
 
-      expect(cubit.state.volumeMode, VolumeMode.fixed);
+      expect(cubit.state.volumeMode, VolumeMode.software);
       expect(cubit.state.volume, 1);
 
-      cubit.setVolumeMode(VolumeMode.software);
       cubit.setVolume(0.65);
       expect(cubit.state.volume, 0.65);
 
@@ -266,7 +265,7 @@ void main() {
 
       expect(cubit.state.volume, 0.65);
       expect(cubit.state.volumeMode, VolumeMode.software);
-      expect(engine.volumes, [1, 0.65, 0, 0.65]);
+      expect(engine.volumes, [0.65, 0, 0.65]);
       await cubit.close();
     });
 
@@ -277,16 +276,15 @@ void main() {
         _FakePlaybackControl(),
       );
 
-      cubit.setVolumeMode(VolumeMode.software);
       cubit.setVolume(0.4);
       cubit.setVolumeMode(VolumeMode.fixed);
 
       expect(cubit.state.volumeMode, VolumeMode.fixed);
       expect(cubit.state.volume, 0.4);
-      expect(engine.volumes, [1, 0.4, 1]);
+      expect(engine.volumes, [0.4, 1]);
 
       cubit.setVolumeMode(VolumeMode.software);
-      expect(engine.volumes, [1, 0.4, 1, 0.4]);
+      expect(engine.volumes, [0.4, 1, 0.4]);
       await cubit.close();
     });
   });
