@@ -10,7 +10,6 @@ import 'package:listener_front/src/theme.dart';
 import 'package:listener_front/src/view_models/output_device_cubit.dart';
 import 'package:listener_front/src/view_models/playback_cubit.dart';
 import 'package:listener_front/src/widgets/artwork_image.dart';
-import 'package:listener_engine/listener_engine.dart';
 
 class NowPlayingBar extends StatelessWidget {
   const NowPlayingBar({super.key});
@@ -22,7 +21,7 @@ class NowPlayingBar extends StatelessWidget {
         final compact = constraints.maxWidth < 900;
 
         return Container(
-          height: compact ? 104 : 108,
+          height: compact ? 92 : 108,
           decoration: const BoxDecoration(
             color: panelColor,
             border: Border(top: BorderSide(color: lineColor)),
@@ -43,24 +42,38 @@ class _WideNowPlayingBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final showOutput = width >= 1180;
-    final showInlineVolume = width >= 1450;
+    final transportWidth = math.min(640.0, math.max(300.0, width - 620));
 
-    return Row(
+    return Stack(
+      fit: StackFit.expand,
       children: [
-        const SizedBox(width: 20),
-        const _NowPlayingArtwork(size: 68),
-        const SizedBox(width: 16),
-        SizedBox(width: showOutput ? 250 : 210, child: const NowPlayingText()),
-        const SizedBox(width: 18),
-        const Expanded(child: TransportControls()),
-        const SizedBox(width: 12),
-        const SignalPathButton(),
-        const SizedBox(width: 8),
-        if (showInlineVolume)
-          const SizedBox(width: 190, child: SoftwareVolumeControl()),
-        if (showOutput) ...[const SizedBox(width: 18), const OutputControl()],
-        const SizedBox(width: 20),
+        Row(
+          children: [
+            const SizedBox(width: 16),
+            const _NowPlayingArtwork(size: 56),
+            const SizedBox(width: 14),
+            const SizedBox(width: 210, child: NowPlayingText()),
+            const Spacer(),
+            const SignalPathButton(),
+            const SizedBox(width: 12),
+            const OutputControl(),
+            const SizedBox(width: 8),
+            const VolumePopoverButton(),
+            const SizedBox(width: 12),
+          ],
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0,
+          child: Center(
+            child: SizedBox(
+              width: transportWidth,
+              child: const TransportControls(topPadding: 8),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -146,7 +159,11 @@ class _CompactNowPlayingBar extends StatelessWidget {
                         const PlaybackQueueButton(),
                         const SizedBox(width: 2),
                       ],
-                      SignalPathButton(showLabel: width >= 560),
+                      const SignalPathButton(),
+                      if (width >= 400) ...[
+                        const SizedBox(width: 2),
+                        const VolumePopoverButton(),
+                      ],
                     ],
                   ),
                 ),
@@ -165,9 +182,7 @@ class _CompactNowPlayingBar extends StatelessWidget {
 }
 
 class SignalPathButton extends StatelessWidget {
-  const SignalPathButton({super.key, this.showLabel = true});
-
-  final bool showLabel;
+  const SignalPathButton({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -188,10 +203,8 @@ class SignalPathButton extends StatelessWidget {
                     label: '${signalPath.title}. Open signal path details.',
                     excludeSemantics: true,
                     child: Container(
+                      width: 38,
                       height: 38,
-                      padding: EdgeInsets.symmetric(
-                        horizontal: showLabel ? 12 : 9,
-                      ),
                       decoration: BoxDecoration(
                         color: color.withValues(alpha: 0.1),
                         border: Border.all(
@@ -199,26 +212,10 @@ class SignalPathButton extends StatelessWidget {
                         ),
                         borderRadius: BorderRadius.circular(999),
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _signalPathIcon(signalPath.quality),
-                            color: color,
-                            size: 18,
-                          ),
-                          if (showLabel) ...[
-                            const SizedBox(width: 7),
-                            Text(
-                              signalPath.title,
-                              style: TextStyle(
-                                color: color,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ],
+                      child: Icon(
+                        _signalPathIcon(signalPath.quality),
+                        color: color,
+                        size: 18,
                       ),
                     ),
                   ),
@@ -274,6 +271,158 @@ class SoftwareVolumeControl extends StatelessWidget {
   }
 }
 
+class VolumePopoverButton extends StatelessWidget {
+  const VolumePopoverButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final playbackCubit = context.read<PlaybackCubit>();
+    return BlocSelector<
+      PlaybackCubit,
+      PlaybackState,
+      ({double volume, VolumeMode mode})
+    >(
+      selector: (state) => (volume: state.volume, mode: state.volumeMode),
+      builder: (context, selection) {
+        final fixed = selection.mode == VolumeMode.fixed;
+        return PopupMenuButton<void>(
+          key: const Key('software-volume-button'),
+          tooltip: fixed
+              ? 'Fixed output volume'
+              : 'Volume, ${_formatVolumePercent(selection.volume)}',
+          color: panelColor,
+          elevation: 12,
+          constraints: const BoxConstraints(minWidth: 72, maxWidth: 72),
+          offset: const Offset(0, -236),
+          padding: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: const BorderSide(color: lineColor),
+          ),
+          icon: Icon(
+            fixed ? Icons.lock_outline_rounded : _volumeIcon(selection.volume),
+            color: fixed ? mutedColor : textColor,
+            size: 22,
+          ),
+          itemBuilder: (_) => [
+            PopupMenuItem<void>(
+              enabled: false,
+              height: 220,
+              padding: EdgeInsets.zero,
+              child: BlocProvider.value(
+                value: playbackCubit,
+                child: const _VolumePopover(),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _VolumePopover extends StatelessWidget {
+  const _VolumePopover();
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocSelector<
+      PlaybackCubit,
+      PlaybackState,
+      ({double volume, VolumeMode mode})
+    >(
+      selector: (state) => (volume: state.volume, mode: state.volumeMode),
+      builder: (context, selection) {
+        final enabled = selection.mode == VolumeMode.software;
+        return SizedBox(
+          key: const Key('software-volume-popover'),
+          width: 72,
+          height: 220,
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+              Text(
+                enabled ? _formatVolumePercent(selection.volume) : 'FIXED',
+                style: const TextStyle(
+                  color: mutedColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6,
+                ),
+              ),
+              Expanded(
+                child: _VerticalSoftwareVolumeSlider(
+                  volume: selection.volume,
+                  enabled: enabled,
+                ),
+              ),
+              IconButton(
+                key: const Key('software-volume-popover-mute-button'),
+                tooltip: enabled
+                    ? selection.volume == 0
+                          ? 'Unmute'
+                          : 'Mute'
+                    : 'Fixed output',
+                onPressed: enabled
+                    ? context.read<PlaybackCubit>().toggleMute
+                    : null,
+                icon: Icon(
+                  enabled
+                      ? _volumeIcon(selection.volume)
+                      : Icons.lock_outline_rounded,
+                  color: enabled ? textColor : mutedColor,
+                  size: 21,
+                ),
+              ),
+              const SizedBox(height: 4),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _VerticalSoftwareVolumeSlider extends StatelessWidget {
+  const _VerticalSoftwareVolumeSlider({
+    required this.volume,
+    required this.enabled,
+  });
+
+  final double volume;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = _formatVolumePercent(volume);
+    return RotatedBox(
+      quarterTurns: 3,
+      child: SliderTheme(
+        data: SliderTheme.of(context).copyWith(
+          activeTrackColor: accentColor,
+          inactiveTrackColor: mutedColor.withValues(alpha: 0.25),
+          disabledActiveTrackColor: mutedColor.withValues(alpha: 0.35),
+          disabledInactiveTrackColor: mutedColor.withValues(alpha: 0.16),
+          trackHeight: 3,
+          thumbColor: textColor,
+          disabledThumbColor: mutedColor,
+          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+          overlayColor: accentColor.withValues(alpha: 0.14),
+        ),
+        child: Slider(
+          key: const Key('software-volume-popover-slider'),
+          min: 0,
+          max: 1,
+          divisions: 100,
+          value: volume,
+          semanticFormatterCallback: (_) => 'Software volume $label',
+          onChanged: enabled ? context.read<PlaybackCubit>().setVolume : null,
+        ),
+      ),
+    );
+  }
+}
+
 class _SoftwareVolumeSlider extends StatelessWidget {
   const _SoftwareVolumeSlider({required this.volume, required this.enabled});
 
@@ -282,7 +431,7 @@ class _SoftwareVolumeSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = _formatVolume(volume);
+    final label = _formatVolumePercent(volume);
     return SliderTheme(
       data: SliderTheme.of(context).copyWith(
         activeTrackColor: accentColor,
@@ -298,7 +447,6 @@ class _SoftwareVolumeSlider extends StatelessWidget {
         max: 1,
         divisions: 100,
         value: volume,
-        label: label,
         semanticFormatterCallback: (_) => 'Software volume $label',
         onChanged: enabled ? context.read<PlaybackCubit>().setVolume : null,
       ),
@@ -410,7 +558,7 @@ class _SignalPathDialog extends StatelessWidget {
                         label: 'Volume',
                         value: playback.volumeMode == VolumeMode.fixed
                             ? 'Fixed output · 0 dB'
-                            : 'Software · ${_formatVolume(playback.volume)}',
+                            : 'Software · ${_formatVolumePercent(playback.volume)}',
                       ),
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 12),
@@ -572,11 +720,7 @@ IconData _volumeIcon(double volume) {
   return Icons.volume_up_rounded;
 }
 
-String _formatVolume(double volume) {
-  if (volume == 0) return 'Muted';
-  final decibels = SoftwareVolume.decibels(volume);
-  return '${decibels.round()} dB';
-}
+String _formatVolumePercent(double volume) => '${(volume * 100).round()}%';
 
 class _NowPlayingArtwork extends StatelessWidget {
   const _NowPlayingArtwork({required this.size});
@@ -654,44 +798,57 @@ class NowPlayingText extends StatelessWidget {
 }
 
 class TransportControls extends StatelessWidget {
-  const TransportControls({super.key});
+  const TransportControls({super.key, this.topPadding = 0});
+
+  final double topPadding;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            IconButton(
-              tooltip: 'Previous track',
-              icon: const Icon(
-                Icons.skip_previous_rounded,
-                color: textColor,
-                size: 25,
+    return Padding(
+      key: const Key('transport-controls'),
+      padding: EdgeInsets.only(top: topPadding),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Row(
+            key: const Key('transport-button-row'),
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                key: const Key('transport-button-cluster'),
+                width: 264,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    IconButton(
+                      tooltip: 'Previous track',
+                      icon: const Icon(
+                        Icons.skip_previous_rounded,
+                        color: textColor,
+                        size: 25,
+                      ),
+                      onPressed: () => context.read<PlaybackCubit>().previous(),
+                    ),
+                    const _PlayPauseButton(iconSize: 29),
+                    IconButton(
+                      tooltip: 'Next track',
+                      icon: const Icon(
+                        Icons.skip_next_rounded,
+                        color: textColor,
+                        size: 25,
+                      ),
+                      onPressed: () => context.read<PlaybackCubit>().next(),
+                    ),
+                    const PlaybackQueueButton(),
+                  ],
+                ),
               ),
-              onPressed: () => context.read<PlaybackCubit>().previous(),
-            ),
-            const SizedBox(width: 14),
-            const _PlayPauseButton(iconSize: 29),
-            const SizedBox(width: 14),
-            IconButton(
-              tooltip: 'Next track',
-              icon: const Icon(
-                Icons.skip_next_rounded,
-                color: textColor,
-                size: 25,
-              ),
-              onPressed: () => context.read<PlaybackCubit>().next(),
-            ),
-            const SizedBox(width: 18),
-            const PlaybackQueueButton(),
-          ],
-        ),
-        const SizedBox(height: 4),
-        const PlaybackTimeline(),
-      ],
+            ],
+          ),
+          const SizedBox(height: 2),
+          const PlaybackTimeline(),
+        ],
+      ),
     );
   }
 }
@@ -1022,7 +1179,7 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
       selector: _selectPlaybackProgress,
       builder: (context, progress) {
         if (!progress.visible) {
-          return const SizedBox(height: 34);
+          return const SizedBox(width: double.infinity, height: 34);
         }
         final displayedMilliseconds =
             (_progressValue ?? progress.positionMilliseconds).clamp(
@@ -1247,61 +1404,58 @@ class OutputControl extends StatelessWidget {
 
         return Tooltip(
           message: canChangeOutput
-              ? 'Choose audio output'
+              ? '$selectedName. Choose audio output.'
               : isSwitching
               ? 'Switching audio output'
               : 'Wait for playback to start',
-          child: InkWell(
-            key: const Key('output-device-picker-button'),
-            borderRadius: BorderRadius.circular(12),
-            onTap: canChangeOutput ? () => _showOutputPicker(context) : null,
-            child: Container(
-              constraints: const BoxConstraints(minWidth: 238),
-              height: 56,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              decoration: BoxDecoration(
-                color: backgroundColor.withValues(alpha: 0.55),
-                border: Border.all(color: lineColor),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    outputState.selectedDeviceId == null
-                        ? Icons.speaker_outlined
-                        : Icons.speaker_group_outlined,
-                    color: canChangeOutput ? mutedColor : lineColor,
-                    size: 24,
-                  ),
-                  const SizedBox(width: 9),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 126),
-                    child: Text(
-                      selectedName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: canChangeOutput ? textColor : mutedColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
+          child: Semantics(
+            button: true,
+            label: 'Audio output: $selectedName',
+            child: InkWell(
+              key: const Key('output-device-picker-button'),
+              borderRadius: BorderRadius.circular(10),
+              onTap: canChangeOutput ? () => _showOutputPicker(context) : null,
+              child: SizedBox(
+                width: 112,
+                height: 68,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (outputState.status == OutputDeviceStatus.loading ||
+                        outputState.status == OutputDeviceStatus.switching)
+                      const SizedBox.square(
+                        key: Key('output-device-progress'),
+                        dimension: 22,
+                        child: CircularProgressIndicator(strokeWidth: 1.5),
+                      )
+                    else
+                      Icon(
+                        key: const Key('output-device-icon'),
+                        outputState.selectedDeviceId == null
+                            ? Icons.speaker_outlined
+                            : Icons.speaker_group_outlined,
+                        color: canChangeOutput ? mutedColor : lineColor,
+                        size: 23,
+                      ),
+                    const SizedBox(height: 5),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Text(
+                        key: const Key('output-device-label'),
+                        selectedName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: canChangeOutput ? mutedColor : lineColor,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          height: 1,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  if (outputState.status == OutputDeviceStatus.loading ||
-                      outputState.status == OutputDeviceStatus.switching)
-                    const SizedBox.square(
-                      dimension: 14,
-                      child: CircularProgressIndicator(strokeWidth: 1.5),
-                    )
-                  else
-                    const Icon(
-                      Icons.keyboard_arrow_up_rounded,
-                      color: mutedColor,
-                      size: 20,
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

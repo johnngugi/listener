@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:listener_front/src/theme.dart';
 
+const sidebarWidth = 224.0;
+
 class Sidebar extends StatelessWidget {
   const Sidebar({super.key, this.onSettings});
 
@@ -9,15 +11,18 @@ class Sidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 260,
-      color: panelColor,
+      width: sidebarWidth,
+      decoration: const BoxDecoration(
+        color: panelColor,
+        border: Border(right: BorderSide(color: lineColor)),
+      ),
       child: Padding(
-        padding: EdgeInsets.fromLTRB(26, 20, 24, 22),
+        padding: const EdgeInsets.fromLTRB(20, 18, 18, 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             BrandHeader(onSettings: onSettings),
-            const SizedBox(height: 30),
+            const SizedBox(height: 26),
             const SideSection(
               label: 'MY LIBRARY',
               items: [
@@ -50,14 +55,14 @@ class BrandHeader extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: textColor,
-              fontSize: 36,
+              fontSize: 32,
               height: 1,
               fontWeight: FontWeight.w300,
               letterSpacing: 0,
             ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 10),
         IconButton(
           key: const Key('server-settings-button'),
           onPressed: onSettings,
@@ -90,12 +95,12 @@ class SideSection extends StatelessWidget {
           label,
           style: const TextStyle(
             color: textColor,
-            fontSize: 14,
+            fontSize: 12,
             fontWeight: FontWeight.w700,
             letterSpacing: 0,
           ),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         for (final item in items) ...[item, const SizedBox(height: 4)],
       ],
     );
@@ -115,7 +120,7 @@ class SideItem extends StatelessWidget {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 10),
       decoration: BoxDecoration(
         color: selected
             ? accentColor.withValues(alpha: 0.13)
@@ -130,8 +135,8 @@ class SideItem extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(icon, color: color, size: 22),
-          const SizedBox(width: 14),
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 12),
           Text(
             title,
             style: _sidebarItemStyle.copyWith(
@@ -147,7 +152,7 @@ class SideItem extends StatelessWidget {
 
 const _sidebarItemStyle = TextStyle(
   color: mutedColor,
-  fontSize: 17,
+  fontSize: 15,
   height: 1,
   letterSpacing: 0,
   fontWeight: FontWeight.w500,

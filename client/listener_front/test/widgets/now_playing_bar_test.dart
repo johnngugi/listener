@@ -3,15 +3,116 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:listener_front/src/generated/listener/v1/listener.pbgrpc.dart'
     as control;
+import 'package:listener_front/src/generated/listener/v1/listener.pb.dart'
+    as listener;
+import 'package:listener_front/src/app.dart';
 import 'package:listener_front/src/models/playback_state.dart';
 import 'package:listener_front/src/models/track.dart';
 import 'package:listener_front/src/services/playback_control.dart';
 import 'package:listener_engine/listener_engine.dart';
+import 'package:listener_front/src/view_models/library_cubit.dart';
 import 'package:listener_front/src/view_models/playback_cubit.dart';
 import 'package:listener_front/src/view_models/output_device_cubit.dart';
 import 'package:listener_front/src/widgets/now_playing_bar.dart';
+import 'package:listener_front/src/widgets/sidebar.dart';
 
 void main() {
+  testWidgets('wide player centers transport in the library pane', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final engine = _FakePlaybackEngine();
+    final cubit = PlaybackCubit.withDependencies(
+      engine,
+      _FakePlaybackControl(),
+    );
+    final outputCubit = OutputDeviceCubit(engine, cubit);
+    addTearDown(cubit.close);
+    addTearDown(outputCubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomLeft,
+            child: SizedBox(
+              width: 1600,
+              child: MultiBlocProvider(
+                providers: [
+                  BlocProvider.value(value: cubit),
+                  BlocProvider.value(value: outputCubit),
+                ],
+                child: const NowPlayingBar(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      tester.getCenter(find.byKey(const Key('transport-controls'))).dx,
+      closeTo(800, 0.1),
+    );
+    expect(tester.getSize(find.byType(NowPlayingBar)).height, 108);
+    expect(
+      tester.getSize(find.byType(PlaybackTimeline)).width,
+      greaterThan(
+        tester.getSize(find.byKey(const Key('transport-button-cluster'))).width,
+      ),
+    );
+    final playerTop = tester.getTopLeft(find.byType(NowPlayingBar)).dy;
+    expect(
+      tester.getTopLeft(find.byKey(const Key('transport-button-row'))).dy -
+          playerTop,
+      greaterThanOrEqualTo(8),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('desktop player spans beneath the sidebar', (tester) async {
+    tester.view.physicalSize = const Size(1600, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final engine = _FakePlaybackEngine();
+    final playbackCubit = PlaybackCubit.withDependencies(
+      engine,
+      _FakePlaybackControl(),
+    );
+    final outputCubit = OutputDeviceCubit(engine, playbackCubit);
+    final libraryCubit = LibraryCubit(
+      (_) async => listener.ListTracksResponse(),
+    );
+    addTearDown(libraryCubit.close);
+    addTearDown(playbackCubit.close);
+    addTearDown(outputCubit.close);
+
+    await tester.pumpWidget(
+      MultiBlocProvider(
+        providers: [
+          BlocProvider.value(value: libraryCubit),
+          BlocProvider.value(value: playbackCubit),
+          BlocProvider.value(value: outputCubit),
+        ],
+        child: const MainApp(),
+      ),
+    );
+
+    final sidebarRect = tester.getRect(find.byType(Sidebar));
+    final playerRect = tester.getRect(find.byType(NowPlayingBar));
+    expect(sidebarRect, const Rect.fromLTWH(0, 0, sidebarWidth, 692));
+    expect(playerRect.left, 0);
+    expect(playerRect.right, 1600);
+    expect(playerRect.bottom, 800);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('compact player centers transport and keeps seeking visible', (
     tester,
   ) async {
@@ -276,7 +377,7 @@ void main() {
     }
   });
 
-  testWidgets('opens compact software volume and updates the engine', (
+  testWidgets('opens the volume popover and updates software volume', (
     tester,
   ) async {
     final engine = _FakePlaybackEngine();
@@ -287,6 +388,7 @@ void main() {
     final outputCubit = OutputDeviceCubit(engine, cubit);
     addTearDown(cubit.close);
     addTearDown(outputCubit.close);
+    cubit.setVolumeMode(VolumeMode.software);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -308,27 +410,32 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const Key('signal-path-button')));
+    expect(
+      find.byKey(const Key('software-volume-popover-slider')),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(const Key('software-volume-button')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Signal path'), findsWidgets);
-    final softwareMode = find.byKey(const Key('software-volume-mode'));
-    await tester.scrollUntilVisible(
-      softwareMode,
-      180,
-      scrollable: find.byType(Scrollable).last,
+    final popoverRect = tester.getRect(
+      find.byKey(const Key('software-volume-popover')),
     );
-    await tester.tap(softwareMode);
-    await tester.pumpAndSettle();
+    final buttonRect = tester.getRect(
+      find.byKey(const Key('software-volume-button')),
+    );
+    expect(popoverRect.bottom, lessThanOrEqualTo(buttonRect.top));
 
     final slider = tester.widget<Slider>(
-      find.byKey(const Key('software-volume-slider')),
+      find.byKey(const Key('software-volume-popover-slider')),
     );
+    expect(slider.divisions, 100);
+    expect(slider.label, isNull);
     slider.onChanged?.call(0.5);
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(cubit.state.volume, 0.5);
     expect(engine.volumes, [1, 0.5]);
+    expect(find.text('50%'), findsOneWidget);
     expect(find.byTooltip('Mute'), findsOneWidget);
   });
 
@@ -376,7 +483,8 @@ void main() {
       ),
     );
 
-    expect(find.text('Bit-perfect'), findsOneWidget);
+    expect(find.text('Bit-perfect'), findsNothing);
+    expect(find.byIcon(Icons.verified_rounded), findsOneWidget);
     await tester.tap(find.byKey(const Key('signal-path-button')));
     await tester.pumpAndSettle();
 
@@ -398,8 +506,9 @@ void main() {
     );
     expect(slider.onChanged, isNotNull);
     slider.onChanged?.call(0.5);
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(cubit.state.volume, 0.5);
+    expect(find.text('Software · 50%'), findsOneWidget);
 
     await tester.scrollUntilVisible(
       find.byKey(const Key('signal-path-status')),
@@ -470,7 +579,16 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const Key('output-device-picker-button')));
+    final outputButton = find.byKey(const Key('output-device-picker-button'));
+    expect(tester.getSize(outputButton).width, 112);
+    expect(
+      tester.getCenter(find.byKey(const Key('output-device-label'))).dy,
+      greaterThan(
+        tester.getCenter(find.byKey(const Key('output-device-icon'))).dy,
+      ),
+    );
+
+    await tester.tap(outputButton);
     await tester.pumpAndSettle();
 
     expect(find.text('Audio output'), findsOneWidget);

@@ -22,6 +22,7 @@ void main() {
     await tester.tap(find.byKey(const Key('server-settings-button')));
 
     expect(openedSettings, isTrue);
+    expect(tester.getSize(find.byType(Sidebar)).width, sidebarWidth);
   });
 
   testWidgets('compact library top bar opens the navigation drawer', (
@@ -33,7 +34,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           key: scaffoldKey,
-          drawer: const Drawer(width: 260, child: Sidebar()),
+          drawer: const Drawer(width: sidebarWidth, child: Sidebar()),
           body: const LibraryTopBar(showSidebarButton: true),
         ),
       ),

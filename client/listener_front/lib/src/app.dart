@@ -71,7 +71,7 @@ class LibraryScreen extends StatelessWidget {
           drawer: showSidebar
               ? null
               : Drawer(
-                  width: 260,
+                  width: sidebarWidth,
                   backgroundColor: panelColor,
                   child: SafeArea(
                     child: Sidebar(
