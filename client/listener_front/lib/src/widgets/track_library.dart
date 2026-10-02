@@ -540,8 +540,16 @@ class LibraryToolbar extends StatelessWidget {
                       ),
                       if (!compact) ...[
                         const SizedBox(width: 8),
-                        Text(
-                          _sortFieldLabel(sort.field),
+                        Text.rich(
+                          TextSpan(
+                            children: [
+                              const TextSpan(
+                                text: 'Sort: ',
+                                style: TextStyle(color: mutedColor),
+                              ),
+                              TextSpan(text: _sortFieldLabel(sort.field)),
+                            ],
+                          ),
                           style: const TextStyle(
                             color: textColor,
                             fontWeight: FontWeight.w600,
@@ -784,113 +792,124 @@ class TrackRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final layout = _libraryLayoutFor(constraints.maxWidth);
-        final usesMediaRow =
-            layout == _LibraryLayout.compact ||
-            layout == _LibraryLayout.minimal;
-        final horizontalPadding = layout == _LibraryLayout.full ? _hPad : 16.0;
-        final showNumber = layout != _LibraryLayout.minimal;
-        final showLength = layout != _LibraryLayout.minimal;
-        final showDetails =
-            layout == _LibraryLayout.medium || layout == _LibraryLayout.full;
-        final showEverything = layout == _LibraryLayout.full;
-        final artworkSize = layout == _LibraryLayout.minimal ? 46.0 : 54.0;
+    return _TrackHoverRegion(
+      builder: (context, isHovered) => LayoutBuilder(
+        builder: (context, constraints) {
+          final layout = _libraryLayoutFor(constraints.maxWidth);
+          final usesMediaRow =
+              layout == _LibraryLayout.compact ||
+              layout == _LibraryLayout.minimal;
+          final horizontalPadding = layout == _LibraryLayout.full
+              ? _hPad
+              : 16.0;
+          final showNumber = layout != _LibraryLayout.minimal;
+          final showLength = layout != _LibraryLayout.minimal;
+          final showDetails =
+              layout == _LibraryLayout.medium || layout == _LibraryLayout.full;
+          final showEverything = layout == _LibraryLayout.full;
+          final artworkSize = layout == _LibraryLayout.minimal ? 46.0 : 54.0;
 
-        return Material(
-          color: isCurrent
-              ? accentColor.withValues(alpha: 0.09)
-              : Colors.transparent,
-          child: InkWell(
-            hoverColor: Colors.white.withValues(alpha: 0.035),
-            onDoubleTap: () => _play(context),
-            child: Container(
-              height: _rowHeight,
-              decoration: BoxDecoration(
-                border: Border(
-                  bottom: const BorderSide(color: lineColor),
-                  left: BorderSide(
-                    color: isCurrent ? accentColor : Colors.transparent,
-                    width: 3,
+          return Material(
+            color: isCurrent
+                ? accentColor.withValues(alpha: 0.055)
+                : Colors.transparent,
+            child: InkWell(
+              hoverColor: Colors.white.withValues(alpha: 0.035),
+              onDoubleTap: () => _play(context),
+              child: Container(
+                height: _rowHeight,
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: const BorderSide(color: lineColor),
+                    left: BorderSide(
+                      color: isCurrent ? accentColor : Colors.transparent,
+                      width: 3,
+                    ),
                   ),
                 ),
-              ),
-              padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-              child: usesMediaRow
-                  ? _mediaRow(artworkSize)
-                  : Row(
-                      children: [
-                        if (showNumber) ...[
-                          SizedBox(
-                            width: _numW,
-                            child: isCurrent
-                                ? _PlayingIndicator(isPlaying: isPlaying)
-                                : BodyCell(track.number, alignRight: true),
-                          ),
-                          const SizedBox(width: 1),
-                        ],
-                        Expanded(
-                          flex: _trackFlex,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 14),
-                            child: Row(
-                              children: [
-                                ArtworkImage(
-                                  artworkId: track.artworkId,
-                                  size: artworkSize,
-                                ),
-                                const SizedBox(width: 14),
-                                Expanded(child: _TrackTitle(track: track)),
-                                if (track.hasBadge) ...[
-                                  const SizedBox(width: 8),
-                                  const TinyLinkedBadge(),
+                padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                child: usesMediaRow
+                    ? _mediaRow(artworkSize)
+                    : Row(
+                        children: [
+                          if (showNumber) ...[
+                            SizedBox(
+                              width: _numW,
+                              child: _TrackLeading(
+                                trackId: track.id,
+                                number: track.number,
+                                isCurrent: isCurrent,
+                                isPlaying: isPlaying,
+                                isHovered: isHovered,
+                                onPressed: () => _togglePlayback(context),
+                              ),
+                            ),
+                            const SizedBox(width: 1),
+                          ],
+                          Expanded(
+                            flex: _trackFlex,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                              ),
+                              child: Row(
+                                children: [
+                                  ArtworkImage(
+                                    artworkId: track.artworkId,
+                                    size: artworkSize,
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Expanded(child: _TrackTitle(track: track)),
+                                  if (track.hasBadge) ...[
+                                    const SizedBox(width: 8),
+                                    const TinyLinkedBadge(),
+                                  ],
                                 ],
-                              ],
+                              ),
                             ),
                           ),
-                        ),
-                        if (showLength) ...[
-                          SizedBox(
-                            width: _lengthW,
-                            child: BodyCell(track.formatMilliseconds()),
-                          ),
-                          const SizedBox(width: 1),
+                          if (showLength) ...[
+                            SizedBox(
+                              width: _lengthW,
+                              child: BodyCell(track.formatMilliseconds()),
+                            ),
+                            const SizedBox(width: 1),
+                          ],
+                          if (showDetails) ...[
+                            Expanded(
+                              flex: _artistFlex,
+                              child: LinkCell(track.artist),
+                            ),
+                            const SizedBox(width: 1),
+                            Expanded(
+                              flex: _albumFlex,
+                              child: LinkCell(track.album, secondary: true),
+                            ),
+                            const SizedBox(width: 1),
+                          ],
+                          if (showEverything) ...[
+                            SizedBox(
+                              width: _releaseW,
+                              child: BodyCell(track.releaseDate),
+                            ),
+                            const SizedBox(width: 1),
+                          ],
+                          if (showDetails)
+                            SizedBox(
+                              width: _dateW,
+                              child: BodyCell(track.dateAdded),
+                            ),
+                          // TODO: Add the Plays column after the initial
+                          // release.
+                          // TODO: Add per-track actions after the initial
+                          // release.
                         ],
-                        if (showDetails) ...[
-                          Expanded(
-                            flex: _artistFlex,
-                            child: LinkCell(track.artist),
-                          ),
-                          const SizedBox(width: 1),
-                          Expanded(
-                            flex: _albumFlex,
-                            child: LinkCell(track.album, secondary: true),
-                          ),
-                          const SizedBox(width: 1),
-                        ],
-                        if (showEverything) ...[
-                          SizedBox(
-                            width: _releaseW,
-                            child: BodyCell(track.releaseDate),
-                          ),
-                          const SizedBox(width: 1),
-                        ],
-                        if (showDetails)
-                          SizedBox(
-                            width: _dateW,
-                            child: BodyCell(track.dateAdded),
-                          ),
-                        // TODO: Add the Plays column after the initial
-                        // release.
-                        // TODO: Add per-track actions after the initial
-                        // release.
-                      ],
-                    ),
+                      ),
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
@@ -970,6 +989,94 @@ class TrackRow extends StatelessWidget {
     context.read<PlaybackCubit>().play(
       selectedTrack: track,
       queueTracks: libraryTracks,
+    );
+  }
+
+  void _togglePlayback(BuildContext context) {
+    if (!isCurrent) {
+      _play(context);
+      return;
+    }
+
+    final playback = context.read<PlaybackCubit>();
+    switch (playback.state.status) {
+      case PlaybackStatus.playing:
+        playback.pause();
+      case PlaybackStatus.paused:
+        playback.resume();
+      case PlaybackStatus.starting:
+        break;
+      case PlaybackStatus.stopped:
+      case PlaybackStatus.cued:
+      case PlaybackStatus.error:
+        playback.play();
+    }
+  }
+}
+
+class _TrackHoverRegion extends StatefulWidget {
+  const _TrackHoverRegion({required this.builder});
+
+  final Widget Function(BuildContext context, bool isHovered) builder;
+
+  @override
+  State<_TrackHoverRegion> createState() => _TrackHoverRegionState();
+}
+
+class _TrackHoverRegionState extends State<_TrackHoverRegion> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: widget.builder(context, _isHovered),
+    );
+  }
+}
+
+class _TrackLeading extends StatelessWidget {
+  const _TrackLeading({
+    required this.trackId,
+    required this.number,
+    required this.isCurrent,
+    required this.isPlaying,
+    required this.isHovered,
+    required this.onPressed,
+  });
+
+  final String trackId;
+  final String number;
+  final bool isCurrent;
+  final bool isPlaying;
+  final bool isHovered;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isHovered) {
+      return isCurrent
+          ? _PlayingIndicator(isPlaying: isPlaying)
+          : BodyCell(number, alignRight: true);
+    }
+
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Tooltip(
+        message: isPlaying ? 'Pause' : 'Play',
+        child: IconButton(
+          key: Key('track-row-play-$trackId'),
+          constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+          padding: EdgeInsets.zero,
+          onPressed: onPressed,
+          icon: Icon(
+            isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            color: textColor,
+            size: 21,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1065,7 +1172,7 @@ class BodyCell extends StatelessWidget {
       child: Padding(
         padding: EdgeInsets.only(left: alignRight ? 0 : 14, right: 14),
         child: Text(
-          text,
+          text.isEmpty ? '—' : text,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
             color: mutedColor,
@@ -1092,7 +1199,7 @@ class LinkCell extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14),
         child: Text(
-          text,
+          text.isEmpty ? '—' : text,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(

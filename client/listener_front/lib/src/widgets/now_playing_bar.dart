@@ -42,7 +42,7 @@ class _WideNowPlayingBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final transportWidth = math.min(640.0, math.max(300.0, width - 620));
+    final transportWidth = math.min(600.0, math.max(300.0, width - 660));
 
     return Stack(
       fit: StackFit.expand,
@@ -50,9 +50,9 @@ class _WideNowPlayingBar extends StatelessWidget {
         Row(
           children: [
             const SizedBox(width: 16),
-            const _NowPlayingArtwork(size: 56),
-            const SizedBox(width: 14),
-            const SizedBox(width: 210, child: NowPlayingText()),
+            const _NowPlayingArtwork(size: 60),
+            const SizedBox(width: 16),
+            const SizedBox(width: 224, child: NowPlayingText()),
             const Spacer(),
             const SignalPathButton(),
             const SizedBox(width: 12),
@@ -70,7 +70,7 @@ class _WideNowPlayingBar extends StatelessWidget {
           child: Center(
             child: SizedBox(
               width: transportWidth,
-              child: const TransportControls(topPadding: 8),
+              child: const TransportControls(),
             ),
           ),
         ),
@@ -109,7 +109,7 @@ class _CompactNowPlayingBar extends StatelessWidget {
                         const _NowPlayingArtwork(size: 48),
                         const SizedBox(width: 12),
                       ],
-                      const Expanded(child: NowPlayingText()),
+                      const Expanded(child: NowPlayingText(compact: true)),
                     ],
                   ),
                 ),
@@ -742,7 +742,9 @@ class _NowPlayingArtwork extends StatelessWidget {
 }
 
 class NowPlayingText extends StatelessWidget {
-  const NowPlayingText({super.key});
+  const NowPlayingText({super.key, this.compact = false});
+
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -756,35 +758,35 @@ class NowPlayingText extends StatelessWidget {
             selection.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               color: textColor,
-              fontSize: 16,
+              fontSize: compact ? 16 : 17,
               fontWeight: FontWeight.w800,
               height: 1,
             ),
           ),
-          const SizedBox(height: 3),
+          SizedBox(height: compact ? 2 : 4),
           Text(
             selection.artist,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               color: mutedColor,
-              fontSize: 13,
+              fontSize: compact ? 13 : 13.5,
               fontWeight: FontWeight.w500,
               height: 1,
             ),
           ),
           if (selection.format.isNotEmpty) ...[
-            const SizedBox(height: 2),
+            SizedBox(height: compact ? 1 : 3),
             Text(
               selection.format,
               key: const Key('now-playing-format'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: accentColor.withValues(alpha: 0.82),
-                fontSize: 11,
+                color: mutedColor.withValues(alpha: 0.82),
+                fontSize: compact ? 11 : 11.5,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.2,
                 height: 1,
@@ -816,7 +818,7 @@ class TransportControls extends StatelessWidget {
             children: [
               SizedBox(
                 key: const Key('transport-button-cluster'),
-                width: 264,
+                width: 228,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -845,7 +847,7 @@ class TransportControls extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 0),
           const PlaybackTimeline(),
         ],
       ),
@@ -1225,9 +1227,9 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
             PlaybackElapsedTime(
               elapsedSeconds: displayedMilliseconds.toInt() ~/ 1000,
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             Expanded(child: SizedBox(height: 34, child: progressBar)),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             PlaybackDuration(
               durationSeconds: progress.maxMilliseconds.toInt() ~/ 1000,
             ),

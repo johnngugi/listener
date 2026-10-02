@@ -121,6 +121,12 @@ pub const Controller = struct {
         self: *Controller,
         request: control.Start,
     ) std.mem.Allocator.Error!control.StartResult {
+        // Command responses borrow their playback ID from the session, so a
+        // terminal session cannot be released by the command that transitions
+        // it. Reap it before the next playback starts, after that response has
+        // necessarily been consumed by the caller.
+        self.reapTerminalSessionsLocked();
+
         const playback_id = try std.fmt.allocPrint(
             self.allocator,
             "playback-{d}",
@@ -318,6 +324,20 @@ pub const Controller = struct {
 
         return error.PlaybackNotFound;
     }
+
+    fn reapTerminalSessionsLocked(self: *Controller) void {
+        var index: usize = 0;
+        while (index < self.sessions.items.len) {
+            const state = self.sessions.items[index].state;
+            switch (state) {
+                .idle, .stopped, .ended, .error_state => {
+                    var removed = self.sessions.orderedRemove(index);
+                    removed.deinit(self.allocator);
+                },
+                .starting, .playing, .paused => index += 1,
+            }
+        }
+    }
 };
 
 test "controller starts playback and owns status state" {
@@ -448,5 +468,32 @@ test "controller resolves media path only for an active playback" {
     try std.testing.expectError(
         error.InvalidState,
         controller.resolveMediaPath(started.playback_id),
+    );
+}
+
+test "controller releases terminal sessions before starting playback" {
+    var controller = Controller.init(std.testing.allocator);
+    defer controller.deinit();
+
+    const first = try controller.start(.{
+        .track_id = "d9428888-122b-4e3f-8f74-8f7e6b3f5c21",
+        .media_path = "/tmp/first.flac",
+    });
+    const first_id = try std.testing.allocator.dupe(u8, first.playback_id);
+    defer std.testing.allocator.free(first_id);
+
+    _ = try controller.stop(.{ .playback_id = first.playback_id });
+    try std.testing.expectEqual(@as(usize, 1), controller.sessions.items.len);
+
+    const second = try controller.start(.{
+        .track_id = "05be4de8-6f55-4c18-9bc9-1a19e41b7869",
+        .media_path = "/tmp/second.flac",
+    });
+
+    try std.testing.expectEqual(@as(usize, 1), controller.sessions.items.len);
+    try std.testing.expectEqualStrings("playback-2", second.playback_id);
+    try std.testing.expectError(
+        error.PlaybackNotFound,
+        controller.status(.{ .playback_id = first_id }),
     );
 }

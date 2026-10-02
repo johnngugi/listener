@@ -233,6 +233,7 @@ void main() {
 
     expect(query, 'Alan Walker');
     expect(find.byTooltip('Sort tracks'), findsOneWidget);
+    expect(find.text('Sort: Artist'), findsOneWidget);
   });
 
   testWidgets('compact track row combines artist and album metadata', (
